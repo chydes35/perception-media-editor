@@ -39,8 +39,11 @@ final class ThumbnailCache {
         return image
     }
 
+    /// Stores the thumbnail for the asset's current adjustments and replaces any older
+    /// versions, so edits do not leave a trail of stale files behind.
     func store(_ image: NSImage, for asset: MediaAsset, adjustments: PhotoAdjustments) {
         let key = cacheKey(for: asset, adjustments: adjustments)
+        invalidate(assetID: asset.id)
         memory[key] = image
 
         guard

@@ -43,7 +43,7 @@ chmod +x scripts/test.sh
 ./scripts/test.sh
 ```
 
-The current machine has mismatched Command Line Tools and SDK versions, so the verification script pins the compatible local SDK, runs model/persistence checks against the real source files, and compiles the complete app. With full Xcode installed, these checks will migrate to the standard Swift Testing target.
+The script runs the Swift Testing suite in `Tests/PerceptionEditorTests` and then builds the app. It works with full Xcode or with only Command Line Tools; with Command Line Tools it adds the flags SwiftPM needs to find the Swift Testing framework.
 
 ## Build a local app bundle
 
@@ -53,7 +53,7 @@ chmod +x scripts/build-app.sh
 open PerceptionEditor.app
 ```
 
-The script produces an ad-hoc signed `PerceptionEditor.app` for local use. A full Xcode installation is recommended before the project adds asset catalogs, Instruments profiling, notarization, and AVFoundation timeline work.
+The script produces an ad-hoc signed `PerceptionEditor.app` for local use. Full Xcode is recommended for Instruments profiling.
 
 ## Project status
 

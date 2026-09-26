@@ -35,7 +35,7 @@ schema_review() {
     header "Project schema reviewer"
     print "Checks the non-destructive project model and migration guardrails."
     print
-    rg -n "currentSchemaVersion|schemaVersion|CodingKeys|decodeIfPresent|ProjectDocumentError" Sources/PerceptionEditor/EditorModels.swift Sources/PerceptionEditor/ProjectDocument.swift scripts/model-check.swift
+    rg -n "currentSchemaVersion|schemaVersion|CodingKeys|decodeIfPresent|ProjectDocumentError" Sources/PerceptionEditor/EditorModels.swift Sources/PerceptionEditor/ProjectDocument.swift Tests/PerceptionEditorTests
     print
     print "Review focus: every new adjustment or agent result that becomes persistent needs a schema revision and a backward-compatibility check."
 }

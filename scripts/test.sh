@@ -2,35 +2,26 @@
 set -euo pipefail
 
 ROOT_DIR="${0:A:h:h}"
-LOCAL_SDK="/Library/Developer/CommandLineTools/SDKs/MacOSX15.4.sdk"
-SDK_PATH="$(xcrun --sdk macosx --show-sdk-path)"
+cd "$ROOT_DIR"
 
-if [[ "$(xcode-select -p)" == "/Library/Developer/CommandLineTools" && -d "$LOCAL_SDK" ]]; then
-    SDK_PATH="$LOCAL_SDK"
+SWIFT_FLAGS=(--disable-sandbox --scratch-path "$ROOT_DIR/.build")
+
+# With only Command Line Tools installed, point SwiftPM at the CLT copy of Swift Testing.
+# Full Xcode finds it on its own, so these flags are skipped there.
+if [[ "$(xcode-select -p)" == "/Library/Developer/CommandLineTools" ]]; then
+
+
+    CLT_DEVELOPER="/Library/Developer/CommandLineTools/Library/Developer"
+    SWIFT_FLAGS+=(
+        -Xswiftc -F -Xswiftc "$CLT_DEVELOPER/Frameworks"
+        -Xlinker -rpath -Xlinker "$CLT_DEVELOPER/Frameworks"
+        -Xlinker -rpath -Xlinker "$CLT_DEVELOPER/usr/lib"
+    )
+    export CLANG_MODULE_CACHE_PATH="$ROOT_DIR/.build/ModuleCache"
+    export SWIFTPM_MODULECACHE_OVERRIDE="$ROOT_DIR/.build/ManifestCache"
 fi
 
-mkdir -p "$ROOT_DIR/.build/ModelChecksCache"
+swift test "${SWIFT_FLAGS[@]}"
+swift build "${SWIFT_FLAGS[@]}" --product PerceptionEditor
 
-swiftc \
-    -sdk "$SDK_PATH" \
-    -target arm64-apple-macosx15.0 \
-    -module-cache-path "$ROOT_DIR/.build/ModelChecksCache" \
-    -parse-as-library \
-    "$ROOT_DIR/Sources/PerceptionEditor/EditorModels.swift" \
-    "$ROOT_DIR/Sources/PerceptionEditor/ProjectDocument.swift" \
-    "$ROOT_DIR/Sources/PerceptionEditor/AgentModels.swift" \
-    "$ROOT_DIR/Sources/PerceptionEditor/AgentEngine.swift" \
-    "$ROOT_DIR/scripts/model-check.swift" \
-    -o "$ROOT_DIR/.build/model-check"
-
-"$ROOT_DIR/.build/model-check"
-
-SDKROOT="$SDK_PATH" \
-CLANG_MODULE_CACHE_PATH="$ROOT_DIR/.build/ModuleCache" \
-SWIFTPM_MODULECACHE_OVERRIDE="$ROOT_DIR/.build/ManifestCache" \
-swift build \
-    --disable-sandbox \
-    --scratch-path "$ROOT_DIR/.build" \
-    --product PerceptionEditor
-
-echo "Build check passed"
+echo "Tests and build passed"

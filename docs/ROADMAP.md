@@ -1,5 +1,49 @@
 # Perception Media Editor Roadmap
 
+## Direction (decided 2026-09-26)
+
+The goal is a full Lightroom replacement for a single photographer's workflow. Photo comes first and must be complete before video work resumes. Typical job: 100–200 Lumix S5 RW2 files per session, edited on an 8 GB M1 MacBook Air, so every feature has a memory budget. Existing Lightroom edits are not migrated; new shoots start fresh. Masks, healing, and presets are used on nearly every shoot.
+
+### Phase 0 — Foundation (in progress)
+
+- [x] Swift Testing suite that runs with Command Line Tools or Xcode
+- [x] Off-main-thread preview, histogram, thumbnail, and export rendering
+- [x] Memory-bounded working copies (2560 px, four cached) and metadata-only import
+- [x] Presets, look matching, and batch edits keep each photo's crop and rotation
+- [x] Photo dimensions recorded on import and backfilled for older projects
+- [x] Unsaved-changes prompt on New, Open, and Quit
+- [x] `\` before/after toggle that never fires while typing
+- [x] Crop editor shows the whole frame while editing an existing crop
+- [ ] GitHub Actions build
+- [ ] Split photo, timeline, and project responsibilities out of `EditorStore`
+
+### Phase 1 — Library and culling
+
+- Session-per-shoot projects, SD card import with copy, rename, and optional backup
+- Flags, stars, color labels, filters, and removing photos
+- Keyboard culling: full-screen loupe, P/X/1–5, instant next image, compare view
+
+### Phase 2 — RAW develop and presets
+
+- `CIRAWFilter` controls: Kelvin white balance from as-shot, highlight recovery, noise reduction, lens correction
+- Tone curve, HSL, color grading, auto-tone
+- Preset library, copy/paste/sync settings, history, snapshots, virtual copies
+
+### Phase 3 — Masks and healing
+
+- Linear, radial, and brush masks; Vision subject and sky masks
+- Spot healing and clone
+
+### Phase 4 — Delivery
+
+- Batch export recipes: size, quality, output sharpening, sRGB/P3, naming, copyright/IPTC, watermark
+
+### Phase 5 — Smart culling
+
+- Vision sharpness, closed-eye, and near-duplicate scoring
+
+Video (V0.3 below) resumes after the photo phases. Lumix S5 10-bit 4:2:2 and V-Log footage will likely need proxies and LUT support.
+
 ## V0.1 — Photo Engine (complete)
 
 - [x] Native SwiftUI macOS shell

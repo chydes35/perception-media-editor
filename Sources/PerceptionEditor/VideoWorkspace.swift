@@ -243,6 +243,38 @@ struct VideoWorkspace: View {
                         .controlSize(.small)
                     }
 
+                    inspectorSection("CLIP AUDIO") {
+                        HStack {
+                            Text(clip.isMuted ? "Muted" : "Timeline mix")
+                                .font(.caption)
+                                .foregroundStyle(clip.isMuted ? .orange : .secondary)
+                            Spacer()
+                            Button("Reset", systemImage: "arrow.counterclockwise") {
+                                store.resetSelectedAudioAdjustments()
+                            }
+                            .controlSize(.small)
+                        }
+
+                        audioAdjustment(
+                            "Volume",
+                            keyPath: \.volume,
+                            range: 0...1,
+                            display: { "\(Int(($0 * 100).rounded()))%" }
+                        )
+                        audioAdjustment(
+                            "Fade In",
+                            keyPath: \.fadeInSeconds,
+                            range: 0...max(0.01, clip.durationSeconds / 2),
+                            display: { String(format: "%.1fs", $0) }
+                        )
+                        audioAdjustment(
+                            "Fade Out",
+                            keyPath: \.fadeOutSeconds,
+                            range: 0...max(0.01, clip.durationSeconds / 2),
+                            display: { String(format: "%.1fs", $0) }
+                        )
+                    }
+
                     inspectorSection("CLIP COLOR") {
                         HStack {
                             Menu("Preset", systemImage: "camera.filters") {
@@ -344,6 +376,36 @@ struct VideoWorkspace: View {
                 in: range
             )
             .tint(.orange)
+        }
+    }
+
+    private func audioAdjustment(
+        _ label: String,
+        keyPath: WritableKeyPath<ClipAudioAdjustments, Double>,
+        range: ClosedRange<Double>,
+        display: (Double) -> String
+    ) -> some View {
+        let value = store.selectedAudioAdjustments[keyPath: keyPath]
+        return VStack(spacing: 4) {
+            HStack {
+                Text(label)
+                    .font(.caption)
+                Spacer()
+                Text(display(value))
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 48, alignment: .trailing)
+            }
+            Slider(
+                value: Binding(
+                    get: { store.selectedAudioAdjustments[keyPath: keyPath] },
+                    set: { newValue in
+                        store.updateSelectedAudioAdjustments { $0[keyPath: keyPath] = newValue }
+                    }
+                ),
+                in: range
+            )
+            .tint(.blue)
         }
     }
 
@@ -472,19 +534,28 @@ private struct EditorTimelineView: View {
         let width = timelineClipWidth(clip)
         let asset = store.timelineAsset(for: clip)
 
-        return HStack(spacing: 7) {
-            Image(systemName: video ? "film" : (clip.isMuted ? "speaker.slash.fill" : "waveform"))
-            VStack(alignment: .leading, spacing: 2) {
-                Text(asset?.filename ?? "Missing Media")
-                    .lineLimit(1)
-                Text(formatTime(clip.durationSeconds))
-                    .font(.system(size: 9, design: .monospaced))
-                    .opacity(0.76)
+        return ZStack(alignment: .leading) {
+            if !video {
+                AudioWaveformView(samples: waveformSamples(for: clip))
+                    .padding(.vertical, 5)
+                    .opacity(clip.isMuted ? 0.18 : 0.48)
+                    .accessibilityHidden(true)
             }
+
+            HStack(spacing: 7) {
+                Image(systemName: video ? "film" : (clip.isMuted ? "speaker.slash.fill" : "waveform"))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(asset?.filename ?? "Missing Media")
+                        .lineLimit(1)
+                    Text(formatTime(clip.durationSeconds))
+                        .font(.system(size: 9, design: .monospaced))
+                        .opacity(0.76)
+                }
+            }
+            .padding(.horizontal, 9)
         }
         .font(.caption.weight(.semibold))
         .foregroundStyle(.white)
-        .padding(.horizontal, 9)
         .frame(width: width, alignment: .leading)
         .frame(minHeight: 56)
         .background(
@@ -496,6 +567,20 @@ private struct EditorTimelineView: View {
                 .stroke(selected ? Color.white : Color.clear, lineWidth: 2)
         }
         .opacity(clip.isEnabled ? 1 : 0.45)
+    }
+
+    private func waveformSamples(for clip: TimelineClip) -> [Float] {
+        let samples = store.audioWaveform(for: clip)
+        guard !samples.isEmpty,
+              let duration = store.timelineAsset(for: clip)?.durationSeconds,
+              duration > 0
+        else { return samples }
+
+        let startFraction = min(1, max(0, clip.sourceStartSeconds / duration))
+        let endFraction = min(1, max(startFraction, (clip.sourceStartSeconds + clip.durationSeconds) / duration))
+        let start = min(samples.count - 1, Int(startFraction * Double(samples.count)))
+        let end = min(samples.count, max(start + 1, Int(ceil(endFraction * Double(samples.count)))))
+        return Array(samples[start..<end])
     }
 
     private var timelinePlayhead: some View {
@@ -561,5 +646,26 @@ private struct EditorPlayerView: NSViewRepresentable {
     func updateNSView(_ playerView: AVPlayerView, context: Context) {
         playerView.player = player
         playerView.controlsStyle = showsControls ? .floating : .none
+    }
+}
+
+private struct AudioWaveformView: View {
+    let samples: [Float]
+
+    var body: some View {
+        Canvas { context, size in
+            guard !samples.isEmpty, size.width > 0, size.height > 0 else { return }
+            let centerY = size.height / 2
+            let step = size.width / CGFloat(samples.count)
+
+            for (index, sample) in samples.enumerated() {
+                let height = max(1, size.height * CGFloat(min(1, max(0, sample))))
+                let x = min(size.width, (CGFloat(index) + 0.5) * step)
+                var path = Path()
+                path.move(to: CGPoint(x: x, y: centerY - height / 2))
+                path.addLine(to: CGPoint(x: x, y: centerY + height / 2))
+                context.stroke(path, with: .color(.white.opacity(0.82)), lineWidth: max(1, step * 0.54))
+            }
+        }
     }
 }

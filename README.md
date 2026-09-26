@@ -24,6 +24,7 @@ This repository currently contains **V0.3: Video Editor Foundation (in progress)
 - Rebuild timeline playback after edits while preserving the paused or playing state
 - Skip missing or incompatible media with visible playback warnings
 - Apply the same non-destructive color model and Perception presets to individual timeline clips
+- View cached audio waveforms and set non-destructive per-clip volume, fade-in, and fade-out automation
 
 ## Run for development
 

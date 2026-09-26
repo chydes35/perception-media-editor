@@ -18,6 +18,7 @@ final class EditorStore: ObservableObject {
     @Published private(set) var timelinePlaybackDurationSeconds = 0.0
     @Published private(set) var timelinePlaybackWarnings: [String] = []
     @Published private(set) var videoThumbnails: [UUID: NSImage] = [:]
+    @Published private(set) var audioWaveforms: [UUID: [Float]] = [:]
     @Published var renderedPreview: NSImage?
     @Published var originalPreview: NSImage?
     @Published var previewMode: PreviewMode = .edited
@@ -34,8 +35,10 @@ final class EditorStore: ObservableObject {
     private let userPresetRepository = UserPresetRepository()
     private let thumbnailCache = ThumbnailCache()
     private let videoMediaService = VideoMediaService.shared
+    private let audioWaveformService = AudioWaveformService.shared
     private let timelineCompositionService = TimelineCompositionService.shared
     private var pendingVideoThumbnails: Set<UUID> = []
+    private var pendingAudioWaveforms: Set<UUID> = []
     private var compositionRebuildTask: Task<Void, Never>?
     private var playbackMonitorTask: Task<Void, Never>?
     private var playbackRequestID = UUID()
@@ -93,6 +96,11 @@ final class EditorStore: ObservableObject {
         return project.videoAdjustmentsByClipID[selectedTimelineClipID] ?? .neutral
     }
 
+    var selectedAudioAdjustments: ClipAudioAdjustments {
+        guard let selectedTimelineClipID else { return .neutral }
+        return project.audioAdjustmentsByClipID[selectedTimelineClipID] ?? .neutral
+    }
+
     func importMedia() {
         let panel = NSOpenPanel()
         panel.title = "Import Media"
@@ -139,6 +147,7 @@ final class EditorStore: ObservableObject {
                 )
                 project.media.append(asset)
                 selectedVideoAssetID = asset.id
+                requestAudioWaveform(for: asset)
                 if kind == .video {
                     showSourceVideo(asset)
                 }
@@ -174,6 +183,7 @@ final class EditorStore: ObservableObject {
     func selectVideo(_ asset: MediaAsset) {
         guard asset.kind == .video || asset.kind == .audio else { return }
         selectedVideoAssetID = asset.id
+        requestAudioWaveform(for: asset)
         showSourceVideo(asset)
         statusMessage = "Selected \(asset.filename)"
     }
@@ -254,6 +264,27 @@ final class EditorStore: ObservableObject {
         statusMessage = "Clip color reset"
     }
 
+    func updateSelectedAudioAdjustments(_ update: (inout ClipAudioAdjustments) -> Void) {
+        guard let selectedTimelineClipID, let selectedTimelineClip else { return }
+        var adjustments = selectedAudioAdjustments
+        update(&adjustments)
+        adjustments.volume = min(1, max(0, adjustments.volume))
+        adjustments.pan = min(1, max(-1, adjustments.pan))
+        let maximumFade = max(0, selectedTimelineClip.durationSeconds / 2)
+        adjustments.fadeInSeconds = min(maximumFade, max(0, adjustments.fadeInSeconds))
+        adjustments.fadeOutSeconds = min(maximumFade, max(0, adjustments.fadeOutSeconds))
+        project.audioAdjustmentsByClipID[selectedTimelineClipID] = adjustments
+        rebuildTimelinePlayback()
+        statusMessage = "Updated clip audio"
+    }
+
+    func resetSelectedAudioAdjustments() {
+        guard let selectedTimelineClipID else { return }
+        project.audioAdjustmentsByClipID.removeValue(forKey: selectedTimelineClipID)
+        rebuildTimelinePlayback()
+        statusMessage = "Clip audio reset"
+    }
+
     func rotate(clockwise: Bool) {
         updateAdjustments { adjustments in
             let delta = clockwise ? 1 : -1
@@ -302,6 +333,8 @@ final class EditorStore: ObservableObject {
         timelinePlaybackWarnings = []
         videoThumbnails = [:]
         pendingVideoThumbnails = []
+        audioWaveforms = [:]
+        pendingAudioWaveforms = []
         sourceImages = [:]
         renderedPreview = nil
         originalPreview = nil
@@ -351,6 +384,11 @@ final class EditorStore: ObservableObject {
             selectedVideoAssetID = nil
             selectedTimelineClipID = project.timelineClips.first?.id
             sourceImages = [:]
+            audioWaveforms = [:]
+            pendingAudioWaveforms = []
+            for asset in project.media where asset.kind == .video || asset.kind == .audio {
+                requestAudioWaveform(for: asset)
+            }
             if let first = project.media.first {
                 if first.kind == .photo {
                     selectedAssetID = first.id
@@ -475,6 +513,11 @@ final class EditorStore: ObservableObject {
         thumbnailCache.invalidate(assetID: target.id)
         videoThumbnails[target.id] = nil
         pendingVideoThumbnails.remove(target.id)
+        audioWaveforms[target.id] = nil
+        pendingAudioWaveforms.remove(target.id)
+        Task {
+            await audioWaveformService.invalidate(url: target.url)
+        }
         project.media[index].url = url
         if target.kind == .photo {
             sourceImages[target.id] = photoSource
@@ -529,6 +572,7 @@ final class EditorStore: ObservableObject {
         guard let selectedTimelineClipID else { return }
         project.timelineClips.removeAll(where: { $0.id == selectedTimelineClipID })
         project.videoAdjustmentsByClipID.removeValue(forKey: selectedTimelineClipID)
+        project.audioAdjustmentsByClipID.removeValue(forKey: selectedTimelineClipID)
         self.selectedTimelineClipID = project.timelineClips.first?.id
         normalizePrimaryTimeline()
         rebuildTimelinePlayback()
@@ -606,6 +650,16 @@ final class EditorStore: ObservableObject {
         if let adjustments = project.videoAdjustmentsByClipID[original.id] {
             project.videoAdjustmentsByClipID[second.id] = adjustments
         }
+        if var adjustments = project.audioAdjustmentsByClipID[original.id] {
+            let originalFadeOut = adjustments.fadeOutSeconds
+            adjustments.fadeOutSeconds = 0
+            project.audioAdjustmentsByClipID[original.id] = adjustments
+
+            var secondAdjustments = adjustments
+            secondAdjustments.fadeInSeconds = 0
+            secondAdjustments.fadeOutSeconds = min(originalFadeOut, second.durationSeconds / 2)
+            project.audioAdjustmentsByClipID[second.id] = secondAdjustments
+        }
         self.selectedTimelineClipID = second.id
         normalizePrimaryTimeline()
         rebuildTimelinePlayback(seekTo: second.timelineStartSeconds)
@@ -663,9 +717,32 @@ final class EditorStore: ObservableObject {
         project.media.first(where: { $0.id == clip.assetID })
     }
 
+    func audioWaveform(for clip: TimelineClip) -> [Float] {
+        audioWaveforms[clip.assetID] ?? []
+    }
+
     private func loadSourceIfNeeded(for asset: MediaAsset) {
         guard sourceImages[asset.id] == nil else { return }
         sourceImages[asset.id] = renderer.loadImage(from: asset.url)
+    }
+
+    private func requestAudioWaveform(for asset: MediaAsset) {
+        guard asset.kind == .video || asset.kind == .audio,
+              audioWaveforms[asset.id] == nil,
+              !pendingAudioWaveforms.contains(asset.id)
+        else { return }
+
+        pendingAudioWaveforms.insert(asset.id)
+        let assetID = asset.id
+        let url = asset.url
+        Task { [weak self] in
+            guard let self else { return }
+            let samples = await audioWaveformService.samples(for: url)
+            pendingAudioWaveforms.remove(assetID)
+            if !samples.isEmpty {
+                audioWaveforms[assetID] = samples
+            }
+        }
     }
 
     private func mediaKind(for url: URL) -> MediaKind? {
@@ -724,6 +801,7 @@ final class EditorStore: ObservableObject {
         let clips = project.timelineClips
         let media = project.media
         let adjustmentsByClipID = project.videoAdjustmentsByClipID
+        let audioAdjustmentsByClipID = project.audioAdjustmentsByClipID
         let requestID = UUID()
         playbackRequestID = requestID
         compositionRebuildTask?.cancel()
@@ -734,7 +812,8 @@ final class EditorStore: ObservableObject {
             let result = await timelineCompositionService.makePlayerItem(
                 clips: clips,
                 media: media,
-                adjustmentsByClipID: adjustmentsByClipID
+                adjustmentsByClipID: adjustmentsByClipID,
+                audioAdjustmentsByClipID: audioAdjustmentsByClipID
             )
             guard !Task.isCancelled, playbackRequestID == requestID else { return }
 

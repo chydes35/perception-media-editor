@@ -27,11 +27,18 @@ struct ModelCheck {
             temperature: 0.08,
             vibrance: 0.16
         )
+        let audioAdjustments = ClipAudioAdjustments(
+            volume: 0.72,
+            pan: -0.2,
+            fadeInSeconds: 0.8,
+            fadeOutSeconds: 1.1
+        )
         let project = EditorProject(
             name: "Documentary",
             media: [asset],
             adjustmentsByAssetID: [assetID: adjustments],
             videoAdjustmentsByClipID: [timelineClip.id: videoAdjustments],
+            audioAdjustmentsByClipID: [timelineClip.id: audioAdjustments],
             timelineClips: [timelineClip]
         )
 
@@ -52,6 +59,10 @@ struct ModelCheck {
             "Video adjustments did not round-trip"
         )
         try require(
+            decoded.audioAdjustmentsByClipID[timelineClip.id] == audioAdjustments,
+            "Audio adjustments did not round-trip"
+        )
+        try require(
             decoded.schemaVersion == EditorProject.currentSchemaVersion,
             "Project was not saved with the current schema"
         )
@@ -63,14 +74,24 @@ struct ModelCheck {
             try require((0...1).contains(preset.adjustments.vignette), "Preset vignette is out of range")
         }
 
-        var legacyObject = try JSONSerialization.jsonObject(with: document.data(for: project)) as! [String: Any]
-        legacyObject["schemaVersion"] = 2
-        legacyObject.removeValue(forKey: "videoAdjustmentsByClipID")
-        let legacyData = try JSONSerialization.data(withJSONObject: legacyObject)
-        let decodedLegacy = try document.project(from: legacyData)
+        var schemaThreeObject = try JSONSerialization.jsonObject(with: document.data(for: project)) as! [String: Any]
+        schemaThreeObject["schemaVersion"] = 3
+        schemaThreeObject.removeValue(forKey: "audioAdjustmentsByClipID")
+        let schemaThreeData = try JSONSerialization.data(withJSONObject: schemaThreeObject)
+        let decodedSchemaThree = try document.project(from: schemaThreeData)
         try require(
-            decodedLegacy.videoAdjustmentsByClipID.isEmpty,
-            "Legacy projects did not default video adjustments"
+            decodedSchemaThree.audioAdjustmentsByClipID.isEmpty,
+            "Schema 3 projects did not default audio adjustments"
+        )
+
+        var schemaTwoObject = schemaThreeObject
+        schemaTwoObject["schemaVersion"] = 2
+        schemaTwoObject.removeValue(forKey: "videoAdjustmentsByClipID")
+        let schemaTwoData = try JSONSerialization.data(withJSONObject: schemaTwoObject)
+        let decodedSchemaTwo = try document.project(from: schemaTwoData)
+        try require(
+            decodedSchemaTwo.videoAdjustmentsByClipID.isEmpty,
+            "Schema 2 projects did not default video adjustments"
         )
 
         let futureData = """

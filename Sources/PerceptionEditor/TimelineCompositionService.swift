@@ -19,6 +19,12 @@ private struct TimelineColorSegment: Sendable {
     }
 }
 
+private struct TimelineAudioSegment: Sendable {
+    var startSeconds: Double
+    var durationSeconds: Double
+    var adjustments: ClipAudioAdjustments
+}
+
 private struct SendableVideoComposition: @unchecked Sendable {
     let value: AVVideoComposition?
 }
@@ -32,7 +38,8 @@ final class TimelineCompositionService {
     func makePlayerItem(
         clips: [TimelineClip],
         media: [MediaAsset],
-        adjustmentsByClipID: [UUID: PhotoAdjustments] = [:]
+        adjustmentsByClipID: [UUID: PhotoAdjustments] = [:],
+        audioAdjustmentsByClipID: [UUID: ClipAudioAdjustments] = [:]
     ) async -> TimelineCompositionResult {
         let composition = AVMutableComposition()
         guard let compositionVideoTrack = composition.addMutableTrack(
@@ -58,6 +65,7 @@ final class TimelineCompositionService {
 
         var insertedClipIDs: [UUID] = []
         var colorSegments: [TimelineColorSegment] = []
+        var audioSegments: [TimelineAudioSegment] = []
         var warnings: [String] = []
         var didSetVideoTransform = false
 
@@ -126,6 +134,13 @@ final class TimelineCompositionService {
                         of: sourceAudioTrack,
                         at: insertionTime
                     )
+                    audioSegments.append(
+                        TimelineAudioSegment(
+                            startSeconds: max(0, clip.timelineStartSeconds),
+                            durationSeconds: insertedDurationSeconds,
+                            adjustments: audioAdjustmentsByClipID[clip.id] ?? .neutral
+                        )
+                    )
                 } catch {
                     warnings.append("Video inserted without audio: \(mediaAsset.filename)")
                 }
@@ -152,6 +167,49 @@ final class TimelineCompositionService {
 
         let durationSeconds = composition.duration.seconds
         let playerItem = AVPlayerItem(asset: composition)
+        if let compositionAudioTrack, !audioSegments.isEmpty {
+            let audioParameters = AVMutableAudioMixInputParameters(track: compositionAudioTrack)
+            for segment in audioSegments {
+                let volume = Float(min(1, max(0, segment.adjustments.volume)))
+                let maximumFade = max(0, segment.durationSeconds / 2)
+                let fadeIn = min(maximumFade, max(0, segment.adjustments.fadeInSeconds))
+                let fadeOut = min(maximumFade, max(0, segment.adjustments.fadeOutSeconds))
+                let start = CMTime(seconds: segment.startSeconds, preferredTimescale: 600)
+
+                if fadeIn > 0 {
+                    audioParameters.setVolumeRamp(
+                        fromStartVolume: 0,
+                        toEndVolume: volume,
+                        timeRange: CMTimeRange(
+                            start: start,
+                            duration: CMTime(seconds: fadeIn, preferredTimescale: 600)
+                        )
+                    )
+                } else {
+                    audioParameters.setVolume(volume, at: start)
+                }
+
+                if fadeOut > 0 {
+                    let fadeStart = CMTime(
+                        seconds: segment.startSeconds + segment.durationSeconds - fadeOut,
+                        preferredTimescale: 600
+                    )
+                    audioParameters.setVolume(volume, at: fadeStart)
+                    audioParameters.setVolumeRamp(
+                        fromStartVolume: volume,
+                        toEndVolume: 0,
+                        timeRange: CMTimeRange(
+                            start: fadeStart,
+                            duration: CMTime(seconds: fadeOut, preferredTimescale: 600)
+                        )
+                    )
+                }
+            }
+            let audioMix = AVMutableAudioMix()
+            audioMix.inputParameters = [audioParameters]
+            playerItem.audioMix = audioMix
+        }
+
         if colorSegments.contains(where: { $0.adjustments != .neutral }) {
             let renderSegments = colorSegments
             let videoCompositionResult: SendableVideoComposition = await withCheckedContinuation { continuation in

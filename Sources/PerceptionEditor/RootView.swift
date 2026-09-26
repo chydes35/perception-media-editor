@@ -90,7 +90,7 @@ struct RootView: View {
                 .frame(width: 7, height: 7)
             Text(store.statusMessage)
             Spacer()
-            Text("V0.3 CLIP COLOR")
+            Text("V0.3 AUDIO MIX")
                 .font(.system(size: 10, weight: .semibold, design: .monospaced))
                 .foregroundStyle(.secondary)
         }

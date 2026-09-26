@@ -32,7 +32,8 @@
 - [x] Clip trim, split, reorder, mute, play, and ripple delete controls
 - [x] AVMutableComposition sequence playback, scrubbing, and active-clip sync
 - [x] Shared color model for photos and video clips
-- [ ] Waveform cache, volume, pan, and fades
+- [x] Waveform cache, clip volume, and fades
+- [ ] Clip pan and advanced audio mixing
 - [ ] Titles, basic transitions, speed presets, and frame capture
 - [ ] 1080p and 4K export
 

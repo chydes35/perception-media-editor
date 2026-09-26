@@ -112,6 +112,15 @@ struct TimelineClip: Identifiable, Codable, Equatable, Sendable {
     }
 }
 
+struct ClipAudioAdjustments: Codable, Equatable, Sendable {
+    var volume = 1.0
+    var pan = 0.0
+    var fadeInSeconds = 0.0
+    var fadeOutSeconds = 0.0
+
+    static let neutral = ClipAudioAdjustments()
+}
+
 enum CropAspect: String, Codable, CaseIterable, Identifiable, Sendable {
     case original = "Original"
     case square = "1:1"
@@ -221,7 +230,7 @@ struct PhotoPreset: Identifiable, Codable, Equatable, Sendable {
 }
 
 struct EditorProject: Codable, Equatable {
-    static let currentSchemaVersion = 3
+    static let currentSchemaVersion = 4
 
     var schemaVersion = currentSchemaVersion
     var id = UUID()
@@ -231,6 +240,7 @@ struct EditorProject: Codable, Equatable {
     var media: [MediaAsset] = []
     var adjustmentsByAssetID: [UUID: PhotoAdjustments] = [:]
     var videoAdjustmentsByClipID: [UUID: PhotoAdjustments] = [:]
+    var audioAdjustmentsByClipID: [UUID: ClipAudioAdjustments] = [:]
     var timelineClips: [TimelineClip] = []
 
     static let starter = EditorProject(name: "Untitled Project")
@@ -244,6 +254,7 @@ struct EditorProject: Codable, Equatable {
         media: [MediaAsset] = [],
         adjustmentsByAssetID: [UUID: PhotoAdjustments] = [:],
         videoAdjustmentsByClipID: [UUID: PhotoAdjustments] = [:],
+        audioAdjustmentsByClipID: [UUID: ClipAudioAdjustments] = [:],
         timelineClips: [TimelineClip] = []
     ) {
         self.schemaVersion = schemaVersion
@@ -254,6 +265,7 @@ struct EditorProject: Codable, Equatable {
         self.media = media
         self.adjustmentsByAssetID = adjustmentsByAssetID
         self.videoAdjustmentsByClipID = videoAdjustmentsByClipID
+        self.audioAdjustmentsByClipID = audioAdjustmentsByClipID
         self.timelineClips = timelineClips
     }
 
@@ -266,6 +278,7 @@ struct EditorProject: Codable, Equatable {
         case media
         case adjustmentsByAssetID
         case videoAdjustmentsByClipID
+        case audioAdjustmentsByClipID
         case timelineClips
     }
 
@@ -284,6 +297,10 @@ struct EditorProject: Codable, Equatable {
         videoAdjustmentsByClipID = try container.decodeIfPresent(
             [UUID: PhotoAdjustments].self,
             forKey: .videoAdjustmentsByClipID
+        ) ?? [:]
+        audioAdjustmentsByClipID = try container.decodeIfPresent(
+            [UUID: ClipAudioAdjustments].self,
+            forKey: .audioAdjustmentsByClipID
         ) ?? [:]
         timelineClips = try container.decodeIfPresent([TimelineClip].self, forKey: .timelineClips) ?? []
     }

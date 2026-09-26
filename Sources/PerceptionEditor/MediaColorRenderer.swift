@@ -9,24 +9,8 @@ enum MediaColorRenderer {
         adjustments: PhotoAdjustments,
         includesGeometry: Bool
     ) -> CIImage {
-        var image = source
-
-        if includesGeometry, adjustments.rotationQuarterTurns != 0 {
-            let radians = CGFloat(adjustments.rotationQuarterTurns) * .pi / 2
-            image = image.transformed(by: CGAffineTransform(rotationAngle: radians))
-            let normalized = image.extent
-            image = image.transformed(
-                by: CGAffineTransform(translationX: -normalized.origin.x, y: -normalized.origin.y)
-            )
-        }
-
-        if includesGeometry, let degrees = adjustments.straightenDegrees, abs(degrees) > 0.001 {
-            image = image.transformed(by: CGAffineTransform(rotationAngle: CGFloat(degrees) * .pi / 180))
-            let normalized = image.extent
-            image = image.transformed(
-                by: CGAffineTransform(translationX: -normalized.origin.x, y: -normalized.origin.y)
-            )
-        }
+        let sourceExtent = source.extent
+        var image = includesGeometry ? orient(source, adjustments) : source
 
         let exposure = CIFilter.exposureAdjust()
         exposure.inputImage = image
@@ -84,6 +68,11 @@ enum MediaColorRenderer {
             image = cube.outputImage ?? image
         }
 
+        // Local adjustments come after the global ones, as in Lightroom. Video clips have no masks.
+        if includesGeometry {
+            image = applyMasks(image, adjustments: adjustments, sourceExtent: sourceExtent)
+        }
+
         if adjustments.sharpness > 0 {
             let sharpen = CIFilter.sharpenLuminance()
             sharpen.inputImage = image
@@ -102,46 +91,105 @@ enum MediaColorRenderer {
         return includesGeometry ? crop(image, to: adjustments.cropAspect, rect: adjustments.cropRect) : image
     }
 
+    // MARK: - Geometry
+
+    /// Quarter-turn rotation and straighten. Masks go through the same steps as the photo so
+    /// they stay on the same part of the picture.
+    static func orient(_ source: CIImage, _ adjustments: PhotoAdjustments) -> CIImage {
+        var image = source
+
+        if adjustments.rotationQuarterTurns != 0 {
+            let radians = CGFloat(adjustments.rotationQuarterTurns) * .pi / 2
+            image = image.transformed(by: CGAffineTransform(rotationAngle: radians))
+            let normalized = image.extent
+            image = image.transformed(
+                by: CGAffineTransform(translationX: -normalized.origin.x, y: -normalized.origin.y)
+            )
+        }
+
+        if let degrees = adjustments.straightenDegrees, abs(degrees) > 0.001 {
+            image = image.transformed(by: CGAffineTransform(rotationAngle: CGFloat(degrees) * .pi / 180))
+            let normalized = image.extent
+            image = image.transformed(
+                by: CGAffineTransform(translationX: -normalized.origin.x, y: -normalized.origin.y)
+            )
+        }
+        return image
+    }
+
+    /// An image that covers the original photo (a mask, for example) carried through the same
+    /// rotation, straighten, and crop as the finished photo.
+    static func finishedGeometry(_ source: CIImage, _ adjustments: PhotoAdjustments) -> CIImage {
+        crop(orient(source, adjustments), to: adjustments.cropAspect, rect: adjustments.cropRect)
+    }
+
+    // MARK: - Local adjustments
+
+    private static func applyMasks(
+        _ image: CIImage,
+        adjustments: PhotoAdjustments,
+        sourceExtent: CGRect
+    ) -> CIImage {
+        var result = image
+        for mask in adjustments.masks where mask.isActive {
+            let adjusted = localAdjust(result, mask.adjustments)
+            let maskImage = orient(MaskRenderer.image(for: mask, extent: sourceExtent), adjustments)
+
+            let blend = CIFilter.blendWithMask()
+            blend.inputImage = adjusted
+            blend.backgroundImage = result
+            blend.maskImage = maskImage
+            result = blend.outputImage ?? result
+        }
+        return result
+    }
+
+    /// The masked adjustments, using the same filters and scales as the global sliders.
+    private static func localAdjust(_ source: CIImage, _ adjustments: MaskAdjustments) -> CIImage {
+        var image = source
+
+        if adjustments.exposure != 0 {
+            let exposure = CIFilter.exposureAdjust()
+            exposure.inputImage = image
+            exposure.ev = Float(adjustments.exposure)
+            image = exposure.outputImage ?? image
+        }
+        if adjustments.contrast != 0 || adjustments.saturation != 0 {
+            let controls = CIFilter.colorControls()
+            controls.inputImage = image
+            controls.contrast = Float(1 + adjustments.contrast)
+            controls.saturation = Float(max(0, 1 + adjustments.saturation))
+            image = controls.outputImage ?? image
+        }
+        if adjustments.highlights != 0 || adjustments.shadows != 0 {
+            let highlightShadow = CIFilter.highlightShadowAdjust()
+            highlightShadow.inputImage = image
+            highlightShadow.highlightAmount = Float(1 + adjustments.highlights)
+            highlightShadow.shadowAmount = Float(adjustments.shadows)
+            image = highlightShadow.outputImage ?? image
+        }
+        if adjustments.temperature != 0 || adjustments.tint != 0 {
+            let temperature = CIFilter.temperatureAndTint()
+            temperature.inputImage = image
+            temperature.neutral = CIVector(x: 6500, y: 0)
+            temperature.targetNeutral = CIVector(
+                x: 6500 + adjustments.temperature * 2200,
+                y: adjustments.tint * 120
+            )
+            image = temperature.outputImage ?? image
+        }
+        if adjustments.sharpness > 0 {
+            let sharpen = CIFilter.sharpenLuminance()
+            sharpen.inputImage = image
+            sharpen.sharpness = Float(adjustments.sharpness * 1.5)
+            image = sharpen.outputImage ?? image
+        }
+        return image
+    }
+
     private static func crop(_ image: CIImage, to aspect: CropAspect, rect: CropRect?) -> CIImage {
-        if let rect {
-            let extent = image.extent
-            let normalized = CGRect(
-                x: extent.minX + extent.width * rect.x,
-                y: extent.minY + extent.height * rect.y,
-                width: extent.width * rect.width,
-                height: extent.height * rect.height
-            )
-            let cropped = image.cropped(to: normalized.integral)
-            return cropped.transformed(
-                by: CGAffineTransform(translationX: -cropped.extent.origin.x, y: -cropped.extent.origin.y)
-            )
-        }
-
-        guard let ratio = aspect.ratio else { return image }
-
-        let extent = image.extent
-        let currentRatio = extent.width / extent.height
-        let cropRect: CGRect
-
-        if currentRatio > ratio {
-            let width = extent.height * ratio
-            cropRect = CGRect(
-                x: extent.midX - width / 2,
-                y: extent.minY,
-                width: width,
-                height: extent.height
-            )
-        } else {
-            let height = extent.width / ratio
-            cropRect = CGRect(
-                x: extent.minX,
-                y: extent.midY - height / 2,
-                width: extent.width,
-                height: height
-            )
-        }
-
-        let cropped = image.cropped(to: cropRect.integral)
+        guard let area = ImageGeometry.cropArea(in: image.extent, aspect: aspect, rect: rect) else { return image }
+        let cropped = image.cropped(to: area)
         return cropped.transformed(
             by: CGAffineTransform(translationX: -cropped.extent.origin.x, y: -cropped.extent.origin.y)
         )

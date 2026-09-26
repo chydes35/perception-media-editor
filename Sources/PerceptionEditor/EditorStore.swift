@@ -26,6 +26,15 @@ final class EditorStore: ObservableObject {
     /// RAW engine defaults for the selected photo; nil when it is not a RAW file.
     @Published var rawInfo: RawInfo?
     @Published var isRenderingPreview = false
+    @Published var maskTool: MaskTool = .none
+    @Published var selectedMaskID: UUID?
+    @Published var showMaskOverlay = false
+    /// True while a mask is being dragged or painted, so its area shows without the toggle.
+    @Published var isMaskInteracting = false
+    @Published var maskOverlay: NSImage?
+    @Published var brushSize = 0.06
+    @Published var brushFeather = 0.5
+    @Published var brushErasing = false
     /// Each photo's edit steps for this session, oldest first. Not saved in the project.
     @Published var history: [UUID: [HistoryEntry]] = [:]
     @Published var copiedSettings: CopiedSettings?
@@ -256,6 +265,7 @@ final class EditorStore: ObservableObject {
             selectVideo(asset)
             return
         }
+        if selectedAssetID != asset.id { endMaskEditing() }
         selectedAssetID = asset.id
         selectedAssetIDs = [asset.id]
         refreshPreview()
@@ -415,7 +425,7 @@ final class EditorStore: ObservableObject {
     func applyVideoPreset(_ preset: PhotoPreset) {
         guard let selectedTimelineClipID else { return }
         // Video clips take a preset's look groups; white balance and RAW detail belong to RAW photos.
-        let groups = preset.effectiveGroups.intersection(AdjustmentGroup.looks).subtracting([.rawDetail])
+        let groups = preset.effectiveGroups.intersection(AdjustmentGroup.looks).subtracting([.rawDetail, .masks])
         project.videoAdjustmentsByClipID[selectedTimelineClipID] =
             selectedVideoAdjustments.applying(preset.adjustments, groups: groups)
         rebuildTimelinePlayback()
@@ -494,11 +504,12 @@ final class EditorStore: ObservableObject {
         let adjustments = isEditingCrop ? selectedAdjustments.withoutCrop : selectedAdjustments
         let needsOriginal = originalPreviewAssetID != assetID
         let renderer = photoRenderer
+        let overlayID = (showMaskOverlay || isMaskInteracting) ? selectedMaskID : nil
         isRenderingPreview = true
 
         previewTask = Task { [weak self] in
             let original = needsOriginal ? await renderer.original(url: url) : nil
-            let result = await renderer.preview(url: url, adjustments: adjustments)
+            let result = await renderer.preview(url: url, adjustments: adjustments, overlayMaskID: overlayID)
             self?.finishPreviewRender(
                 assetID: assetID,
                 needsOriginal: needsOriginal,
@@ -523,6 +534,7 @@ final class EditorStore: ObservableObject {
                 originalPreviewAssetID = assetID
             }
             renderedPreview = result.map { Self.nsImage($0.edited) }
+            maskOverlay = result?.maskOverlay.map(Self.nsImage)
             histogram = result?.histogram ?? .empty
         }
 

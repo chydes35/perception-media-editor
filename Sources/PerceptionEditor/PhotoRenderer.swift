@@ -12,6 +12,8 @@ struct RenderedImage: @unchecked Sendable {
 struct PhotoPreviewResult: Sendable {
     var edited: RenderedImage
     var histogram: HistogramData
+    /// The selected mask as a red tint (opaque where the mask applies), the same size as `edited`.
+    var maskOverlay: RenderedImage?
 }
 
 /// A 1:1 pixel render of part of a photo, for checking focus at 100%.
@@ -232,11 +234,32 @@ actor PhotoRenderer {
     }
 
     /// The edited preview and its histogram for the selected photo.
-    func preview(url: URL, adjustments: PhotoAdjustments) -> PhotoPreviewResult? {
+    func preview(url: URL, adjustments: PhotoAdjustments, overlayMaskID: UUID? = nil) -> PhotoPreviewResult? {
         guard let source = workingSource(for: url, raw: adjustments.raw) else { return nil }
         let edited = MediaColorRenderer.render(source, adjustments: adjustments, includesGeometry: true)
         guard let image = bitmap(edited, maxDimension: Self.previewDimension) else { return nil }
-        return PhotoPreviewResult(edited: image, histogram: histogram(of: image.cgImage))
+
+        var overlay: RenderedImage?
+        if let overlayMaskID, let mask = adjustments.masks.first(where: { $0.id == overlayMaskID }) {
+            overlay = maskOverlay(for: mask, source: source, adjustments: adjustments)
+        }
+        return PhotoPreviewResult(edited: image, histogram: histogram(of: image.cgImage), maskOverlay: overlay)
+    }
+
+    /// A mask as a red tint over the finished picture: it follows the photo through rotation,
+    /// straighten, and crop, and is rendered on the same grid as the preview so they line up.
+    private func maskOverlay(for mask: LocalMask, source: CIImage, adjustments: PhotoAdjustments) -> RenderedImage? {
+        let weights = MaskRenderer.image(for: mask, extent: source.extent)
+        let finished = MediaColorRenderer.finishedGeometry(weights, adjustments)
+        // Red, with the mask value as its opacity.
+        let tinted = finished.applyingFilter("CIColorMatrix", parameters: [
+            "inputRVector": CIVector(x: 0, y: 0, z: 0, w: 0),
+            "inputGVector": CIVector(x: 0, y: 0, z: 0, w: 0),
+            "inputBVector": CIVector(x: 0, y: 0, z: 0, w: 0),
+            "inputAVector": CIVector(x: 1, y: 0, z: 0, w: 0),
+            "inputBiasVector": CIVector(x: 1, y: 0.1, z: 0.1, w: 0)
+        ])
+        return bitmap(tinted, maxDimension: Self.previewDimension)
     }
 
     /// The photo as the RAW engine renders it with no edits, for before/after.

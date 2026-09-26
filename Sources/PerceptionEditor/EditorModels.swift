@@ -208,6 +208,8 @@ struct PhotoAdjustments: Codable, Equatable, Sendable {
     var curves = ToneCurves()
     /// Nil when every color band is untouched.
     var hsl: HSLAdjustments?
+    /// Local adjustments, in order. Positions are in the original image's coordinates.
+    var masks: [LocalMask] = []
 
     static let neutral = PhotoAdjustments()
 
@@ -235,7 +237,7 @@ struct PhotoAdjustments: Codable, Equatable, Sendable {
 extension PhotoAdjustments {
     enum CodingKeys: String, CodingKey {
         case exposure, contrast, highlights, shadows, temperature, tint, vibrance, saturation
-        case sharpness, vignette, rotationQuarterTurns, cropAspect, cropRect, straightenDegrees, raw, curves, hsl
+        case sharpness, vignette, rotationQuarterTurns, cropAspect, cropRect, straightenDegrees, raw, curves, hsl, masks
     }
 
     /// Every field decodes with a default, so projects saved before a field existed still open.
@@ -258,6 +260,7 @@ extension PhotoAdjustments {
         raw = try container.decodeIfPresent(RawSettings.self, forKey: .raw) ?? RawSettings()
         curves = try container.decodeIfPresent(ToneCurves.self, forKey: .curves) ?? ToneCurves()
         hsl = try container.decodeIfPresent(HSLAdjustments.self, forKey: .hsl)
+        masks = try container.decodeIfPresent([LocalMask].self, forKey: .masks) ?? []
     }
 }
 

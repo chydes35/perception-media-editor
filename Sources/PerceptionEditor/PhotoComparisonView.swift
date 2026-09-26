@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 
 struct PhotoComparisonView: View {
+    @EnvironmentObject private var store: EditorStore
     let original: NSImage?
     let edited: NSImage?
     let mode: PreviewMode
@@ -21,6 +22,11 @@ struct PhotoComparisonView: View {
                     fitted(original ?? edited)
                 case .edited:
                     fitted(edited)
+                    if let overlay = store.maskOverlay, store.isMaskEditing {
+                        fitted(overlay)
+                            .opacity(0.5)
+                            .allowsHitTesting(false)
+                    }
                 case .split:
                     split(original: original ?? edited, edited: edited)
                 case .sideBySide:
@@ -38,6 +44,10 @@ struct PhotoComparisonView: View {
             if isCropping, mode == .edited {
                 CropOverlayView(cropRect: $cropRect, aspect: cropAspect)
             }
+
+            if !isCropping, mode == .edited, store.isMaskEditing, let edited {
+                MaskEditingLayer(imageSize: edited.size)
+            }
         }
         .clipped()
         .contentShape(Rectangle())
@@ -52,7 +62,7 @@ struct PhotoComparisonView: View {
                         onZoomRequest?(point)
                     }
             }
-            .allowsHitTesting(!isCropping && mode == .edited && onZoomRequest != nil)
+            .allowsHitTesting(!isCropping && mode == .edited && onZoomRequest != nil && !store.isMaskEditing)
         }
         .accessibilityHint("Click the photo to view it at 100 percent.")
     }

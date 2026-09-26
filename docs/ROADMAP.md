@@ -44,10 +44,17 @@ The goal is a full Lightroom replacement for a single photographer's workflow. P
 - [ ] Auto tone and auto white balance
 - [ ] Split `EditorStore` into photo, timeline, and project parts
 
-### Phase 3 — Masks and healing
+### Phase 3 — Masks and healing (in progress)
 
-- Linear, radial, and brush masks; Vision subject and sky masks
-- Spot healing and clone
+- [x] Linear and radial gradient masks: drag on the photo to place them, drag handles to move and resize, rotation and feather in the panel
+- [x] Brush and erase: soft feathered strokes, ⌥ to erase, [ and ] to resize, each stroke one undo step
+- [x] Adjustments inside a mask: exposure, contrast, highlights, shadows, warmth, tint, saturation, sharpness; per-mask amount, invert, hide, duplicate, delete
+- [x] Masks stay on the same part of the picture through rotation, straighten, and crop
+- [x] Red mask overlay (O), shown automatically while dragging or painting
+- [x] Gradient masks sync, copy, and save into presets; brush strokes stay with their photo
+- [ ] Subject and sky selection (Vision)
+- [ ] Color and luminance range masks
+- [ ] Spot healing and clone
 
 ### Phase 4 — Delivery
 

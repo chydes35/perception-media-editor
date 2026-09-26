@@ -20,10 +20,12 @@ struct ModelCheck {
             temperature: 0.12,
             cropAspect: .portrait
         )
+        let timelineClip = TimelineClip(assetID: assetID, durationSeconds: 12.5)
         let project = EditorProject(
             name: "Documentary",
             media: [asset],
-            adjustmentsByAssetID: [assetID: adjustments]
+            adjustmentsByAssetID: [assetID: adjustments],
+            timelineClips: [timelineClip]
         )
 
         let document = ProjectDocument()
@@ -36,6 +38,11 @@ struct ModelCheck {
         try require(
             decoded.adjustmentsByAssetID[assetID] == adjustments,
             "Adjustments did not round-trip"
+        )
+        try require(decoded.timelineClips == [timelineClip], "Timeline clips did not round-trip")
+        try require(
+            decoded.schemaVersion == EditorProject.currentSchemaVersion,
+            "Project was not saved with the current schema"
         )
 
         for preset in PhotoPreset.builtIns {

@@ -141,7 +141,7 @@ struct PhotoWorkspace: View {
     private var filmstrip: some View {
         ScrollView(.horizontal) {
             HStack(spacing: 10) {
-                ForEach(store.project.media) { asset in
+                ForEach(store.project.media.filter { $0.kind == .photo }) { asset in
                     Button {
                         store.select(asset)
                     } label: {

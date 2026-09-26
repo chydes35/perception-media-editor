@@ -8,6 +8,15 @@ struct LibraryWorkspace: View {
         GridItem(.adaptive(minimum: 180, maximum: 260), spacing: 14)
     ]
 
+    private var filteredMedia: [MediaAsset] {
+        switch selection {
+        case "Photos": store.project.media.filter { $0.kind == .photo }
+        case "Video": store.project.media.filter { $0.kind == .video }
+        case "Audio": store.project.media.filter { $0.kind == .audio }
+        default: store.project.media
+        }
+    }
+
     var body: some View {
         HSplitView {
             sidebar
@@ -42,10 +51,8 @@ struct LibraryWorkspace: View {
                             .frame(width: 18)
                         Text(item)
                         Spacer()
-                        if item == "All Media" || item == "Photos" {
-                            Text("\(store.project.media.count)")
-                                .foregroundStyle(.secondary)
-                        }
+                        Text("\(count(for: item))")
+                            .foregroundStyle(.secondary)
                     }
                     .padding(.horizontal, 8)
                     .padding(.vertical, 6)
@@ -70,7 +77,7 @@ struct LibraryWorkspace: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                Text("\(store.project.media.count) ITEMS")
+                Text("\(filteredMedia.count) ITEMS")
                     .font(.caption2.weight(.bold))
                     .foregroundStyle(.secondary)
             }
@@ -78,13 +85,13 @@ struct LibraryWorkspace: View {
 
             Divider()
 
-            if store.project.media.isEmpty {
+            if filteredMedia.isEmpty {
                 ContentUnavailableView {
                     Label("Your library is empty", systemImage: "photo.on.rectangle.angled")
                 } description: {
-                    Text("Import JPEG, HEIC, PNG, TIFF, or camera RAW files to begin.")
+                    Text("Import photos, MOV/MP4 video, or audio files to begin.")
                 } actions: {
-                    Button("Import Photos") { store.importMedia() }
+                    Button("Import Media") { store.importMedia() }
                         .buttonStyle(.borderedProminent)
                         .tint(.orange)
                 }
@@ -92,11 +99,16 @@ struct LibraryWorkspace: View {
             } else {
                 ScrollView {
                     LazyVGrid(columns: columns, spacing: 14) {
-                        ForEach(store.project.media) { asset in
+                        ForEach(filteredMedia) { asset in
                             MediaCard(asset: asset)
                                 .onTapGesture {
-                                    store.select(asset)
-                                    store.workspace = .photo
+                                    if asset.kind == .photo {
+                                        store.select(asset)
+                                        store.workspace = .photo
+                                    } else {
+                                        store.selectVideo(asset)
+                                        store.workspace = .video
+                                    }
                                 }
                                 .contextMenu {
                                     Button("Relink Media…") { store.relink(asset) }
@@ -118,6 +130,16 @@ struct LibraryWorkspace: View {
         default: "folder"
         }
     }
+
+    private func count(for item: String) -> Int {
+        switch item {
+        case "Photos": store.project.media.filter { $0.kind == .photo }.count
+        case "Video": store.project.media.filter { $0.kind == .video }.count
+        case "Audio": store.project.media.filter { $0.kind == .audio }.count
+        case "All Media": store.project.media.count
+        default: 0
+        }
+    }
 }
 
 private struct MediaCard: View {
@@ -135,7 +157,7 @@ private struct MediaCard: View {
                         .resizable()
                         .scaledToFit()
                 } else {
-                    Image(systemName: "exclamationmark.triangle")
+                    Image(systemName: asset.kind == .video ? "film" : "waveform")
                         .font(.largeTitle)
                         .foregroundStyle(.secondary)
                 }

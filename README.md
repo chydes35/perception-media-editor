@@ -2,7 +2,7 @@
 
 A native, non-destructive macOS photo and video editor built specifically for Perception Media's documentary, interview, business, social, and photography workflows.
 
-This repository currently contains **V0.2: Production Photo Workflow (in progress)**.
+This repository currently contains **V0.3: Video Editor Foundation (in progress)**.
 
 ## What works now
 
@@ -17,6 +17,9 @@ This repository currently contains **V0.2: Production Photo Workflow (in progres
 - Cache thumbnails on disk and relink missing originals
 - Save and reopen non-destructive `.pmedit` project files
 - Export edited full-resolution JPEG or PNG files in sRGB
+- Import MOV/MP4 video with duration, frame-size metadata, and poster thumbnails
+- Preview source video through AVFoundation
+- Build a persistent V1/A1 sequence with trim, split, reorder, mute, play, and ripple-delete controls
 
 ## Run for development
 

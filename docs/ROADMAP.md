@@ -15,7 +15,7 @@
 - [x] Histogram
 - [x] User-created presets
 
-## V0.2 — Production Photo Workflow (current)
+## V0.2 — Production Photo Workflow (backlog remains)
 
 - [ ] RAW-specific development controls and metadata panel
 - [ ] Batch selection, adjustment sync, and batch export
@@ -25,14 +25,16 @@
 - [ ] Interactive crop and straighten
 - [ ] Export presets, resize, watermark, and metadata controls
 
-## V0.3 — Video Editor
+## V0.3 — Video Editor (current)
 
-- AVFoundation media import and playback
-- Multi-track timeline with trim, split, move, and ripple delete
-- Shared color model for photos and video clips
-- Waveform cache, volume, pan, and fades
-- Titles, basic transitions, speed presets, and frame capture
-- 1080p and 4K export
+- [x] AVFoundation video import, thumbnails, metadata, and playback
+- [x] Persistent V1/A1 timeline model and interface
+- [x] Clip trim, split, reorder, mute, play, and ripple delete controls
+- [ ] AVMutableComposition sequence playback
+- [ ] Shared color model for photos and video clips
+- [ ] Waveform cache, volume, pan, and fades
+- [ ] Titles, basic transitions, speed presets, and frame capture
+- [ ] 1080p and 4K export
 
 ## V1.0 — Perception Workflow
 

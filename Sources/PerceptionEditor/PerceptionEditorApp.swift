@@ -17,7 +17,7 @@ struct PerceptionEditorApp: App {
                 Button("Open Project…") { store.openProject() }
                     .keyboardShortcut("o")
                 Divider()
-                Button("Import Photos…") { store.importMedia() }
+                Button("Import Media…") { store.importMedia() }
                     .keyboardShortcut("i")
                 Divider()
                 Button("Save Project") { store.saveProject() }

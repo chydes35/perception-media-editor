@@ -12,7 +12,10 @@ let package = Package(
     ],
     targets: [
         .executableTarget(
-            name: "PerceptionEditor"
+            name: "PerceptionEditor",
+            linkerSettings: [
+                .linkedFramework("AVKit")
+            ]
         )
     ]
 )

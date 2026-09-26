@@ -17,6 +17,8 @@ Original media is never modified. A `.pmedit` project stores references to the o
 - `PhotoComparisonView.swift`: original, edited, split, and side-by-side presentation modes.
 - `ThumbnailCache.swift`: stable, adjustment-aware JPEG thumbnails in Application Support.
 - `UserPresetRepository.swift`: persistent user presets backed by app preferences.
+- `VideoMediaService.swift`: AVFoundation metadata and poster-frame extraction.
+- `VideoWorkspace.swift`: source viewer, media bin, inspector, and persistent V1/A1 timeline controls.
 
 ## Project format
 
@@ -26,4 +28,4 @@ Preview thumbnails are disposable cache files, not project data. Their keys incl
 
 ## Planned video boundary
 
-The video engine will translate timeline metadata into `AVMutableComposition`, `AVVideoComposition`, and `AVAudioMix` objects. It will reuse `PhotoAdjustments` as the starting point for a shared photo/video color model.
+V0.3 stores non-destructive `TimelineClip` records separately from source media. The current viewer plays source assets while the next slice translates the timeline metadata into `AVMutableComposition`, `AVVideoComposition`, and `AVAudioMix` objects. It will reuse `PhotoAdjustments` as the starting point for a shared photo/video color model.

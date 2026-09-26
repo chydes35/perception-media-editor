@@ -28,6 +28,7 @@ struct ProjectDocument {
 
     func data(for project: EditorProject) throws -> Data {
         var current = project
+        current.schemaVersion = EditorProject.currentSchemaVersion
         current.updatedAt = .now
         return try encoder.encode(current)
     }

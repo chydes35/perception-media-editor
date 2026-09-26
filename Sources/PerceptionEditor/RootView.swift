@@ -77,11 +77,7 @@ struct RootView: View {
         case .photo:
             PhotoWorkspace()
         case .video:
-            ComingSoonWorkspace(
-                title: "Video workspace",
-                subtitle: "The V0.3 timeline will build on the same non-destructive color engine.",
-                symbol: "timeline.selection"
-            )
+            VideoWorkspace()
         case .export:
             ExportWorkspace()
         }
@@ -94,7 +90,7 @@ struct RootView: View {
                 .frame(width: 7, height: 7)
             Text(store.statusMessage)
             Spacer()
-            Text("V0.2 PHOTO WORKFLOW")
+            Text("V0.3 VIDEO FOUNDATION")
                 .font(.system(size: 10, weight: .semibold, design: .monospaced))
                 .foregroundStyle(.secondary)
         }
@@ -102,16 +98,5 @@ struct RootView: View {
         .padding(.horizontal, 14)
         .frame(height: 28)
         .background(Color(nsColor: .controlBackgroundColor))
-    }
-}
-
-struct ComingSoonWorkspace: View {
-    let title: String
-    let subtitle: String
-    let symbol: String
-
-    var body: some View {
-        ContentUnavailableView(title, systemImage: symbol, description: Text(subtitle))
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

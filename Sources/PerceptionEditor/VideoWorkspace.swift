@@ -242,6 +242,33 @@ struct VideoWorkspace: View {
                         }
                         .controlSize(.small)
                     }
+
+                    inspectorSection("CLIP COLOR") {
+                        HStack {
+                            Menu("Preset", systemImage: "camera.filters") {
+                                ForEach(store.presets) { preset in
+                                    Button(preset.name) {
+                                        store.applyVideoPreset(preset)
+                                    }
+                                }
+                            }
+                            Button("Reset", systemImage: "arrow.counterclockwise") {
+                                store.resetSelectedVideoAdjustments()
+                            }
+                        }
+                        .controlSize(.small)
+
+                        videoAdjustment("Exposure", keyPath: \.exposure, range: -3...3)
+                        videoAdjustment("Contrast", keyPath: \.contrast, range: -1...1)
+                        videoAdjustment("Highlights", keyPath: \.highlights, range: -1...1)
+                        videoAdjustment("Shadows", keyPath: \.shadows, range: -1...1)
+                        videoAdjustment("Temperature", keyPath: \.temperature, range: -1...1)
+                        videoAdjustment("Tint", keyPath: \.tint, range: -1...1)
+                        videoAdjustment("Vibrance", keyPath: \.vibrance, range: -1...1)
+                        videoAdjustment("Saturation", keyPath: \.saturation, range: -1...1)
+                        videoAdjustment("Sharpness", keyPath: \.sharpness, range: 0...1)
+                        videoAdjustment("Vignette", keyPath: \.vignette, range: 0...1)
+                    }
                 } else {
                     Text("Select a timeline clip to trim, split, or reorder it.")
                         .font(.caption)
@@ -287,6 +314,37 @@ struct VideoWorkspace: View {
                 .help(value)
         }
         .font(.caption)
+    }
+
+    private func videoAdjustment(
+        _ label: String,
+        keyPath: WritableKeyPath<PhotoAdjustments, Double>,
+        range: ClosedRange<Double>
+    ) -> some View {
+        VStack(spacing: 4) {
+            HStack {
+                Text(label)
+                    .font(.caption)
+                Spacer()
+                Text(
+                    store.selectedVideoAdjustments[keyPath: keyPath],
+                    format: .number.precision(.fractionLength(2))
+                )
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .frame(width: 48, alignment: .trailing)
+            }
+            Slider(
+                value: Binding(
+                    get: { store.selectedVideoAdjustments[keyPath: keyPath] },
+                    set: { value in
+                        store.updateSelectedVideoAdjustments { $0[keyPath: keyPath] = value }
+                    }
+                ),
+                in: range
+            )
+            .tint(.orange)
+        }
     }
 
     private func formatTime(_ seconds: Double) -> String {

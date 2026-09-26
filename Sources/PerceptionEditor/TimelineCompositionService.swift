@@ -1,4 +1,5 @@
-import AVFoundation
+@preconcurrency import AVFoundation
+import CoreImage
 import Foundation
 
 struct TimelineCompositionResult {
@@ -6,6 +7,20 @@ struct TimelineCompositionResult {
     var durationSeconds: Double
     var insertedClipIDs: [UUID]
     var warnings: [String]
+}
+
+private struct TimelineColorSegment: Sendable {
+    var startSeconds: Double
+    var durationSeconds: Double
+    var adjustments: PhotoAdjustments
+
+    func contains(_ seconds: Double) -> Bool {
+        seconds >= startSeconds && seconds < startSeconds + durationSeconds
+    }
+}
+
+private struct SendableVideoComposition: @unchecked Sendable {
+    let value: AVVideoComposition?
 }
 
 @MainActor
@@ -16,7 +31,8 @@ final class TimelineCompositionService {
 
     func makePlayerItem(
         clips: [TimelineClip],
-        media: [MediaAsset]
+        media: [MediaAsset],
+        adjustmentsByClipID: [UUID: PhotoAdjustments] = [:]
     ) async -> TimelineCompositionResult {
         let composition = AVMutableComposition()
         guard let compositionVideoTrack = composition.addMutableTrack(
@@ -41,6 +57,7 @@ final class TimelineCompositionService {
             .sorted { $0.timelineStartSeconds < $1.timelineStartSeconds }
 
         var insertedClipIDs: [UUID] = []
+        var colorSegments: [TimelineColorSegment] = []
         var warnings: [String] = []
         var didSetVideoTransform = false
 
@@ -115,6 +132,13 @@ final class TimelineCompositionService {
             }
 
             insertedClipIDs.append(clip.id)
+            colorSegments.append(
+                TimelineColorSegment(
+                    startSeconds: max(0, clip.timelineStartSeconds),
+                    durationSeconds: insertedDurationSeconds,
+                    adjustments: adjustmentsByClipID[clip.id] ?? .neutral
+                )
+            )
         }
 
         guard !insertedClipIDs.isEmpty else {
@@ -127,8 +151,37 @@ final class TimelineCompositionService {
         }
 
         let durationSeconds = composition.duration.seconds
+        let playerItem = AVPlayerItem(asset: composition)
+        if colorSegments.contains(where: { $0.adjustments != .neutral }) {
+            let renderSegments = colorSegments
+            let videoCompositionResult: SendableVideoComposition = await withCheckedContinuation { continuation in
+                AVVideoComposition.videoComposition(
+                    with: composition,
+                    applyingCIFiltersWithHandler: { request in
+                        let seconds = request.compositionTime.seconds
+                        let adjustments = renderSegments.first(where: { $0.contains(seconds) })?.adjustments
+                            ?? .neutral
+                        let output = MediaColorRenderer.render(
+                            request.sourceImage,
+                            adjustments: adjustments,
+                            includesGeometry: false
+                        )
+                        request.finish(with: output.cropped(to: request.sourceImage.extent), context: nil)
+                    },
+                    completionHandler: { videoComposition, _ in
+                        continuation.resume(returning: SendableVideoComposition(value: videoComposition))
+                    }
+                )
+            }
+            if let videoComposition = videoCompositionResult.value {
+                playerItem.videoComposition = videoComposition
+            } else {
+                warnings.append("Clip color could not be previewed.")
+            }
+        }
+
         return TimelineCompositionResult(
-            playerItem: AVPlayerItem(asset: composition),
+            playerItem: playerItem,
             durationSeconds: durationSeconds.isFinite ? max(0, durationSeconds) : 0,
             insertedClipIDs: insertedClipIDs,
             warnings: warnings

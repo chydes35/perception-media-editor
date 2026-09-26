@@ -23,6 +23,7 @@ This repository currently contains **V0.3: Video Editor Foundation (in progress)
 - Preview the edited timeline as one AVMutableComposition with playhead scrubbing and active-clip sync
 - Rebuild timeline playback after edits while preserving the paused or playing state
 - Skip missing or incompatible media with visible playback warnings
+- Apply the same non-destructive color model and Perception presets to individual timeline clips
 
 ## Run for development
 

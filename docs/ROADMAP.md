@@ -31,7 +31,7 @@
 - [x] Persistent V1/A1 timeline model and interface
 - [x] Clip trim, split, reorder, mute, play, and ripple delete controls
 - [x] AVMutableComposition sequence playback, scrubbing, and active-clip sync
-- [ ] Shared color model for photos and video clips
+- [x] Shared color model for photos and video clips
 - [ ] Waveform cache, volume, pan, and fades
 - [ ] Titles, basic transitions, speed presets, and frame capture
 - [ ] 1080p and 4K export

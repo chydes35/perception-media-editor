@@ -221,7 +221,7 @@ struct PhotoPreset: Identifiable, Codable, Equatable, Sendable {
 }
 
 struct EditorProject: Codable, Equatable {
-    static let currentSchemaVersion = 2
+    static let currentSchemaVersion = 3
 
     var schemaVersion = currentSchemaVersion
     var id = UUID()
@@ -230,6 +230,7 @@ struct EditorProject: Codable, Equatable {
     var updatedAt = Date.now
     var media: [MediaAsset] = []
     var adjustmentsByAssetID: [UUID: PhotoAdjustments] = [:]
+    var videoAdjustmentsByClipID: [UUID: PhotoAdjustments] = [:]
     var timelineClips: [TimelineClip] = []
 
     static let starter = EditorProject(name: "Untitled Project")
@@ -242,6 +243,7 @@ struct EditorProject: Codable, Equatable {
         updatedAt: Date = .now,
         media: [MediaAsset] = [],
         adjustmentsByAssetID: [UUID: PhotoAdjustments] = [:],
+        videoAdjustmentsByClipID: [UUID: PhotoAdjustments] = [:],
         timelineClips: [TimelineClip] = []
     ) {
         self.schemaVersion = schemaVersion
@@ -251,6 +253,7 @@ struct EditorProject: Codable, Equatable {
         self.updatedAt = updatedAt
         self.media = media
         self.adjustmentsByAssetID = adjustmentsByAssetID
+        self.videoAdjustmentsByClipID = videoAdjustmentsByClipID
         self.timelineClips = timelineClips
     }
 
@@ -262,6 +265,7 @@ struct EditorProject: Codable, Equatable {
         case updatedAt
         case media
         case adjustmentsByAssetID
+        case videoAdjustmentsByClipID
         case timelineClips
     }
 
@@ -276,6 +280,10 @@ struct EditorProject: Codable, Equatable {
         adjustmentsByAssetID = try container.decodeIfPresent(
             [UUID: PhotoAdjustments].self,
             forKey: .adjustmentsByAssetID
+        ) ?? [:]
+        videoAdjustmentsByClipID = try container.decodeIfPresent(
+            [UUID: PhotoAdjustments].self,
+            forKey: .videoAdjustmentsByClipID
         ) ?? [:]
         timelineClips = try container.decodeIfPresent([TimelineClip].self, forKey: .timelineClips) ?? []
     }

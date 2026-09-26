@@ -21,10 +21,17 @@ struct ModelCheck {
             cropAspect: .portrait
         )
         let timelineClip = TimelineClip(assetID: assetID, durationSeconds: 12.5)
+        let videoAdjustments = PhotoAdjustments(
+            exposure: 0.35,
+            contrast: 0.12,
+            temperature: 0.08,
+            vibrance: 0.16
+        )
         let project = EditorProject(
             name: "Documentary",
             media: [asset],
             adjustmentsByAssetID: [assetID: adjustments],
+            videoAdjustmentsByClipID: [timelineClip.id: videoAdjustments],
             timelineClips: [timelineClip]
         )
 
@@ -41,6 +48,10 @@ struct ModelCheck {
         )
         try require(decoded.timelineClips == [timelineClip], "Timeline clips did not round-trip")
         try require(
+            decoded.videoAdjustmentsByClipID[timelineClip.id] == videoAdjustments,
+            "Video adjustments did not round-trip"
+        )
+        try require(
             decoded.schemaVersion == EditorProject.currentSchemaVersion,
             "Project was not saved with the current schema"
         )
@@ -51,6 +62,16 @@ struct ModelCheck {
             try require((0...1).contains(preset.adjustments.sharpness), "Preset sharpness is out of range")
             try require((0...1).contains(preset.adjustments.vignette), "Preset vignette is out of range")
         }
+
+        var legacyObject = try JSONSerialization.jsonObject(with: document.data(for: project)) as! [String: Any]
+        legacyObject["schemaVersion"] = 2
+        legacyObject.removeValue(forKey: "videoAdjustmentsByClipID")
+        let legacyData = try JSONSerialization.data(withJSONObject: legacyObject)
+        let decodedLegacy = try document.project(from: legacyData)
+        try require(
+            decodedLegacy.videoAdjustmentsByClipID.isEmpty,
+            "Legacy projects did not default video adjustments"
+        )
 
         let futureData = """
         {

@@ -11,6 +11,7 @@ Original media is never modified. A `.pmedit` project stores references to the o
 - `EditorModels.swift`: versioned project, media, adjustments, crop, and preset data.
 - `ProjectDocument.swift`: atomic JSON project persistence and schema guard.
 - `PhotoRenderer.swift`: GPU-backed Core Image render and export pipeline.
+- `MediaColorRenderer.swift`: shared Core Image adjustment graph used by photo rendering and timeline clip playback.
 - `EditorStore.swift`: main-actor application state and file-panel workflows.
 - Workspace views: Library, Photo, Video placeholder, and Export.
 - `HistogramView.swift`: accessible RGB histogram rendered from the edited image pipeline.
@@ -29,6 +30,6 @@ Preview thumbnails are disposable cache files, not project data. Their keys incl
 
 ## Video playback boundary
 
-V0.3 stores non-destructive `TimelineClip` records separately from source media. `TimelineCompositionService` translates those records into an `AVMutableComposition` whenever the sequence changes. The store owns playback state, playhead synchronization, and automatic active-clip selection; missing or incompatible clips are skipped with visible warnings.
+V0.3 stores non-destructive `TimelineClip` records separately from source media. Per-clip entries in `videoAdjustmentsByClipID` reuse `PhotoAdjustments`, so the same light, color, presence, and preset values persist for photos and timeline clips. `TimelineCompositionService` translates clip records into an `AVMutableComposition` and attaches a Core Image-backed `AVVideoComposition` whenever a clip has color adjustments. The store owns playback state, playhead synchronization, and automatic active-clip selection; missing or incompatible clips are skipped with visible warnings.
 
-The current sequence uses the first playable clip's preferred transform. Per-clip mixed-orientation fitting belongs in the future `AVVideoComposition` color/render layer. That layer will also reuse `PhotoAdjustments` as the starting point for a shared photo/video color model.
+The current sequence uses the first playable clip's preferred transform. The color render layer deliberately excludes photo crop and rotation metadata; per-clip mixed-orientation fitting remains future work.

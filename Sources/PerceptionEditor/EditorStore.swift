@@ -88,6 +88,11 @@ final class EditorStore: ObservableObject {
         }
     }
 
+    var selectedVideoAdjustments: PhotoAdjustments {
+        guard let selectedTimelineClipID else { return .neutral }
+        return project.videoAdjustmentsByClipID[selectedTimelineClipID] ?? .neutral
+    }
+
     func importMedia() {
         let panel = NSOpenPanel()
         panel.title = "Import Media"
@@ -221,6 +226,32 @@ final class EditorStore: ObservableObject {
     func resetAdjustments() {
         selectedAdjustments = .neutral
         statusMessage = "Adjustments reset"
+    }
+
+    func updateSelectedVideoAdjustments(_ update: (inout PhotoAdjustments) -> Void) {
+        guard let selectedTimelineClipID else { return }
+        var adjustments = selectedVideoAdjustments
+        update(&adjustments)
+        project.videoAdjustmentsByClipID[selectedTimelineClipID] = adjustments
+        rebuildTimelinePlayback()
+        statusMessage = "Updated clip color"
+    }
+
+    func applyVideoPreset(_ preset: PhotoPreset) {
+        guard let selectedTimelineClipID else { return }
+        var adjustments = preset.adjustments
+        adjustments.rotationQuarterTurns = 0
+        adjustments.cropAspect = .original
+        project.videoAdjustmentsByClipID[selectedTimelineClipID] = adjustments
+        rebuildTimelinePlayback()
+        statusMessage = "Applied \(preset.name) to clip"
+    }
+
+    func resetSelectedVideoAdjustments() {
+        guard let selectedTimelineClipID else { return }
+        project.videoAdjustmentsByClipID.removeValue(forKey: selectedTimelineClipID)
+        rebuildTimelinePlayback()
+        statusMessage = "Clip color reset"
     }
 
     func rotate(clockwise: Bool) {
@@ -497,6 +528,7 @@ final class EditorStore: ObservableObject {
     func removeSelectedTimelineClip() {
         guard let selectedTimelineClipID else { return }
         project.timelineClips.removeAll(where: { $0.id == selectedTimelineClipID })
+        project.videoAdjustmentsByClipID.removeValue(forKey: selectedTimelineClipID)
         self.selectedTimelineClipID = project.timelineClips.first?.id
         normalizePrimaryTimeline()
         rebuildTimelinePlayback()
@@ -510,7 +542,7 @@ final class EditorStore: ObservableObject {
         guard destination != index else { return }
         project.timelineClips.swapAt(index, destination)
         normalizePrimaryTimeline()
-        rebuildTimelinePlayback()
+        rebuildTimelinePlayback(seekTo: project.timelineClips[destination].timelineStartSeconds)
     }
 
     func canMoveSelectedTimelineClip(by offset: Int) -> Bool {
@@ -571,6 +603,9 @@ final class EditorStore: ObservableObject {
             isMuted: original.isMuted
         )
         project.timelineClips.insert(second, at: index + 1)
+        if let adjustments = project.videoAdjustmentsByClipID[original.id] {
+            project.videoAdjustmentsByClipID[second.id] = adjustments
+        }
         self.selectedTimelineClipID = second.id
         normalizePrimaryTimeline()
         rebuildTimelinePlayback(seekTo: second.timelineStartSeconds)
@@ -688,6 +723,7 @@ final class EditorStore: ObservableObject {
         let shouldAutoplay = autoplay || (isTimelinePlayback && isVideoPlaying)
         let clips = project.timelineClips
         let media = project.media
+        let adjustmentsByClipID = project.videoAdjustmentsByClipID
         let requestID = UUID()
         playbackRequestID = requestID
         compositionRebuildTask?.cancel()
@@ -695,7 +731,11 @@ final class EditorStore: ObservableObject {
 
         compositionRebuildTask = Task { [weak self] in
             guard let self else { return }
-            let result = await timelineCompositionService.makePlayerItem(clips: clips, media: media)
+            let result = await timelineCompositionService.makePlayerItem(
+                clips: clips,
+                media: media,
+                adjustmentsByClipID: adjustmentsByClipID
+            )
             guard !Task.isCancelled, playbackRequestID == requestID else { return }
 
             timelinePlaybackWarnings = result.warnings

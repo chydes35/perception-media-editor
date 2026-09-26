@@ -180,7 +180,8 @@ struct MaskEditingLayer: View {
         _ center: NormalizedPoint, _ rx: Double, _ ry: Double, _ rotation: Double, angle: Double, _ geometry: ImageGeometry
     ) -> NormalizedPoint {
         let long = Double(geometry.longSide)
-        let local = CGPoint(x: rx * long * cos(angle), y: ry * long * sin(angle))
+        let cosine: Double = cos(angle), sine: Double = sin(angle)
+        let local = CGPoint(x: CGFloat(rx * long * cosine), y: CGFloat(ry * long * sine))
         return offset(center, by: local, rotation: rotation, geometry)
     }
 
@@ -194,21 +195,24 @@ struct MaskEditingLayer: View {
 
     /// Moves `center` by `local` pixels in the ellipse's own frame, turned `rotation` degrees clockwise.
     private func offset(_ center: NormalizedPoint, by local: CGPoint, rotation: Double, _ geometry: ImageGeometry) -> NormalizedPoint {
-        let turn = rotation * .pi / 180
-        let x = local.x * cos(turn) - local.y * sin(turn)
-        let y = local.x * sin(turn) + local.y * cos(turn)
+        let turn: Double = rotation * Double.pi / 180
+        let cosine: Double = cos(turn), sine: Double = sin(turn)
+        let lx = Double(local.x), ly = Double(local.y)
+        let x: Double = lx * cosine - ly * sine
+        let y: Double = lx * sine + ly * cosine
         return NormalizedPoint(
-            x: center.x + Double(x) / Double(geometry.sourceSize.width),
-            y: center.y + Double(y) / Double(geometry.sourceSize.height)
+            x: center.x + x / Double(geometry.sourceSize.width),
+            y: center.y + y / Double(geometry.sourceSize.height)
         )
     }
 
     /// A position in the original as pixels from `center`, seen in the ellipse's own frame.
     private func localOffset(of point: NormalizedPoint, from center: NormalizedPoint, rotation: Double, _ geometry: ImageGeometry) -> CGPoint {
-        let dx = (point.x - center.x) * Double(geometry.sourceSize.width)
-        let dy = (point.y - center.y) * Double(geometry.sourceSize.height)
-        let turn = -rotation * .pi / 180
-        return CGPoint(x: dx * cos(turn) - dy * sin(turn), y: dx * sin(turn) + dy * cos(turn))
+        let dx: Double = (point.x - center.x) * Double(geometry.sourceSize.width)
+        let dy: Double = (point.y - center.y) * Double(geometry.sourceSize.height)
+        let turn: Double = -rotation * Double.pi / 180
+        let cosine: Double = cos(turn), sine: Double = sin(turn)
+        return CGPoint(x: CGFloat(dx * cosine - dy * sine), y: CGFloat(dx * sine + dy * cosine))
     }
 
     // MARK: Gestures

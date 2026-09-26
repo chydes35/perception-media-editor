@@ -144,6 +144,18 @@ enum CropAspect: String, Codable, CaseIterable, Identifiable, Sendable {
     }
 }
 
+/// A normalized crop rectangle in image coordinates. The origin is bottom-left,
+/// matching Core Image's coordinate system, and all values are clamped by the
+/// crop editor before they are stored in the project.
+struct CropRect: Codable, Equatable, Sendable {
+    var x: Double
+    var y: Double
+    var width: Double
+    var height: Double
+
+    static let full = CropRect(x: 0, y: 0, width: 1, height: 1)
+}
+
 struct PhotoAdjustments: Codable, Equatable, Sendable {
     var exposure = 0.0
     var contrast = 0.0
@@ -157,6 +169,8 @@ struct PhotoAdjustments: Codable, Equatable, Sendable {
     var vignette = 0.0
     var rotationQuarterTurns = 0
     var cropAspect = CropAspect.original
+    var cropRect: CropRect? = nil
+    var straightenDegrees: Double? = nil
 
     static let neutral = PhotoAdjustments()
 }

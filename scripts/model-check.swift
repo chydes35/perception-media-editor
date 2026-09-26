@@ -18,7 +18,9 @@ struct ModelCheck {
             highlights: -0.32,
             shadows: 0.22,
             temperature: 0.12,
-            cropAspect: .portrait
+            cropAspect: .portrait,
+            cropRect: CropRect(x: 0.1, y: 0.12, width: 0.72, height: 0.68),
+            straightenDegrees: -2.4
         )
         let timelineClip = TimelineClip(assetID: assetID, durationSeconds: 12.5)
         let videoAdjustments = PhotoAdjustments(

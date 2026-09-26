@@ -22,7 +22,8 @@
 - [ ] LUT import and intensity control
 - [x] Persistent thumbnail cache and media relinking
 - [x] Before/after split and side-by-side views
-- [ ] Interactive crop and straighten
+- [x] Interactive crop and straighten with preview zoom and pan
+- [x] Grouped photo edit undo and redo with direct adjustment values
 - [ ] Export presets, resize, watermark, and metadata controls
 
 ## V0.3 — Video Editor (current)

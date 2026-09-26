@@ -18,6 +18,14 @@ enum MediaColorRenderer {
             )
         }
 
+        if includesGeometry, let degrees = adjustments.straightenDegrees, abs(degrees) > 0.001 {
+            image = image.transformed(by: CGAffineTransform(rotationAngle: CGFloat(degrees) * .pi / 180))
+            let normalized = image.extent
+            image = image.transformed(
+                by: CGAffineTransform(translationX: -normalized.origin.x, y: -normalized.origin.y)
+            )
+        }
+
         let exposure = CIFilter.exposureAdjust()
         exposure.inputImage = image
         exposure.ev = Float(adjustments.exposure)
@@ -68,10 +76,24 @@ enum MediaColorRenderer {
             image = vignette.outputImage ?? image
         }
 
-        return includesGeometry ? crop(image, to: adjustments.cropAspect) : image
+        return includesGeometry ? crop(image, to: adjustments.cropAspect, rect: adjustments.cropRect) : image
     }
 
-    private static func crop(_ image: CIImage, to aspect: CropAspect) -> CIImage {
+    private static func crop(_ image: CIImage, to aspect: CropAspect, rect: CropRect?) -> CIImage {
+        if let rect {
+            let extent = image.extent
+            let normalized = CGRect(
+                x: extent.minX + extent.width * rect.x,
+                y: extent.minY + extent.height * rect.y,
+                width: extent.width * rect.width,
+                height: extent.height * rect.height
+            )
+            let cropped = image.cropped(to: normalized.integral)
+            return cropped.transformed(
+                by: CGAffineTransform(translationX: -cropped.extent.origin.x, y: -cropped.extent.origin.y)
+            )
+        }
+
         guard let ratio = aspect.ratio else { return image }
 
         let extent = image.extent

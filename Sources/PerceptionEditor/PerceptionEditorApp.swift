@@ -27,6 +27,13 @@ struct PerceptionEditorApp: App {
             }
 
             CommandMenu("Photo") {
+                Button("Undo Photo Edit") { store.undoPhotoEdit() }
+                    .keyboardShortcut("z")
+                    .disabled(!store.canUndoPhotoEdit)
+                Button("Redo Photo Edit") { store.redoPhotoEdit() }
+                    .keyboardShortcut("z", modifiers: [.command, .shift])
+                    .disabled(!store.canRedoPhotoEdit)
+                Divider()
                 Button("Show Original") { store.setShowingOriginal(true) }
                     .keyboardShortcut("\\", modifiers: [])
                 Button("Show Edited") { store.setShowingOriginal(false) }

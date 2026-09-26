@@ -4,6 +4,10 @@ struct PhotoWorkspace: View {
     @EnvironmentObject private var store: EditorStore
     @State private var isSavingPreset = false
     @State private var presetName = ""
+    @State private var zoomScale: CGFloat = 1
+    @State private var panOffset: CGSize = .zero
+    @State private var isCropping = false
+    @State private var draftCropRect: CGRect?
 
     var body: some View {
         HSplitView {
@@ -13,6 +17,9 @@ struct PhotoWorkspace: View {
                 .frame(minWidth: 580, maxWidth: .infinity, maxHeight: .infinity)
             adjustmentPanel
                 .frame(minWidth: 260, idealWidth: 290, maxWidth: 330)
+        }
+        .onChange(of: store.selectedAssetID) { _, _ in
+            resetPreviewViewport()
         }
     }
 
@@ -97,6 +104,7 @@ struct PhotoWorkspace: View {
                     Image(systemName: "rotate.left")
                 }
                 .disabled(store.selectedAsset == nil)
+                .help("Rotate counterclockwise")
 
                 Button {
                     store.rotate(clockwise: true)
@@ -104,6 +112,27 @@ struct PhotoWorkspace: View {
                     Image(systemName: "rotate.right")
                 }
                 .disabled(store.selectedAsset == nil)
+                .help("Rotate clockwise")
+
+                if isCropping {
+                    Button("Apply Crop", systemImage: "checkmark") {
+                        applyCrop()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.orange)
+
+                    Button("Cancel", systemImage: "xmark") {
+                        cancelCrop()
+                    }
+                    .buttonStyle(.borderless)
+                } else {
+                    Button("Crop", systemImage: "crop") {
+                        beginCrop()
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(store.selectedAsset == nil)
+                    .help("Crop and straighten the selected photo")
+                }
 
                 if let asset = store.selectedAsset, store.isMissing(asset) {
                     Button("Relink", systemImage: "link.badge.plus") {
@@ -121,6 +150,8 @@ struct PhotoWorkspace: View {
                 .pickerStyle(.segmented)
                 .frame(width: 330)
                 .disabled(store.selectedAsset == nil)
+
+                zoomControls
             }
             .padding(.horizontal, 16)
             .frame(height: 44)
@@ -129,7 +160,12 @@ struct PhotoWorkspace: View {
             PhotoComparisonView(
                 original: store.originalPreview,
                 edited: store.renderedPreview,
-                mode: store.previewMode
+                mode: store.previewMode,
+                zoomScale: $zoomScale,
+                panOffset: $panOffset,
+                isCropping: isCropping,
+                cropRect: $draftCropRect,
+                cropAspect: store.selectedAdjustments.cropAspect
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
@@ -212,6 +248,8 @@ struct PhotoWorkspace: View {
                         }
                     }
                     .disabled(store.selectedAsset == nil)
+
+                    straightenAdjustment
                 }
             }
             .padding(15)
@@ -250,20 +288,169 @@ struct PhotoWorkspace: View {
                 Text(label)
                     .font(.caption)
                 Spacer()
-                Text(store.selectedAdjustments[keyPath: keyPath], format: .number.precision(.fractionLength(2)))
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 48, alignment: .trailing)
+                if abs(store.selectedAdjustments[keyPath: keyPath]) > 0.0001 {
+                    Button {
+                        store.updateAdjustments { $0[keyPath: keyPath] = 0 }
+                    } label: {
+                        Image(systemName: "arrow.counterclockwise")
+                    }
+                    .buttonStyle(.borderless)
+                    .font(.caption2)
+                    .help("Reset \(label)")
+                }
+                TextField(
+                    label,
+                    value: Binding(
+                        get: { store.selectedAdjustments[keyPath: keyPath] },
+                        set: { value in store.updateAdjustments { $0[keyPath: keyPath] = value } }
+                    ),
+                    format: .number.precision(.fractionLength(2))
+                )
+                .labelsHidden()
+                .textFieldStyle(.roundedBorder)
+                .multilineTextAlignment(.trailing)
+                .frame(width: 58)
             }
             Slider(
                 value: Binding(
                     get: { store.selectedAdjustments[keyPath: keyPath] },
                     set: { value in store.updateAdjustments { $0[keyPath: keyPath] = value } }
                 ),
-                in: range
+                in: range,
+                onEditingChanged: { editing in
+                    if editing {
+                        store.beginAdjustmentEdit()
+                    } else {
+                        store.endAdjustmentEdit()
+                    }
+                }
             )
             .tint(.orange)
             .disabled(store.selectedAsset == nil)
         }
+    }
+
+    private var straightenAdjustment: some View {
+        let value = store.selectedAdjustments.straightenDegrees ?? 0
+        return VStack(spacing: 4) {
+            HStack {
+                Text("Straighten")
+                    .font(.caption)
+                Spacer()
+                if abs(value) > 0.0001 {
+                    Button {
+                        store.updateAdjustments { $0.straightenDegrees = nil }
+                    } label: {
+                        Image(systemName: "arrow.counterclockwise")
+                    }
+                    .buttonStyle(.borderless)
+                    .font(.caption2)
+                    .help("Reset Straighten")
+                }
+                TextField(
+                    "Straighten",
+                    value: Binding(
+                        get: { store.selectedAdjustments.straightenDegrees ?? 0 },
+                        set: { newValue in store.updateAdjustments { $0.straightenDegrees = newValue } }
+                    ),
+                    format: .number.precision(.fractionLength(1))
+                )
+                .labelsHidden()
+                .textFieldStyle(.roundedBorder)
+                .multilineTextAlignment(.trailing)
+                .frame(width: 58)
+            }
+            Slider(
+                value: Binding(
+                    get: { store.selectedAdjustments.straightenDegrees ?? 0 },
+                    set: { newValue in store.updateAdjustments { $0.straightenDegrees = newValue } }
+                ),
+                in: -10...10,
+                onEditingChanged: { editing in
+                    if editing {
+                        store.beginAdjustmentEdit()
+                    } else {
+                        store.endAdjustmentEdit()
+                    }
+                }
+            )
+            .tint(.orange)
+            .disabled(store.selectedAsset == nil)
+        }
+    }
+
+    private var zoomControls: some View {
+        HStack(spacing: 4) {
+            Button {
+                zoomScale = max(0.5, zoomScale - 0.25)
+            } label: {
+                Image(systemName: "minus.magnifyingglass")
+            }
+            .buttonStyle(.borderless)
+            .help("Zoom out")
+            .disabled(store.selectedAsset == nil)
+
+            Menu {
+                ForEach([0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 4.0], id: \.self) { value in
+                    Button("\(Int(value * 100))%") {
+                        zoomScale = value
+                    }
+                }
+            } label: {
+                Text("\(Int(zoomScale * 100))%")
+                    .font(.system(size: 10, design: .monospaced))
+                    .frame(width: 42)
+            }
+            .menuStyle(.borderlessButton)
+            .help("Preview zoom")
+
+            Button {
+                zoomScale = min(4, zoomScale + 0.25)
+            } label: {
+                Image(systemName: "plus.magnifyingglass")
+            }
+            .buttonStyle(.borderless)
+            .help("Zoom in")
+            .disabled(store.selectedAsset == nil)
+
+            Button {
+                resetPreviewViewport()
+            } label: {
+                Image(systemName: "arrow.up.left.and.down.right.magnifyingglass")
+            }
+            .buttonStyle(.borderless)
+            .help("Reset zoom and pan")
+        }
+    }
+
+    private func beginCrop() {
+        guard store.selectedAsset != nil else { return }
+        store.previewMode = .edited
+        store.beginAdjustmentEdit()
+        let stored = store.selectedAdjustments.cropRect
+        draftCropRect = stored.map {
+            CGRect(x: $0.x, y: 1 - $0.y - $0.height, width: $0.width, height: $0.height)
+        }
+        isCropping = true
+    }
+
+    private func applyCrop() {
+        store.updateCropRectFromDisplay(draftCropRect)
+        store.endAdjustmentEdit()
+        draftCropRect = nil
+        isCropping = false
+    }
+
+    private func cancelCrop() {
+        store.cancelAdjustmentEdit()
+        draftCropRect = nil
+        isCropping = false
+    }
+
+    private func resetPreviewViewport() {
+        zoomScale = 1
+        panOffset = .zero
+        draftCropRect = nil
+        isCropping = false
     }
 }

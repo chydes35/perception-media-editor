@@ -5,6 +5,12 @@ struct PhotoComparisonView: View {
     let original: NSImage?
     let edited: NSImage?
     let mode: PreviewMode
+    @Binding var zoomScale: CGFloat
+    @Binding var panOffset: CGSize
+    let isCropping: Bool
+    @Binding var cropRect: CGRect?
+    let cropAspect: CropAspect
+    @State private var panStart: CGSize?
 
     var body: some View {
         ZStack {
@@ -29,7 +35,31 @@ struct PhotoComparisonView: View {
                 )
                 .foregroundStyle(.white, .white.opacity(0.62))
             }
+
+            if isCropping, mode == .edited {
+                CropOverlayView(cropRect: $cropRect, aspect: cropAspect)
+            }
         }
+        .clipped()
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture()
+                .onChanged { value in
+                    guard !isCropping else { return }
+                    if panStart == nil {
+                        panStart = panOffset
+                    }
+                    guard let panStart else { return }
+                    panOffset = CGSize(
+                        width: panStart.width + value.translation.width,
+                        height: panStart.height + value.translation.height
+                    )
+                }
+                .onEnded { _ in
+                    panStart = nil
+                }
+        )
+        .accessibilityHint("Drag to pan the preview when zoomed.")
     }
 
     private func fitted(_ image: NSImage) -> some View {
@@ -37,6 +67,8 @@ struct PhotoComparisonView: View {
             .resizable()
             .scaledToFit()
             .padding(28)
+            .scaleEffect(zoomScale)
+            .offset(panOffset)
     }
 
     private func split(original: NSImage, edited: NSImage) -> some View {
@@ -75,6 +107,238 @@ struct PhotoComparisonView: View {
                 fitted(edited)
                 Text("EDITED").comparisonBadge()
             }
+        }
+    }
+}
+
+private struct CropOverlayView: View {
+    @Binding var cropRect: CGRect?
+    let aspect: CropAspect
+    @State private var moveStart: CGRect?
+    @State private var resizeStart: CGRect?
+
+    var body: some View {
+        GeometryReader { geometry in
+            let rect = displayRect(for: geometry.size)
+
+            ZStack {
+                Path { path in
+                    path.addRect(CGRect(origin: .zero, size: geometry.size))
+                    path.addRect(pixelRect(rect, in: geometry.size))
+                }
+                .fill(.black.opacity(0.58), style: FillStyle(eoFill: true))
+
+                Rectangle()
+                    .stroke(.white, lineWidth: 2)
+                    .frame(width: rect.width * geometry.size.width, height: rect.height * geometry.size.height)
+                    .position(
+                        x: (rect.midX * geometry.size.width),
+                        y: (rect.midY * geometry.size.height)
+                    )
+
+                ForEach(1..<3, id: \.self) { index in
+                    Rectangle()
+                        .fill(.white.opacity(0.42))
+                        .frame(width: 1, height: rect.height * geometry.size.height)
+                        .position(
+                            x: (rect.minX + rect.width * CGFloat(index) / 3) * geometry.size.width,
+                            y: rect.midY * geometry.size.height
+                        )
+                    Rectangle()
+                        .fill(.white.opacity(0.42))
+                        .frame(width: rect.width * geometry.size.width, height: 1)
+                        .position(
+                            x: rect.midX * geometry.size.width,
+                            y: (rect.minY + rect.height * CGFloat(index) / 3) * geometry.size.height
+                        )
+                }
+
+                ForEach(CropHandle.allCases, id: \.self) { handle in
+                    handleView(handle, rect: rect, size: geometry.size)
+                }
+            }
+            .contentShape(Rectangle())
+            .gesture(moveGesture(rect: rect, size: geometry.size))
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Crop editor")
+    }
+
+    private func displayRect(for size: CGSize) -> CGRect {
+        if let cropRect {
+            return clamped(cropRect)
+        }
+
+        guard let ratio = aspect.ratio, size.width > 0, size.height > 0 else {
+            return CGRect(x: 0.08, y: 0.08, width: 0.84, height: 0.84)
+        }
+
+        let normalizedRatio = ratio * size.height / size.width
+        var width = 0.84
+        var height = width / normalizedRatio
+        if height > 0.84 {
+            height = 0.84
+            width = height * normalizedRatio
+        }
+        return CGRect(
+            x: (1 - width) / 2,
+            y: (1 - height) / 2,
+            width: width,
+            height: height
+        )
+    }
+
+    private func pixelRect(_ rect: CGRect, in size: CGSize) -> CGRect {
+        CGRect(
+            x: rect.minX * size.width,
+            y: rect.minY * size.height,
+            width: rect.width * size.width,
+            height: rect.height * size.height
+        )
+    }
+
+    private func moveGesture(rect: CGRect, size: CGSize) -> some Gesture {
+        DragGesture()
+            .onChanged { value in
+                if moveStart == nil {
+                    moveStart = rect
+                }
+                guard let moveStart else { return }
+                let delta = CGSize(
+                    width: value.translation.width / max(size.width, 1),
+                    height: value.translation.height / max(size.height, 1)
+                )
+                cropRect = clamped(
+                    CGRect(
+                        x: moveStart.minX + delta.width,
+                        y: moveStart.minY + delta.height,
+                        width: moveStart.width,
+                        height: moveStart.height
+                    )
+                )
+            }
+            .onEnded { _ in
+                moveStart = nil
+            }
+    }
+
+    private func handleView(_ handle: CropHandle, rect: CGRect, size: CGSize) -> some View {
+        Circle()
+            .fill(.white)
+            .frame(width: 14, height: 14)
+            .overlay(Circle().stroke(.black.opacity(0.55), lineWidth: 1))
+            .position(
+                x: handle.point(in: rect).x * size.width,
+                y: handle.point(in: rect).y * size.height
+            )
+            .gesture(
+                DragGesture()
+                    .onChanged { value in
+                        if resizeStart == nil {
+                            resizeStart = rect
+                        }
+                        guard let resizeStart else { return }
+                        cropRect = resized(
+                            from: resizeStart,
+                            handle: handle,
+                            translation: value.translation,
+                            size: size
+                        )
+                    }
+                    .onEnded { _ in
+                        resizeStart = nil
+                    }
+            )
+    }
+
+    private func resized(
+        from start: CGRect,
+        handle: CropHandle,
+        translation: CGSize,
+        size: CGSize
+    ) -> CGRect {
+        let dx = translation.width / max(size.width, 1)
+        let dy = translation.height / max(size.height, 1)
+        let minimum = 0.08
+
+        if let ratio = aspect.ratio {
+            let normalizedRatio = ratio * size.height / max(size.width, 1)
+            switch handle {
+            case .topLeading:
+                var width = max(minimum, start.maxX - min(start.maxX - minimum, start.minX + dx))
+                var height = width / normalizedRatio
+                if start.maxY - height < 0 {
+                    height = start.maxY
+                    width = height * normalizedRatio
+                }
+                return clamped(CGRect(x: start.maxX - width, y: start.maxY - height, width: width, height: height))
+            case .topTrailing:
+                var width = max(minimum, min(1, start.maxX + dx) - start.minX)
+                var height = width / normalizedRatio
+                if start.maxY - height < 0 {
+                    height = start.maxY
+                    width = height * normalizedRatio
+                }
+                return clamped(CGRect(x: start.minX, y: start.maxY - height, width: width, height: height))
+            case .bottomLeading:
+                var width = max(minimum, start.maxX - min(start.maxX - minimum, start.minX + dx))
+                var height = width / normalizedRatio
+                if start.minY + height > 1 {
+                    height = 1 - start.minY
+                    width = height * normalizedRatio
+                }
+                return clamped(CGRect(x: start.maxX - width, y: start.minY, width: width, height: height))
+            case .bottomTrailing:
+                var width = max(minimum, min(1, start.maxX + dx) - start.minX)
+                var height = width / normalizedRatio
+                if start.minY + height > 1 {
+                    height = 1 - start.minY
+                    width = height * normalizedRatio
+                }
+                return clamped(CGRect(x: start.minX, y: start.minY, width: width, height: height))
+            }
+        }
+
+        var result = start
+        switch handle {
+        case .topLeading:
+            result.origin.x = min(start.maxX - minimum, max(0, start.minX + dx))
+            result.origin.y = min(start.maxY - minimum, max(0, start.minY + dy))
+        case .topTrailing:
+            result.size.width = max(minimum, min(1 - start.minX, start.width + dx))
+            result.origin.y = min(start.maxY - minimum, max(0, start.minY + dy))
+        case .bottomLeading:
+            result.origin.x = min(start.maxX - minimum, max(0, start.minX + dx))
+            result.size.height = max(minimum, min(1 - start.minY, start.height + dy))
+        case .bottomTrailing:
+            result.size.width = max(minimum, min(1 - start.minX, start.width + dx))
+            result.size.height = max(minimum, min(1 - start.minY, start.height + dy))
+        }
+        return clamped(result)
+    }
+
+    private func clamped(_ rect: CGRect) -> CGRect {
+        var result = rect.standardized
+        result.size.width = min(max(result.width, 0.08), 1)
+        result.size.height = min(max(result.height, 0.08), 1)
+        result.origin.x = min(max(result.minX, 0), 1 - result.width)
+        result.origin.y = min(max(result.minY, 0), 1 - result.height)
+        return result
+    }
+}
+
+private enum CropHandle: CaseIterable, Hashable {
+    case topLeading
+    case topTrailing
+    case bottomLeading
+    case bottomTrailing
+
+    func point(in rect: CGRect) -> CGPoint {
+        switch self {
+        case .topLeading: CGPoint(x: rect.minX, y: rect.minY)
+        case .topTrailing: CGPoint(x: rect.maxX, y: rect.minY)
+        case .bottomLeading: CGPoint(x: rect.minX, y: rect.maxY)
+        case .bottomTrailing: CGPoint(x: rect.maxX, y: rect.maxY)
         }
     }
 }

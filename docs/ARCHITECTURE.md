@@ -25,6 +25,8 @@ Original media is never modified. A `.pmedit` project stores references to the o
 - `AgentModels.swift`, `AgentEngine.swift`, and `AgentWorkspace.swift`: local-first workflow agents with reviewable findings and reversible adjustment proposals.
 - `scripts/agent-review.sh`: deterministic developer reviewers for workflow, renderer, schema, compatibility, and release checks.
 
+Photo geometry is stored as optional normalized crop data for backward-compatible `.pmedit` loading. Preview zoom and pan are view state, while crop, straighten, and adjustment history remain non-destructive project edits.
+
 ## Project format
 
 The first project format is readable JSON with the `.pmedit` extension. It stores absolute reference-file URLs. Missing originals can be relinked without changing asset identity or losing adjustments. Every format revision increments `schemaVersion`; newer unsupported versions fail explicitly.

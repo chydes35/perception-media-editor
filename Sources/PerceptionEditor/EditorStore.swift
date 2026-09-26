@@ -44,6 +44,9 @@ final class EditorStore: ObservableObject {
     private var compositionRebuildTask: Task<Void, Never>?
     private var playbackMonitorTask: Task<Void, Never>?
     private var playbackRequestID = UUID()
+    private var adjustmentUndoStack: [[UUID: PhotoAdjustments]] = []
+    private var adjustmentRedoStack: [[UUID: PhotoAdjustments]] = []
+    private var activeAdjustmentSnapshot: [UUID: PhotoAdjustments]?
 
     init() {
         userPresets = userPresetRepository.load()
@@ -92,6 +95,9 @@ final class EditorStore: ObservableObject {
             refreshPreview()
         }
     }
+
+    var canUndoPhotoEdit: Bool { !adjustmentUndoStack.isEmpty }
+    var canRedoPhotoEdit: Bool { !adjustmentRedoStack.isEmpty }
 
     var selectedVideoAdjustments: PhotoAdjustments {
         guard let selectedTimelineClipID else { return .neutral }
@@ -192,13 +198,47 @@ final class EditorStore: ObservableObject {
 
     func updateAdjustments(_ update: (inout PhotoAdjustments) -> Void) {
         guard selectedAssetID != nil else { return }
+        let before = project.adjustmentsByAssetID
         var adjustments = selectedAdjustments
         update(&adjustments)
         selectedAdjustments = adjustments
+        if activeAdjustmentSnapshot == nil {
+            recordAdjustmentChange(before: before)
+        }
+    }
+
+    func beginAdjustmentEdit() {
+        guard activeAdjustmentSnapshot == nil else { return }
+        activeAdjustmentSnapshot = project.adjustmentsByAssetID
+    }
+
+    func endAdjustmentEdit() {
+        guard let snapshot = activeAdjustmentSnapshot else { return }
+        activeAdjustmentSnapshot = nil
+        recordAdjustmentChange(before: snapshot)
+    }
+
+    func cancelAdjustmentEdit() {
+        guard let snapshot = activeAdjustmentSnapshot else { return }
+        activeAdjustmentSnapshot = nil
+        project.adjustmentsByAssetID = snapshot
+        refreshPreview()
+    }
+
+    private func recordAdjustmentChange(before snapshot: [UUID: PhotoAdjustments]) {
+        guard snapshot != project.adjustmentsByAssetID else { return }
+        adjustmentUndoStack.append(snapshot)
+        adjustmentRedoStack.removeAll()
+    }
+
+    private func clearAdjustmentHistory() {
+        adjustmentUndoStack.removeAll()
+        adjustmentRedoStack.removeAll()
+        activeAdjustmentSnapshot = nil
     }
 
     func apply(_ preset: PhotoPreset) {
-        selectedAdjustments = preset.adjustments
+        updateAdjustments { $0 = preset.adjustments }
         statusMessage = "Applied \(preset.name)"
     }
 
@@ -236,8 +276,42 @@ final class EditorStore: ObservableObject {
     }
 
     func resetAdjustments() {
-        selectedAdjustments = .neutral
+        updateAdjustments { $0 = .neutral }
         statusMessage = "Adjustments reset"
+    }
+
+    func undoPhotoEdit() {
+        guard let previous = adjustmentUndoStack.popLast() else { return }
+        adjustmentRedoStack.append(project.adjustmentsByAssetID)
+        project.adjustmentsByAssetID = previous
+        refreshPreview()
+        statusMessage = "Undid photo edit"
+    }
+
+    func redoPhotoEdit() {
+        guard let next = adjustmentRedoStack.popLast() else { return }
+        adjustmentUndoStack.append(project.adjustmentsByAssetID)
+        project.adjustmentsByAssetID = next
+        refreshPreview()
+        statusMessage = "Redid photo edit"
+    }
+
+    func updateCropRectFromDisplay(_ rect: CGRect?) {
+        updateAdjustments { adjustments in
+            guard let rect else {
+                adjustments.cropRect = nil
+                return
+            }
+
+            let clamped = rect.standardized.intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+            guard clamped.width > 0.01, clamped.height > 0.01 else { return }
+            adjustments.cropRect = CropRect(
+                x: clamped.minX,
+                y: 1 - clamped.maxY,
+                width: clamped.width,
+                height: clamped.height
+            )
+        }
     }
 
     func runSelectedAgent() {
@@ -258,6 +332,7 @@ final class EditorStore: ObservableObject {
     func applyLatestAgentChanges() {
         guard let report = latestAgentReport, !report.proposedChanges.isEmpty else { return }
 
+        let before = project.adjustmentsByAssetID
         var applied = 0
         for change in report.proposedChanges where change.kind == .copyPhotoAdjustments {
             guard let sourceAssetID = change.sourceAssetID,
@@ -269,6 +344,8 @@ final class EditorStore: ObservableObject {
             thumbnailCache.invalidate(assetID: targetAssetID)
             applied += 1
         }
+
+        recordAdjustmentChange(before: before)
 
         latestAgentReport = AgentReport(
             id: report.id,
@@ -298,6 +375,8 @@ final class EditorStore: ObservableObject {
         var adjustments = preset.adjustments
         adjustments.rotationQuarterTurns = 0
         adjustments.cropAspect = .original
+        adjustments.cropRect = nil
+        adjustments.straightenDegrees = nil
         project.videoAdjustmentsByClipID[selectedTimelineClipID] = adjustments
         rebuildTimelinePlayback()
         statusMessage = "Applied \(preset.name) to clip"
@@ -334,7 +413,7 @@ final class EditorStore: ObservableObject {
     func rotate(clockwise: Bool) {
         updateAdjustments { adjustments in
             let delta = clockwise ? 1 : -1
-            adjustments.rotationQuarterTurns = (adjustments.rotationQuarterTurns + delta) % 4
+            adjustments.rotationQuarterTurns = (adjustments.rotationQuarterTurns + delta + 4) % 4
         }
     }
 
@@ -382,6 +461,7 @@ final class EditorStore: ObservableObject {
         audioWaveforms = [:]
         pendingAudioWaveforms = []
         sourceImages = [:]
+        clearAdjustmentHistory()
         renderedPreview = nil
         originalPreview = nil
         histogram = .empty
@@ -432,6 +512,7 @@ final class EditorStore: ObservableObject {
             sourceImages = [:]
             audioWaveforms = [:]
             pendingAudioWaveforms = []
+            clearAdjustmentHistory()
             for asset in project.media where asset.kind == .video || asset.kind == .audio {
                 requestAudioWaveform(for: asset)
             }

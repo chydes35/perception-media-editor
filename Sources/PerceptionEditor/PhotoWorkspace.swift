@@ -2,8 +2,10 @@ import SwiftUI
 
 struct PhotoWorkspace: View {
     @EnvironmentObject private var store: EditorStore
+    @Environment(\.displayScale) private var displayScale
     @State private var isCropping = false
     @State private var draftCropRect: CGRect?
+    @State private var zoom = PhotoZoomViewport()
 
     var body: some View {
         HSplitView {
@@ -91,19 +93,49 @@ struct PhotoWorkspace: View {
             .frame(height: 44)
             .background(Color(nsColor: .controlBackgroundColor))
 
-            Group {
-                if store.isZoom100 {
-                    FocusLoupeView()
-                } else {
-                    PhotoComparisonView(
-                        original: store.originalPreview,
-                        edited: store.renderedPreview,
-                        mode: store.previewMode,
-                        isCropping: isCropping,
-                        cropRect: $draftCropRect,
-                        cropAspect: store.selectedAdjustments.cropAspect,
-                        onZoomRequest: { store.enterZoom100(at: $0) }
+            GeometryReader { geometry in
+                ZStack {
+                    Color.black
+                    if store.isZoom100 {
+                        FocusLoupeView()
+                    } else {
+                        PhotoComparisonView(
+                            original: store.originalPreview,
+                            edited: store.renderedPreview,
+                            mode: store.previewMode,
+                            isCropping: isCropping,
+                            cropRect: $draftCropRect,
+                            cropAspect: store.selectedAdjustments.cropAspect,
+                            onZoomRequest: { store.enterZoom100(at: $0) }
+                        )
+                        .frame(width: geometry.size.width, height: geometry.size.height)
+                        .scaleEffect(zoom.scale)
+                        .offset(zoom.offset)
+                    }
+                }
+                .frame(width: geometry.size.width, height: geometry.size.height)
+                .clipped()
+                .background {
+                    PhotoWheelCapture(
+                        onZoom: { delta, precise, pointer, viewport in
+                            zoomPhoto(by: delta, precise: precise, at: pointer, viewport: viewport)
+                        },
+                        onPan: { translation, viewport in
+                            guard let image = zoomImageSize(in: viewport), !store.isZoom100 else { return }
+                            zoom.pan(by: translation, viewport: viewport, image: image)
+                        },
+                        canPan: zoom.scale > 1 && !store.isZoom100
                     )
+                }
+                .onChange(of: geometry.size) { _, size in
+                    if let image = zoomImageSize(in: size) {
+                        zoom.constrain(viewport: size, image: image)
+                    }
+                }
+                .onChange(of: store.renderedPreview?.size) { _, _ in
+                    if let image = zoomImageSize(in: geometry.size) {
+                        zoom.constrain(viewport: geometry.size, image: image)
+                    }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -559,15 +591,47 @@ struct PhotoWorkspace: View {
     }
 
     private var zoomControls: some View {
-        Button {
-            store.toggleZoom100()
-        } label: {
-            Label("100%", systemImage: "plus.magnifyingglass")
+        HStack(spacing: 6) {
+            Button("Fit") {
+                store.exitZoom100()
+                zoom.reset()
+            }
+            .disabled(store.selectedAsset == nil || (zoom.isFitted && !store.isZoom100))
+
+            Button {
+                store.toggleZoom100()
+            } label: {
+                Label("100%", systemImage: "plus.magnifyingglass")
+            }
+            .tint(store.isZoom100 ? .orange : nil)
+            .disabled(store.selectedAsset == nil || isCropping)
+            .help("Pixel-perfect focus view (Z). Use the wheel over the photo for continuous zoom.")
+
+            Text(store.isZoom100 ? "100%" : String(format: "%.1f×", zoom.scale))
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .frame(width: 42, alignment: .trailing)
         }
         .buttonStyle(.bordered)
-        .tint(store.isZoom100 ? .orange : nil)
-        .disabled(store.selectedAsset == nil || isCropping)
-        .help("View at one image pixel per screen pixel to check focus (Z). Clicking the photo does the same.")
+    }
+
+    private func zoomPhoto(by delta: CGFloat, precise: Bool, at pointer: CGPoint, viewport: CGSize) {
+        guard let image = zoomImageSize(in: viewport) else { return }
+        if store.isZoom100 {
+            let fullSize = store.focusFullSize.width > 0 ? store.focusFullSize
+                : (store.currentGeometry?.finishedSize ?? image)
+            zoom.matchPixelView(
+                center: store.zoomCenter, fullImage: fullSize, displayScale: displayScale,
+                viewport: viewport, preview: image
+            )
+            store.exitZoom100()
+        }
+        zoom.zoom(by: delta, precise: precise, at: pointer, viewport: viewport, image: image)
+    }
+
+    private func zoomImageSize(in viewport: CGSize) -> CGSize? {
+        guard let image = store.renderedPreview ?? store.originalPreview else { return nil }
+        return store.previewMode == .sideBySide ? viewport : image.size
     }
 
     private func beginCrop() {
@@ -602,5 +666,6 @@ struct PhotoWorkspace: View {
         }
         draftCropRect = nil
         isCropping = false
+        zoom.reset()
     }
 }

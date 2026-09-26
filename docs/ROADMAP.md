@@ -30,7 +30,7 @@
 - [x] AVFoundation video import, thumbnails, metadata, and playback
 - [x] Persistent V1/A1 timeline model and interface
 - [x] Clip trim, split, reorder, mute, play, and ripple delete controls
-- [ ] AVMutableComposition sequence playback
+- [x] AVMutableComposition sequence playback, scrubbing, and active-clip sync
 - [ ] Shared color model for photos and video clips
 - [ ] Waveform cache, volume, pan, and fades
 - [ ] Titles, basic transitions, speed presets, and frame capture

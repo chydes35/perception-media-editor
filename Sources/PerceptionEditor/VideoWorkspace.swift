@@ -114,7 +114,19 @@ struct VideoWorkspace: View {
             HStack {
                 Text(store.selectedVideoAsset?.filename ?? "No video selected")
                     .font(.callout.weight(.semibold))
+                Text(store.isTimelinePlayback ? "TIMELINE" : "SOURCE")
+                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 4)
+                    .background(
+                        store.isTimelinePlayback ? Color.orange.opacity(0.22) : Color.secondary.opacity(0.14),
+                        in: Capsule()
+                    )
                 Spacer()
+                Button("Preview Timeline", systemImage: "play.rectangle.on.rectangle") {
+                    store.previewTimeline()
+                }
+                .disabled(store.project.timelineClips.isEmpty)
                 Button("Add to Timeline", systemImage: "plus.rectangle.on.rectangle") {
                     store.addToTimeline()
                 }
@@ -130,6 +142,7 @@ struct VideoWorkspace: View {
                 Color.black
                 if let player = store.videoPlayer {
                     VideoPlayer(player: player)
+                        .id(ObjectIdentifier(player))
                         .padding(20)
                 } else {
                     ContentUnavailableView(
@@ -141,7 +154,48 @@ struct VideoWorkspace: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            timelineTransport
         }
+    }
+
+    private var timelineTransport: some View {
+        HStack(spacing: 12) {
+            Button {
+                store.toggleVideoPlayback()
+            } label: {
+                Image(systemName: store.isVideoPlaying ? "pause.fill" : "play.fill")
+                    .frame(width: 18)
+            }
+            .buttonStyle(.borderless)
+            .disabled(store.project.timelineClips.isEmpty)
+
+            Text(formatTime(store.timelinePlaybackPositionSeconds))
+                .font(.system(size: 10, design: .monospaced))
+
+            Slider(
+                value: Binding(
+                    get: { store.timelinePlaybackPositionSeconds },
+                    set: { store.seekTimeline(to: $0) }
+                ),
+                in: 0 ... max(0.01, store.timelinePlaybackDurationSeconds)
+            )
+            .disabled(store.project.timelineClips.isEmpty)
+            .accessibilityLabel("Timeline playhead")
+
+            Text(formatTime(store.timelinePlaybackDurationSeconds))
+                .font(.system(size: 10, design: .monospaced))
+
+            if !store.timelinePlaybackWarnings.isEmpty {
+                Label("\(store.timelinePlaybackWarnings.count)", systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .help(store.timelinePlaybackWarnings.joined(separator: "\n"))
+            }
+        }
+        .padding(.horizontal, 16)
+        .frame(height: 40)
+        .background(Color(nsColor: .controlBackgroundColor))
     }
 
     private var inspector: some View {
@@ -189,6 +243,16 @@ struct VideoWorkspace: View {
                     Text("Select a timeline clip to trim, split, or reorder it.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                }
+
+                if !store.timelinePlaybackWarnings.isEmpty {
+                    inspectorSection("PLAYBACK WARNINGS") {
+                        ForEach(store.timelinePlaybackWarnings, id: \.self) { warning in
+                            Label(warning, systemImage: "exclamationmark.triangle.fill")
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                        }
+                    }
                 }
             }
             .padding(15)
@@ -276,8 +340,8 @@ private struct EditorTimelineView: View {
             Button { store.moveSelectedTimelineClip(by: 1) } label: {
                 Image(systemName: "arrow.right")
             }
-            Button { store.playSelectedTimelineClip() } label: {
-                Image(systemName: "play.fill")
+            Button { store.toggleVideoPlayback() } label: {
+                Image(systemName: store.isVideoPlaying ? "pause.fill" : "play.fill")
             }
             Button(role: .destructive) { store.removeSelectedTimelineClip() } label: {
                 Image(systemName: "trash")

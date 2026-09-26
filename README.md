@@ -20,6 +20,9 @@ This repository currently contains **V0.3: Video Editor Foundation (in progress)
 - Import MOV/MP4 video with duration, frame-size metadata, and poster thumbnails
 - Preview source video through AVFoundation
 - Build a persistent V1/A1 sequence with trim, split, reorder, mute, play, and ripple-delete controls
+- Preview the edited timeline as one AVMutableComposition with playhead scrubbing and active-clip sync
+- Rebuild timeline playback after edits while preserving the paused or playing state
+- Skip missing or incompatible media with visible playback warnings
 
 ## Run for development
 

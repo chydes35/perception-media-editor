@@ -12,6 +12,11 @@ final class EditorStore: ObservableObject {
     @Published var selectedVideoAssetID: UUID?
     @Published var selectedTimelineClipID: UUID?
     @Published var videoPlayer: AVPlayer?
+    @Published private(set) var isTimelinePlayback = false
+    @Published private(set) var isVideoPlaying = false
+    @Published private(set) var timelinePlaybackPositionSeconds = 0.0
+    @Published private(set) var timelinePlaybackDurationSeconds = 0.0
+    @Published private(set) var timelinePlaybackWarnings: [String] = []
     @Published private(set) var videoThumbnails: [UUID: NSImage] = [:]
     @Published var renderedPreview: NSImage?
     @Published var originalPreview: NSImage?
@@ -29,7 +34,11 @@ final class EditorStore: ObservableObject {
     private let userPresetRepository = UserPresetRepository()
     private let thumbnailCache = ThumbnailCache()
     private let videoMediaService = VideoMediaService.shared
+    private let timelineCompositionService = TimelineCompositionService.shared
     private var pendingVideoThumbnails: Set<UUID> = []
+    private var compositionRebuildTask: Task<Void, Never>?
+    private var playbackMonitorTask: Task<Void, Never>?
+    private var playbackRequestID = UUID()
 
     init() {
         userPresets = userPresetRepository.load()
@@ -126,7 +135,7 @@ final class EditorStore: ObservableObject {
                 project.media.append(asset)
                 selectedVideoAssetID = asset.id
                 if kind == .video {
-                    videoPlayer = AVPlayer(url: url)
+                    showSourceVideo(asset)
                 }
                 importedCount += 1
             }
@@ -160,8 +169,7 @@ final class EditorStore: ObservableObject {
     func selectVideo(_ asset: MediaAsset) {
         guard asset.kind == .video || asset.kind == .audio else { return }
         selectedVideoAssetID = asset.id
-        videoPlayer?.pause()
-        videoPlayer = AVPlayer(url: asset.url)
+        showSourceVideo(asset)
         statusMessage = "Selected \(asset.filename)"
     }
 
@@ -256,8 +264,11 @@ final class EditorStore: ObservableObject {
         selectedAssetID = nil
         selectedVideoAssetID = nil
         selectedTimelineClipID = nil
-        videoPlayer?.pause()
-        videoPlayer = nil
+        playbackRequestID = UUID()
+        compositionRebuildTask?.cancel()
+        replaceVideoPlayer(nil, timelineMode: false)
+        timelinePlaybackDurationSeconds = 0
+        timelinePlaybackWarnings = []
         videoThumbnails = [:]
         pendingVideoThumbnails = []
         sourceImages = [:]
@@ -318,6 +329,9 @@ final class EditorStore: ObservableObject {
                 }
             }
             refreshPreview()
+            if !project.timelineClips.isEmpty {
+                rebuildTimelinePlayback()
+            }
             statusMessage = "Opened \(url.lastPathComponent)"
         } catch {
             lastError = error.localizedDescription
@@ -428,6 +442,8 @@ final class EditorStore: ObservableObject {
         }
 
         thumbnailCache.invalidate(assetID: target.id)
+        videoThumbnails[target.id] = nil
+        pendingVideoThumbnails.remove(target.id)
         project.media[index].url = url
         if target.kind == .photo {
             sourceImages[target.id] = photoSource
@@ -442,6 +458,9 @@ final class EditorStore: ObservableObject {
                 project.media[currentIndex].durationSeconds = metadata.durationSeconds
                 project.media[currentIndex].pixelWidth = metadata.pixelWidth
                 project.media[currentIndex].pixelHeight = metadata.pixelHeight
+                if project.timelineClips.contains(where: { $0.assetID == target.id }) {
+                    rebuildTimelinePlayback()
+                }
             }
             selectVideo(project.media[index])
         }
@@ -459,26 +478,20 @@ final class EditorStore: ObservableObject {
         project.timelineClips.append(clip)
         normalizePrimaryTimeline()
         selectedTimelineClipID = clip.id
-        statusMessage = "Added \(asset.filename) to timeline"
+        rebuildTimelinePlayback(seekTo: clip.timelineStartSeconds)
     }
 
     func selectTimelineClip(_ clip: TimelineClip) {
         selectedTimelineClipID = clip.id
         if let asset = project.media.first(where: { $0.id == clip.assetID }) {
-            selectVideo(asset)
+            selectedVideoAssetID = asset.id
         }
+        showTimelinePlayback(at: clip.timelineStartSeconds)
     }
 
     func playSelectedTimelineClip() {
-        guard let clip = selectedTimelineClip,
-              let asset = project.media.first(where: { $0.id == clip.assetID }) else { return }
-        selectVideo(asset)
-        videoPlayer?.seek(
-            to: CMTime(seconds: clip.sourceStartSeconds, preferredTimescale: 600),
-            toleranceBefore: .zero,
-            toleranceAfter: .zero
-        )
-        videoPlayer?.play()
+        guard let clip = selectedTimelineClip else { return }
+        showTimelinePlayback(at: clip.timelineStartSeconds, autoplay: true)
     }
 
     func removeSelectedTimelineClip() {
@@ -486,7 +499,7 @@ final class EditorStore: ObservableObject {
         project.timelineClips.removeAll(where: { $0.id == selectedTimelineClipID })
         self.selectedTimelineClipID = project.timelineClips.first?.id
         normalizePrimaryTimeline()
-        statusMessage = "Ripple deleted timeline clip"
+        rebuildTimelinePlayback()
     }
 
     func moveSelectedTimelineClip(by offset: Int) {
@@ -497,7 +510,7 @@ final class EditorStore: ObservableObject {
         guard destination != index else { return }
         project.timelineClips.swapAt(index, destination)
         normalizePrimaryTimeline()
-        statusMessage = "Moved timeline clip"
+        rebuildTimelinePlayback()
     }
 
     func trimSelectedClipStart(by delta: Double) {
@@ -513,6 +526,7 @@ final class EditorStore: ObservableObject {
         project.timelineClips[index].sourceStartSeconds = newStart
         project.timelineClips[index].durationSeconds = max(0.25, end - newStart)
         normalizePrimaryTimeline()
+        rebuildTimelinePlayback()
     }
 
     func trimSelectedClipEnd(by delta: Double) {
@@ -528,6 +542,7 @@ final class EditorStore: ObservableObject {
             max(0.25, project.timelineClips[index].durationSeconds + delta)
         )
         normalizePrimaryTimeline()
+        rebuildTimelinePlayback()
     }
 
     func splitSelectedClip() {
@@ -551,7 +566,7 @@ final class EditorStore: ObservableObject {
         project.timelineClips.insert(second, at: index + 1)
         self.selectedTimelineClipID = second.id
         normalizePrimaryTimeline()
-        statusMessage = "Split timeline clip"
+        rebuildTimelinePlayback(seekTo: second.timelineStartSeconds)
     }
 
     func toggleSelectedClipMute() {
@@ -559,6 +574,47 @@ final class EditorStore: ObservableObject {
               let index = project.timelineClips.firstIndex(where: { $0.id == selectedTimelineClipID })
         else { return }
         project.timelineClips[index].isMuted.toggle()
+        rebuildTimelinePlayback()
+    }
+
+    func previewTimeline() {
+        showTimelinePlayback(at: timelinePlaybackPositionSeconds)
+    }
+
+    func toggleVideoPlayback() {
+        guard let videoPlayer else {
+            guard !project.timelineClips.isEmpty else { return }
+            rebuildTimelinePlayback(autoplay: true)
+            return
+        }
+
+        if isVideoPlaying || videoPlayer.timeControlStatus != .paused {
+            videoPlayer.pause()
+            isVideoPlaying = false
+        } else {
+            if isTimelinePlayback,
+               timelinePlaybackDurationSeconds > 0,
+               timelinePlaybackPositionSeconds >= timelinePlaybackDurationSeconds - 0.05 {
+                seekTimeline(to: 0)
+            }
+            videoPlayer.play()
+            isVideoPlaying = true
+        }
+    }
+
+    func seekTimeline(to seconds: Double) {
+        let clamped = min(max(0, seconds), timelinePlaybackDurationSeconds)
+        guard isTimelinePlayback, let videoPlayer else {
+            showTimelinePlayback(at: clamped)
+            return
+        }
+        timelinePlaybackPositionSeconds = clamped
+        videoPlayer.seek(
+            to: CMTime(seconds: clamped, preferredTimescale: 600),
+            toleranceBefore: .zero,
+            toleranceAfter: .zero
+        )
+        synchronizeTimelineSelection(at: clamped)
     }
 
     func timelineAsset(for clip: TimelineClip) -> MediaAsset? {
@@ -582,6 +638,123 @@ final class EditorStore: ObservableObject {
             return .audio
         }
         return nil
+    }
+
+    private func showSourceVideo(_ asset: MediaAsset) {
+        playbackRequestID = UUID()
+        compositionRebuildTask?.cancel()
+        timelinePlaybackWarnings = []
+        timelinePlaybackDurationSeconds = 0
+        timelinePlaybackPositionSeconds = 0
+        replaceVideoPlayer(AVPlayer(url: asset.url), timelineMode: false)
+    }
+
+    private func showTimelinePlayback(at seconds: Double, autoplay: Bool = false) {
+        if isTimelinePlayback, videoPlayer != nil {
+            seekTimeline(to: seconds)
+            if autoplay {
+                videoPlayer?.play()
+                isVideoPlaying = true
+            }
+        } else {
+            rebuildTimelinePlayback(autoplay: autoplay, seekTo: seconds)
+        }
+    }
+
+    private func rebuildTimelinePlayback(
+        autoplay: Bool = false,
+        seekTo requestedPosition: Double? = nil
+    ) {
+        guard !project.timelineClips.isEmpty else {
+            replaceVideoPlayer(nil, timelineMode: false)
+            timelinePlaybackDurationSeconds = 0
+            timelinePlaybackPositionSeconds = 0
+            timelinePlaybackWarnings = []
+            statusMessage = "Timeline is empty"
+            return
+        }
+
+        let livePlayerPosition = videoPlayer?.currentTime().seconds
+        let retainedPosition = livePlayerPosition.flatMap { $0.isFinite ? $0 : nil }
+            ?? timelinePlaybackPositionSeconds
+        let position = requestedPosition ?? (isTimelinePlayback ? retainedPosition : 0)
+        let shouldAutoplay = autoplay || (isTimelinePlayback && isVideoPlaying)
+        let clips = project.timelineClips
+        let media = project.media
+        let requestID = UUID()
+        playbackRequestID = requestID
+        compositionRebuildTask?.cancel()
+        statusMessage = "Building timeline preview…"
+
+        compositionRebuildTask = Task { [weak self] in
+            guard let self else { return }
+            let result = await timelineCompositionService.makePlayerItem(clips: clips, media: media)
+            guard !Task.isCancelled, playbackRequestID == requestID else { return }
+
+            timelinePlaybackWarnings = result.warnings
+            guard let playerItem = result.playerItem else {
+                replaceVideoPlayer(nil, timelineMode: false)
+                timelinePlaybackDurationSeconds = 0
+                timelinePlaybackPositionSeconds = 0
+                statusMessage = result.warnings.first ?? "Timeline preview could not be built"
+                return
+            }
+
+            let player = AVPlayer(playerItem: playerItem)
+            replaceVideoPlayer(player, timelineMode: true)
+            timelinePlaybackDurationSeconds = result.durationSeconds
+            let clampedPosition = min(max(0, position), result.durationSeconds)
+            seekTimeline(to: clampedPosition)
+            if shouldAutoplay {
+                player.play()
+                isVideoPlaying = true
+            }
+            statusMessage = result.warnings.isEmpty
+                ? "Timeline preview ready"
+                : "Timeline ready with \(result.warnings.count) warning\(result.warnings.count == 1 ? "" : "s")"
+        }
+    }
+
+    private func replaceVideoPlayer(_ player: AVPlayer?, timelineMode: Bool) {
+        playbackMonitorTask?.cancel()
+        videoPlayer?.pause()
+        videoPlayer = player
+        isTimelinePlayback = timelineMode
+        isVideoPlaying = false
+
+        guard let player else { return }
+        playbackMonitorTask = Task { @MainActor [weak self, weak player] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(100))
+                guard let self, let player, self.videoPlayer === player else { return }
+                self.isVideoPlaying = player.timeControlStatus == .playing
+                guard self.isTimelinePlayback else { continue }
+                let seconds = player.currentTime().seconds
+                guard seconds.isFinite else { continue }
+                self.timelinePlaybackPositionSeconds = min(
+                    max(0, seconds),
+                    self.timelinePlaybackDurationSeconds
+                )
+                self.synchronizeTimelineSelection(at: seconds)
+            }
+        }
+    }
+
+    private func synchronizeTimelineSelection(at seconds: Double) {
+        guard isTimelinePlayback else { return }
+        let tolerance = 0.001
+        let clip = project.timelineClips.first {
+            seconds + tolerance >= $0.timelineStartSeconds &&
+                seconds < $0.timelineStartSeconds + $0.durationSeconds - tolerance
+        } ?? (seconds >= timelineDurationSeconds - tolerance ? project.timelineClips.last : nil)
+
+        guard let clip else { return }
+        if selectedTimelineClipID != clip.id {
+            selectedTimelineClipID = clip.id
+        }
+        if selectedVideoAssetID != clip.assetID {
+            selectedVideoAssetID = clip.assetID
+        }
     }
 
     private func normalizePrimaryTimeline() {

@@ -18,6 +18,7 @@ Original media is never modified. A `.pmedit` project stores references to the o
 - `ThumbnailCache.swift`: stable, adjustment-aware JPEG thumbnails in Application Support.
 - `UserPresetRepository.swift`: persistent user presets backed by app preferences.
 - `VideoMediaService.swift`: AVFoundation metadata and poster-frame extraction.
+- `TimelineCompositionService.swift`: translates persistent V1/A1 clip metadata into a playable AVMutableComposition and reports recoverable media warnings.
 - `VideoWorkspace.swift`: source viewer, media bin, inspector, and persistent V1/A1 timeline controls.
 
 ## Project format
@@ -26,6 +27,8 @@ The first project format is readable JSON with the `.pmedit` extension. It store
 
 Preview thumbnails are disposable cache files, not project data. Their keys include the asset identity, source path, source modification date, and adjustment metadata, so stale renders are not reused.
 
-## Planned video boundary
+## Video playback boundary
 
-V0.3 stores non-destructive `TimelineClip` records separately from source media. The current viewer plays source assets while the next slice translates the timeline metadata into `AVMutableComposition`, `AVVideoComposition`, and `AVAudioMix` objects. It will reuse `PhotoAdjustments` as the starting point for a shared photo/video color model.
+V0.3 stores non-destructive `TimelineClip` records separately from source media. `TimelineCompositionService` translates those records into an `AVMutableComposition` whenever the sequence changes. The store owns playback state, playhead synchronization, and automatic active-clip selection; missing or incompatible clips are skipped with visible warnings.
+
+The current sequence uses the first playable clip's preferred transform. Per-clip mixed-orientation fitting belongs in the future `AVVideoComposition` color/render layer. That layer will also reuse `PhotoAdjustments` as the starting point for a shared photo/video color model.

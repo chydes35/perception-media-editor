@@ -58,7 +58,7 @@ struct PhotoComparisonView: View {
     }
 
     /// Where a click landed on the fitted photo, as 0–1 from its top-left; nil outside the photo.
-    static func normalizedPoint(_ location: CGPoint, in viewSize: CGSize, image imageSize: CGSize) -> CGPoint? {
+    nonisolated static func normalizedPoint(_ location: CGPoint, in viewSize: CGSize, image imageSize: CGSize) -> CGPoint? {
         let padding: CGFloat = 28
         let available = CGSize(width: viewSize.width - padding * 2, height: viewSize.height - padding * 2)
         guard available.width > 0, available.height > 0, imageSize.width > 0, imageSize.height > 0 else { return nil }

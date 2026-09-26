@@ -10,12 +10,18 @@ Original media is never modified. A `.pmedit` project stores references to the o
 
 - `EditorModels.swift`: versioned project, media, adjustments, crop, and preset data.
 - `ProjectDocument.swift`: atomic JSON project persistence and schema guard.
-- `PhotoRenderer.swift`: an actor that renders previews, histograms, thumbnails, and exports off the main thread. Editing uses a working copy capped at 2560 px (RAW files decode through `CIRAWFilter` at reduced scale into a linear half-float buffer), and only four working copies stay in memory. Full-resolution decodes happen only for export. RAW thumbnails use the camera's embedded JPEG preview.
+- `PhotoRenderer.swift`: an actor that renders previews (working copies in GPU-shared half-float pixel buffers, one edited RAW variant per photo, one full-resolution buffer for the 100% view), histograms, thumbnails, and exports off the main thread. Editing uses a working copy capped at 2560 px (RAW files decode through `CIRAWFilter` at reduced scale into a linear half-float buffer), and only four working copies stay in memory. Full-resolution decodes happen only for export. RAW thumbnails use the camera's embedded JPEG preview.
 - `MediaColorRenderer.swift`: shared Core Image adjustment graph used by photo rendering and timeline clip playback.
 - `EditorStore.swift`: main-actor application state and file-panel workflows. Preview requests collapse while a render is in flight, so slider drags render only the latest values. Unsaved changes are tracked against the last saved project and confirmed before New, Open, and Quit.
 - Workspace views: Library, Photo, Video placeholder, and Export.
 - `HistogramView.swift`: accessible RGB histogram rendered from the edited image pipeline.
 - `PhotoComparisonView.swift`: original, edited, split, and side-by-side presentation modes.
+- `RawSettings.swift`: the settings that belong to the RAW decode (white balance, noise reduction, sharpness, detail, lens corrections), what the engine reports for a file, and white balance presets. Changing one re-decodes (about half a second on a 24 MP S5 file); every value is optional, so an untouched photo stores nothing.
+- `ColorGrading.swift`: the tone curve (monotone cubic through user points, per-channel) and HSL (eight bands blended smoothly, baked into a 48-point color cube that is cached). Both act on gamma-encoded color and are skipped when untouched so highlights keep their headroom.
+- `AdjustmentGroups.swift`: the Develop panel's groups, and everything built on them: presets, copy/paste/sync, history entries, and preset files.
+- `EditorStore+Develop.swift`: RAW info, white balance actions, and the 100% view.
+- `EditorStore+Presets.swift`: applying presets to a selection as one undo step, user preset management, copy/paste/sync, history, and preset import/export.
+- `FocusLoupeView.swift`, `ToneCurveEditor.swift` (also the HSL panel), and `PresetPanel.swift` (also the save-preset and copy-settings sheets).
 - `IngestService.swift`: card-to-shoot copy. Streams each file to `name.partial` while hashing it, flushes, reads it back without the file cache, compares, then renames into place. Skips a file already present (same name, size, and timestamp, or same content), gives a different file with a colliding name a `-1` suffix, and mirrors to an optional backup. The card is only read.
 - `EditorStore+Ingest.swift`: shoot folder layout, remembered locations, and the import flow that fills the project as files arrive.
 - `EditorStore+Culling.swift`: capture-ordered visible photos, filters, selection, rating/flag/label commands, key handling, remove, Delete Rejected, and autosave.

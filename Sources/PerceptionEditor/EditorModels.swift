@@ -211,28 +211,15 @@ struct PhotoAdjustments: Codable, Equatable, Sendable {
 
     static let neutral = PhotoAdjustments()
 
-    /// Tone, color, and detail. Presets, look matching, and batch edits carry this part.
-    /// Crop, rotation, straighten, and white balance belong to an individual photo.
+    /// Every look setting: tone, color, presence, curves, HSL, and RAW detail. Crop, rotation,
+    /// straighten, and white balance belong to an individual photo, so they are left out.
     var lookOnly: PhotoAdjustments {
-        var look = self
-        look.rotationQuarterTurns = 0
-        look.cropAspect = .original
-        look.cropRect = nil
-        look.straightenDegrees = nil
-        look.raw = raw.withoutWhiteBalance
-        return look
+        containing(AdjustmentGroup.looks)
     }
 
     /// This look applied to a photo while keeping that photo's own geometry and white balance.
     func look(keepingGeometryOf target: PhotoAdjustments) -> PhotoAdjustments {
-        var result = lookOnly
-        result.rotationQuarterTurns = target.rotationQuarterTurns
-        result.cropAspect = target.cropAspect
-        result.cropRect = target.cropRect
-        result.straightenDegrees = target.straightenDegrees
-        result.raw.temperature = target.raw.temperature
-        result.raw.tint = target.raw.tint
-        return result
+        target.applying(self, groups: AdjustmentGroup.looks)
     }
 
     /// Geometry without the crop, used while the crop editor is open so the whole
@@ -279,17 +266,29 @@ struct PhotoPreset: Identifiable, Codable, Equatable, Sendable {
     var name: String
     var category: String
     var adjustments: PhotoAdjustments
+    /// The groups this preset sets. Nil for presets saved before groups existed, which set
+    /// tone, color, and presence.
+    var groups: Set<AdjustmentGroup>?
 
     init(
         id: UUID = UUID(),
         name: String,
         category: String,
-        adjustments: PhotoAdjustments
+        adjustments: PhotoAdjustments,
+        groups: Set<AdjustmentGroup>? = nil
     ) {
         self.id = id
         self.name = name
         self.category = category
         self.adjustments = adjustments
+        self.groups = groups
+    }
+
+    var effectiveGroups: Set<AdjustmentGroup> { groups ?? AdjustmentGroup.basics }
+
+    /// `target` with this preset's groups applied; everything else about the photo is kept.
+    func apply(to target: PhotoAdjustments) -> PhotoAdjustments {
+        target.applying(adjustments, groups: effectiveGroups)
     }
 
     static let builtIns: [PhotoPreset] = [

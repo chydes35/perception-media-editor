@@ -50,6 +50,17 @@ struct PerceptionEditorApp: App {
                 Button("Show Edited") { store.setShowingOriginal(false) }
                 Divider()
                 Button("Reset Adjustments") { store.resetAdjustments() }
+                Divider()
+                Button("Save Preset…") { store.isShowingSavePresetSheet = true }
+                    .disabled(store.selectedAsset == nil)
+                Button("Copy Settings…") { store.copySheetMode = .copy }
+                    .keyboardShortcut("c", modifiers: [.command, .shift])
+                    .disabled(store.selectedAsset?.kind != .photo)
+                Button("Paste Settings") { store.pasteSettings() }
+                    .keyboardShortcut("v", modifiers: [.command, .shift])
+                    .disabled(!store.canPasteSettings)
+                Button("Sync Settings…") { store.copySheetMode = .sync }
+                    .disabled(store.selectedAssetIDs.count < 2 || store.selectedAsset?.kind != .photo)
             }
 
             CommandMenu("Cull") {

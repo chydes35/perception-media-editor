@@ -17,7 +17,7 @@ The goal is a full Lightroom replacement for a single photographer's workflow. P
 - [x] GitHub Actions build
 - [ ] Split photo, timeline, and project responsibilities out of `EditorStore` (carried into Phase 2; culling and ingest live in `EditorStore+Culling.swift` and `EditorStore+Ingest.swift`)
 
-### Phase 1 — Library and culling (in progress)
+### Phase 1 — Library and culling (complete, PR #2)
 
 - [x] One folder per shoot: `<Shoots>/<date> <Name>/{Name.pmedit, Originals/}`, saved automatically
 - [x] Import from card: verified copy (SHA-256 read back from disk), never modifies the card, skips files already imported, optional backup drive that is skipped safely when disconnected
@@ -29,11 +29,20 @@ The goal is a full Lightroom replacement for a single photographer's workflow. P
 - [ ] Zoom to 100% for focus checks (needs the full RAW decode; Phase 2)
 - [ ] Undo for rating, flag, and label changes
 
-### Phase 2 — RAW develop and presets
+### Phase 2 — RAW develop and presets (in progress)
 
-- `CIRAWFilter` controls: Kelvin white balance from as-shot, highlight recovery, noise reduction, lens correction
-- Tone curve, HSL, color grading, auto-tone
-- Preset library, copy/paste/sync settings, history, snapshots, virtual copies
+- [x] RAW engine controls: white balance in Kelvin and tint (as-shot by default, Lightroom-style presets), luminance and color noise reduction, sharpness, detail, lens corrections
+- [x] Highlight headroom kept through the decode so exposure and highlights recover blown areas
+- [x] Zoom to 100% (Z, button, or click) in Develop and Cull, pan in about 12 ms
+- [x] Tone curve: RGB plus R, G, B point curves with presets
+- [x] HSL: hue, saturation, luminance for eight color bands
+- [x] Presets by group (Light, Color, Presence, Tone Curve, HSL, RAW Detail, White Balance), organized in categories, renamed, moved, updated, imported, and exported (`.pmpreset`)
+- [x] Apply a preset to the whole selection as one undo step
+- [x] Copy Settings (⇧⌘C), Paste Settings (⇧⌘V), Sync Settings
+- [x] History: named steps for the current photo; click one to go back
+- [ ] White balance eyedropper (click a neutral gray)
+- [ ] Auto tone and auto white balance
+- [ ] Split `EditorStore` into photo, timeline, and project parts
 
 ### Phase 3 — Masks and healing
 

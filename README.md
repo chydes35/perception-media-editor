@@ -10,7 +10,9 @@ This repository currently contains **V0.3: Video Editor Foundation (in progress)
 - Cull with Lightroom's keys (P/X/U, 0–5, 6–9, arrows), compare two photos, filter by flag, stars, and label
 - Import JPEG, HEIC, PNG, TIFF, and Core Image-supported RAW files by reference
 - Browse imported photos in a native library
-- Adjust exposure, contrast, highlights, shadows, temperature, tint, vibrance, saturation, sharpness, and vignette
+- Adjust exposure, contrast, highlights, shadows, warmth, tint, vibrance, saturation, sharpness, and vignette
+- Develop RAW files with white balance in Kelvin, noise reduction, sharpness, detail, and lens corrections; edit tone curves and HSL; check focus at 100%
+- Save presets by settings group, organize them in categories, apply them to a whole selection, copy and paste settings between photos, and step back through an edit history
 - Rotate and apply common social/photo aspect ratios
 - Apply four built-in Perception presets
 - Save and delete reusable user presets

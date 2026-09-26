@@ -26,6 +26,13 @@ final class EditorStore: ObservableObject {
     /// RAW engine defaults for the selected photo; nil when it is not a RAW file.
     @Published var rawInfo: RawInfo?
     @Published var isRenderingPreview = false
+    /// Each photo's edit steps for this session, oldest first. Not saved in the project.
+    @Published var history: [UUID: [HistoryEntry]] = [:]
+    @Published var copiedSettings: CopiedSettings?
+    @Published var copySheetMode: CopySheetMode?
+    @Published var isShowingSavePresetSheet = false
+    /// A name for the next recorded edit, such as "Preset: Documentary Warm".
+    var nextHistoryLabel: String?
     @Published var isZoom100 = false
     @Published var focusImage: CGImage?
     @Published var isLoadingFocus = false
@@ -78,7 +85,7 @@ final class EditorStore: ObservableObject {
     private var originalPreviewAssetID: UUID?
     private var pendingPhotoThumbnails: Set<UUID> = []
     let document = ProjectDocument()
-    private let userPresetRepository = UserPresetRepository()
+    let userPresetRepository: UserPresetRepository
     let thumbnailCache = ThumbnailCache()
     private let videoMediaService = VideoMediaService.shared
     private let audioWaveformService = AudioWaveformService.shared
@@ -90,10 +97,11 @@ final class EditorStore: ObservableObject {
     private var playbackRequestID = UUID()
     private var adjustmentUndoStack: [[UUID: PhotoAdjustments]] = []
     private var adjustmentRedoStack: [[UUID: PhotoAdjustments]] = []
-    private var activeAdjustmentSnapshot: [UUID: PhotoAdjustments]?
+    var activeAdjustmentSnapshot: [UUID: PhotoAdjustments]?
 
-    init() {
-        userPresets = userPresetRepository.load()
+    init(presetRepository: UserPresetRepository = UserPresetRepository()) {
+        userPresetRepository = presetRepository
+        userPresets = presetRepository.load()
         cullCache.onLoaded = { [weak self] id in self?.cullPreviewLoaded(id) }
 
         // Projects with a file on disk save themselves shortly after every change, so culling
@@ -292,54 +300,20 @@ final class EditorStore: ObservableObject {
         refreshPreview()
     }
 
-    private func recordAdjustmentChange(before snapshot: [UUID: PhotoAdjustments]) {
+    func recordAdjustmentChange(before snapshot: [UUID: PhotoAdjustments]) {
+        let label = nextHistoryLabel
+        nextHistoryLabel = nil
         guard snapshot != project.adjustmentsByAssetID else { return }
         adjustmentUndoStack.append(snapshot)
         adjustmentRedoStack.removeAll()
+        appendHistory(before: snapshot, label: label)
     }
 
     private func clearAdjustmentHistory() {
+        history = [:]
         adjustmentUndoStack.removeAll()
         adjustmentRedoStack.removeAll()
         activeAdjustmentSnapshot = nil
-    }
-
-    func apply(_ preset: PhotoPreset) {
-        updateAdjustments { $0 = preset.adjustments.look(keepingGeometryOf: $0) }
-        statusMessage = "Applied \(preset.name)"
-    }
-
-    func saveUserPreset(named name: String) {
-        let cleanedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !cleanedName.isEmpty, selectedAssetID != nil else { return }
-
-        if let index = userPresets.firstIndex(where: {
-            $0.name.localizedCaseInsensitiveCompare(cleanedName) == .orderedSame
-        }) {
-            userPresets[index].adjustments = selectedAdjustments.lookOnly
-        } else {
-            userPresets.append(
-                PhotoPreset(
-                    name: cleanedName,
-                    category: "User",
-                    adjustments: selectedAdjustments.lookOnly
-                )
-            )
-        }
-
-        userPresets.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-        userPresetRepository.save(userPresets)
-        statusMessage = "Saved preset \(cleanedName)"
-    }
-
-    func deleteUserPreset(_ preset: PhotoPreset) {
-        userPresets.removeAll(where: { $0.id == preset.id })
-        userPresetRepository.save(userPresets)
-        statusMessage = "Deleted preset \(preset.name)"
-    }
-
-    func isUserPreset(_ preset: PhotoPreset) -> Bool {
-        userPresets.contains(where: { $0.id == preset.id })
     }
 
     func resetAdjustments() {
@@ -440,7 +414,10 @@ final class EditorStore: ObservableObject {
 
     func applyVideoPreset(_ preset: PhotoPreset) {
         guard let selectedTimelineClipID else { return }
-        project.videoAdjustmentsByClipID[selectedTimelineClipID] = preset.adjustments.lookOnly
+        // Video clips take a preset's look groups; white balance and RAW detail belong to RAW photos.
+        let groups = preset.effectiveGroups.intersection(AdjustmentGroup.looks).subtracting([.rawDetail])
+        project.videoAdjustmentsByClipID[selectedTimelineClipID] =
+            selectedVideoAdjustments.applying(preset.adjustments, groups: groups)
         rebuildTimelinePlayback()
         statusMessage = "Applied \(preset.name) to clip"
     }

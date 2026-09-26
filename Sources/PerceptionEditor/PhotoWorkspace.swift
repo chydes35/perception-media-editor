@@ -2,14 +2,12 @@ import SwiftUI
 
 struct PhotoWorkspace: View {
     @EnvironmentObject private var store: EditorStore
-    @State private var isSavingPreset = false
-    @State private var presetName = ""
     @State private var isCropping = false
     @State private var draftCropRect: CGRect?
 
     var body: some View {
         HSplitView {
-            presetPanel
+            PresetPanel()
                 .frame(minWidth: 185, idealWidth: 210, maxWidth: 250)
             previewPanel
                 .frame(minWidth: 580, maxWidth: .infinity, maxHeight: .infinity)
@@ -23,74 +21,6 @@ struct PhotoWorkspace: View {
             if isCropping {
                 cancelCrop()
             }
-        }
-    }
-
-    private var presetPanel: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                panelHeading("PRESETS", symbol: "camera.filters")
-                Spacer()
-                Button {
-                    presetName = ""
-                    isSavingPreset = true
-                } label: {
-                    Image(systemName: "plus")
-                }
-                .buttonStyle(.borderless)
-                .help("Save current adjustments as a user preset")
-                .disabled(store.selectedAsset == nil)
-            }
-
-            ScrollView {
-                VStack(spacing: 9) {
-                    ForEach(store.presets) { preset in
-                        Button {
-                            store.apply(preset)
-                        } label: {
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(preset.name)
-                                    .font(.callout.weight(.semibold))
-                                Text(preset.category.uppercased())
-                                    .font(.system(size: 9, weight: .bold))
-                                    .tracking(0.8)
-                                    .foregroundStyle(.secondary)
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(10)
-                            .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
-                        }
-                        .buttonStyle(.plain)
-                        .contextMenu {
-                            if store.isUserPreset(preset) {
-                                Button("Delete Preset", role: .destructive) {
-                                    store.deleteUserPreset(preset)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            Spacer()
-
-            Button("Reset Adjustments", systemImage: "arrow.counterclockwise") {
-                store.resetAdjustments()
-            }
-            .buttonStyle(.bordered)
-            .disabled(store.selectedAsset == nil)
-        }
-        .padding(14)
-        .background(Color(nsColor: .controlBackgroundColor))
-        .alert("Save User Preset", isPresented: $isSavingPreset) {
-            TextField("Preset name", text: $presetName)
-            Button("Cancel", role: .cancel) {}
-            Button("Save") {
-                store.saveUserPreset(named: presetName)
-            }
-            .disabled(presetName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        } message: {
-            Text("Save the selected photo's current adjustments for reuse.")
         }
     }
 
@@ -188,7 +118,14 @@ struct PhotoWorkspace: View {
             HStack(spacing: 10) {
                 ForEach(store.visiblePhotos) { asset in
                     Button {
-                        store.select(asset)
+                        let modifiers = NSEvent.modifierFlags
+                        if modifiers.contains(.command) {
+                            store.toggleSelection(asset)
+                        } else if modifiers.contains(.shift) {
+                            store.extendSelection(to: asset)
+                        } else {
+                            store.select(asset)
+                        }
                     } label: {
                         Group {
                             if let image = store.thumbnail(for: asset) {
@@ -203,7 +140,11 @@ struct PhotoWorkspace: View {
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                         .overlay {
                             RoundedRectangle(cornerRadius: 6)
-                                .stroke(asset.id == store.selectedAssetID ? Color.orange : .clear, lineWidth: 3)
+                                .stroke(
+                                    asset.id == store.selectedAssetID ? Color.orange
+                                        : (store.selectedAssetIDs.contains(asset.id) ? Color.orange.opacity(0.5) : .clear),
+                                    lineWidth: 3
+                                )
                         }
                     }
                     .buttonStyle(.plain)

@@ -9,16 +9,32 @@ final class EditorStore: ObservableObject {
     @Published var workspace: Workspace = .library
     @Published var selectedAssetID: UUID?
     @Published var renderedPreview: NSImage?
-    @Published var isShowingOriginal = false
+    @Published var originalPreview: NSImage?
+    @Published var previewMode: PreviewMode = .edited
+    @Published var histogram = HistogramData.empty
+    @Published var userPresets: [PhotoPreset] = []
     @Published var statusMessage = "Ready"
     @Published var lastError: String?
 
     private(set) var sourceImages: [UUID: CIImage] = [:]
     private(set) var projectURL: URL?
 
-    let presets = PhotoPreset.builtIns
     private let renderer = PhotoRenderer.shared
     private let document = ProjectDocument()
+    private let userPresetRepository = UserPresetRepository()
+    private let thumbnailCache = ThumbnailCache()
+
+    init() {
+        userPresets = userPresetRepository.load()
+    }
+
+    var presets: [PhotoPreset] {
+        PhotoPreset.builtIns + userPresets
+    }
+
+    var isShowingOriginal: Bool {
+        previewMode == .original
+    }
 
     var selectedAsset: MediaAsset? {
         guard let selectedAssetID else { return nil }
@@ -33,6 +49,7 @@ final class EditorStore: ObservableObject {
         set {
             guard let selectedAssetID else { return }
             project.adjustmentsByAssetID[selectedAssetID] = newValue
+            thumbnailCache.invalidate(assetID: selectedAssetID)
             refreshPreview()
         }
     }
@@ -89,6 +106,39 @@ final class EditorStore: ObservableObject {
         statusMessage = "Applied \(preset.name)"
     }
 
+    func saveUserPreset(named name: String) {
+        let cleanedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanedName.isEmpty, selectedAssetID != nil else { return }
+
+        if let index = userPresets.firstIndex(where: {
+            $0.name.localizedCaseInsensitiveCompare(cleanedName) == .orderedSame
+        }) {
+            userPresets[index].adjustments = selectedAdjustments
+        } else {
+            userPresets.append(
+                PhotoPreset(
+                    name: cleanedName,
+                    category: "User",
+                    adjustments: selectedAdjustments
+                )
+            )
+        }
+
+        userPresets.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        userPresetRepository.save(userPresets)
+        statusMessage = "Saved preset \(cleanedName)"
+    }
+
+    func deleteUserPreset(_ preset: PhotoPreset) {
+        userPresets.removeAll(where: { $0.id == preset.id })
+        userPresetRepository.save(userPresets)
+        statusMessage = "Deleted preset \(preset.name)"
+    }
+
+    func isUserPreset(_ preset: PhotoPreset) -> Bool {
+        userPresets.contains(where: { $0.id == preset.id })
+    }
+
     func resetAdjustments() {
         selectedAdjustments = .neutral
         statusMessage = "Adjustments reset"
@@ -104,6 +154,8 @@ final class EditorStore: ObservableObject {
     func refreshPreview() {
         guard let selectedAssetID else {
             renderedPreview = nil
+            originalPreview = nil
+            histogram = .empty
             return
         }
 
@@ -113,16 +165,18 @@ final class EditorStore: ObservableObject {
 
         guard let source = sourceImages[selectedAssetID] else {
             renderedPreview = nil
+            originalPreview = nil
+            histogram = .empty
             return
         }
 
-        let adjustments = isShowingOriginal ? PhotoAdjustments.neutral : selectedAdjustments
-        renderedPreview = renderer.preview(source, adjustments: adjustments)
+        originalPreview = renderer.preview(source, adjustments: .neutral)
+        renderedPreview = renderer.preview(source, adjustments: selectedAdjustments)
+        histogram = renderer.histogram(source, adjustments: selectedAdjustments)
     }
 
     func setShowingOriginal(_ showing: Bool) {
-        isShowingOriginal = showing
-        refreshPreview()
+        previewMode = showing ? .original : .edited
     }
 
     func newProject() {
@@ -131,6 +185,10 @@ final class EditorStore: ObservableObject {
         selectedAssetID = nil
         sourceImages = [:]
         renderedPreview = nil
+        originalPreview = nil
+        histogram = .empty
+        previewMode = .edited
+        thumbnailCache.clearMemory()
         workspace = .library
         statusMessage = "New project"
     }
@@ -193,7 +251,7 @@ final class EditorStore: ObservableObject {
 
         loadSourceIfNeeded(for: asset)
         guard let source = sourceImages[selectedAssetID] else {
-            lastError = "The original file could not be loaded. Relink support is planned for V0.2."
+            lastError = "The original file could not be loaded. Relink it from the Photo or Library workspace."
             return
         }
 
@@ -213,10 +271,50 @@ final class EditorStore: ObservableObject {
     }
 
     func thumbnail(for asset: MediaAsset) -> NSImage? {
+        let adjustments = project.adjustmentsByAssetID[asset.id] ?? .neutral
+        if let cached = thumbnailCache.image(for: asset, adjustments: adjustments) {
+            return cached
+        }
+
         loadSourceIfNeeded(for: asset)
         guard let source = sourceImages[asset.id] else { return nil }
-        let adjustments = project.adjustmentsByAssetID[asset.id] ?? .neutral
-        return renderer.preview(source, adjustments: adjustments, maxDimension: 420)
+        guard let image = renderer.preview(source, adjustments: adjustments, maxDimension: 420) else {
+            return nil
+        }
+        thumbnailCache.store(image, for: asset, adjustments: adjustments)
+        return image
+    }
+
+    func isMissing(_ asset: MediaAsset) -> Bool {
+        !FileManager.default.fileExists(atPath: asset.url.path)
+    }
+
+    func relink(_ asset: MediaAsset? = nil) {
+        guard let target = asset ?? selectedAsset else {
+            lastError = "Select a photo before relinking."
+            return
+        }
+
+        let panel = NSOpenPanel()
+        panel.title = "Relink \(target.filename)"
+        panel.prompt = "Relink"
+        panel.allowedContentTypes = [.image, .rawImage]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard let source = renderer.loadImage(from: url) else {
+            lastError = "The selected file is not a supported photo."
+            return
+        }
+        guard let index = project.media.firstIndex(where: { $0.id == target.id }) else { return }
+
+        thumbnailCache.invalidate(assetID: target.id)
+        project.media[index].url = url
+        sourceImages[target.id] = source
+        selectedAssetID = target.id
+        refreshPreview()
+        statusMessage = "Relinked \(url.lastPathComponent)"
     }
 
     private func loadSourceIfNeeded(for asset: MediaAsset) {

@@ -15,6 +15,33 @@ enum MediaKind: String, Codable, CaseIterable {
     case audio
 }
 
+enum PreviewMode: String, CaseIterable, Identifiable, Sendable {
+    case original = "Original"
+    case edited = "Edited"
+    case split = "Split"
+    case sideBySide = "Side by Side"
+
+    var id: String { rawValue }
+}
+
+struct HistogramData: Equatable, Sendable {
+    var red: [Double]
+    var green: [Double]
+    var blue: [Double]
+
+    static let empty = HistogramData(
+        red: Array(repeating: 0, count: 256),
+        green: Array(repeating: 0, count: 256),
+        blue: Array(repeating: 0, count: 256)
+    )
+
+    var hasValues: Bool {
+        red.contains(where: { $0 > 0 }) ||
+            green.contains(where: { $0 > 0 }) ||
+            blue.contains(where: { $0 > 0 })
+    }
+}
+
 struct MediaAsset: Identifiable, Codable, Equatable {
     let id: UUID
     var url: URL

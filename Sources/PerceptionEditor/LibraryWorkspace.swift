@@ -98,6 +98,9 @@ struct LibraryWorkspace: View {
                                     store.select(asset)
                                     store.workspace = .photo
                                 }
+                                .contextMenu {
+                                    Button("Relink Media…") { store.relink(asset) }
+                                }
                         }
                     }
                     .padding(20)
@@ -135,6 +138,22 @@ private struct MediaCard: View {
                     Image(systemName: "exclamationmark.triangle")
                         .font(.largeTitle)
                         .foregroundStyle(.secondary)
+                }
+
+                if store.isMissing(asset) {
+                    VStack {
+                        HStack {
+                            Spacer()
+                            Label("Missing", systemImage: "exclamationmark.triangle.fill")
+                                .font(.caption2.weight(.bold))
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 4)
+                                .background(Color.red, in: Capsule())
+                                .foregroundStyle(.white)
+                        }
+                        Spacer()
+                    }
+                    .padding(8)
                 }
             }
             .aspectRatio(4 / 3, contentMode: .fit)

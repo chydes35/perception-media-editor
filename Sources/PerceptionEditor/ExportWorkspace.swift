@@ -8,7 +8,7 @@ struct ExportWorkspace: View {
             VStack(alignment: .leading, spacing: 20) {
                 Text("Export")
                     .font(.largeTitle.bold())
-                Text("V0.1 exports the selected edited photo as a full-resolution JPEG or PNG in sRGB.")
+                Text("V0.2 exports the selected edited photo as a full-resolution JPEG or PNG in sRGB.")
                     .foregroundStyle(.secondary)
 
                 GroupBox("Selected photo") {

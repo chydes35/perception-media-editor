@@ -2,6 +2,8 @@ import SwiftUI
 
 struct PhotoWorkspace: View {
     @EnvironmentObject private var store: EditorStore
+    @State private var isSavingPreset = false
+    @State private var presetName = ""
 
     var body: some View {
         HSplitView {
@@ -16,7 +18,19 @@ struct PhotoWorkspace: View {
 
     private var presetPanel: some View {
         VStack(alignment: .leading, spacing: 16) {
-            panelHeading("PRESETS", symbol: "camera.filters")
+            HStack {
+                panelHeading("PRESETS", symbol: "camera.filters")
+                Spacer()
+                Button {
+                    presetName = ""
+                    isSavingPreset = true
+                } label: {
+                    Image(systemName: "plus")
+                }
+                .buttonStyle(.borderless)
+                .help("Save current adjustments as a user preset")
+                .disabled(store.selectedAsset == nil)
+            }
 
             ScrollView {
                 VStack(spacing: 9) {
@@ -37,6 +51,13 @@ struct PhotoWorkspace: View {
                             .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
                         }
                         .buttonStyle(.plain)
+                        .contextMenu {
+                            if store.isUserPreset(preset) {
+                                Button("Delete Preset", role: .destructive) {
+                                    store.deleteUserPreset(preset)
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -51,6 +72,16 @@ struct PhotoWorkspace: View {
         }
         .padding(14)
         .background(Color(nsColor: .controlBackgroundColor))
+        .alert("Save User Preset", isPresented: $isSavingPreset) {
+            TextField("Preset name", text: $presetName)
+            Button("Cancel", role: .cancel) {}
+            Button("Save") {
+                store.saveUserPreset(named: presetName)
+            }
+            .disabled(presetName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        } message: {
+            Text("Save the selected photo's current adjustments for reuse.")
+        }
     }
 
     private var previewPanel: some View {
@@ -74,33 +105,32 @@ struct PhotoWorkspace: View {
                 }
                 .disabled(store.selectedAsset == nil)
 
-                Button(store.isShowingOriginal ? "Edited" : "Original") {
-                    store.setShowingOriginal(!store.isShowingOriginal)
+                if let asset = store.selectedAsset, store.isMissing(asset) {
+                    Button("Relink", systemImage: "link.badge.plus") {
+                        store.relink(asset)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.orange)
                 }
-                .buttonStyle(.bordered)
+
+                Picker("Comparison", selection: $store.previewMode) {
+                    ForEach(PreviewMode.allCases) { mode in
+                        Text(mode.rawValue).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 330)
                 .disabled(store.selectedAsset == nil)
             }
             .padding(.horizontal, 16)
             .frame(height: 44)
             .background(Color(nsColor: .controlBackgroundColor))
 
-            ZStack {
-                Color.black.opacity(0.92)
-
-                if let image = store.renderedPreview {
-                    Image(nsImage: image)
-                        .resizable()
-                        .scaledToFit()
-                        .padding(28)
-                } else {
-                    ContentUnavailableView(
-                        "Select a photo",
-                        systemImage: "photo",
-                        description: Text("Choose a photo in Library or import one to begin editing.")
-                    )
-                    .foregroundStyle(.white, .white.opacity(0.62))
-                }
-            }
+            PhotoComparisonView(
+                original: store.originalPreview,
+                edited: store.renderedPreview,
+                mode: store.previewMode
+            )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             filmstrip
@@ -132,6 +162,9 @@ struct PhotoWorkspace: View {
                         }
                     }
                     .buttonStyle(.plain)
+                    .contextMenu {
+                        Button("Relink Media…") { store.relink(asset) }
+                    }
                 }
             }
             .padding(.horizontal, 14)
@@ -144,6 +177,11 @@ struct PhotoWorkspace: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 panelHeading("ADJUSTMENTS", symbol: "slider.horizontal.3")
+
+                adjustmentGroup("HISTOGRAM") {
+                    HistogramView(data: store.histogram)
+                        .frame(height: 92)
+                }
 
                 adjustmentGroup("LIGHT") {
                     adjustment("Exposure", keyPath: \.exposure, range: -3...3)

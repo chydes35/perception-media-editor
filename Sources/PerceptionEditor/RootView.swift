@@ -94,7 +94,7 @@ struct RootView: View {
                 .frame(width: 7, height: 7)
             Text(store.statusMessage)
             Spacer()
-            Text("V0.1 PHOTO ENGINE")
+            Text("V0.2 PHOTO WORKFLOW")
                 .font(.system(size: 10, weight: .semibold, design: .monospaced))
                 .foregroundStyle(.secondary)
         }

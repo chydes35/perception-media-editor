@@ -6,17 +6,23 @@ Perception Media Editor is a native Apple Silicon macOS app built with SwiftUI a
 
 Original media is never modified. A `.pmedit` project stores references to the originals plus adjustment metadata. Preview and export reconstruct the result from those instructions.
 
-## V0.1 modules
+## Current modules
 
 - `EditorModels.swift`: versioned project, media, adjustments, crop, and preset data.
 - `ProjectDocument.swift`: atomic JSON project persistence and schema guard.
 - `PhotoRenderer.swift`: GPU-backed Core Image render and export pipeline.
 - `EditorStore.swift`: main-actor application state and file-panel workflows.
 - Workspace views: Library, Photo, Video placeholder, and Export.
+- `HistogramView.swift`: accessible RGB histogram rendered from the edited image pipeline.
+- `PhotoComparisonView.swift`: original, edited, split, and side-by-side presentation modes.
+- `ThumbnailCache.swift`: stable, adjustment-aware JPEG thumbnails in Application Support.
+- `UserPresetRepository.swift`: persistent user presets backed by app preferences.
 
 ## Project format
 
-The first project format is readable JSON with the `.pmedit` extension. It stores absolute reference-file URLs. Media relinking and a package-based cache arrive in V0.2. Every format revision increments `schemaVersion`; newer unsupported versions fail explicitly.
+The first project format is readable JSON with the `.pmedit` extension. It stores absolute reference-file URLs. Missing originals can be relinked without changing asset identity or losing adjustments. Every format revision increments `schemaVersion`; newer unsupported versions fail explicitly.
+
+Preview thumbnails are disposable cache files, not project data. Their keys include the asset identity, source path, source modification date, and adjustment metadata, so stale renders are not reused.
 
 ## Planned video boundary
 

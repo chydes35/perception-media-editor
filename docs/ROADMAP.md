@@ -1,6 +1,6 @@
 # Perception Media Editor Roadmap
 
-## V0.1 — Photo Engine (current)
+## V0.1 — Photo Engine (complete)
 
 - [x] Native SwiftUI macOS shell
 - [x] Non-destructive project model
@@ -11,18 +11,19 @@
 - [x] Original/edited comparison
 - [x] Full-resolution JPEG/PNG export
 - [x] Save and reopen `.pmedit` project files
+- [ ] Interactive crop and straighten (moved to V0.2)
+- [x] Histogram
+- [x] User-created presets
+
+## V0.2 — Production Photo Workflow (current)
+
+- [ ] RAW-specific development controls and metadata panel
+- [ ] Batch selection, adjustment sync, and batch export
+- [ ] LUT import and intensity control
+- [x] Persistent thumbnail cache and media relinking
+- [x] Before/after split and side-by-side views
 - [ ] Interactive crop and straighten
-- [ ] Histogram
-- [ ] User-created presets
-
-## V0.2 — Production Photo Workflow
-
-- RAW-specific development controls and metadata panel
-- Batch selection, adjustment sync, and batch export
-- LUT import and intensity control
-- Thumbnail cache and media relinking
-- Before/after split and side-by-side views
-- Export presets, resize, watermark, and metadata controls
+- [ ] Export presets, resize, watermark, and metadata controls
 
 ## V0.3 — Video Editor
 

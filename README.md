@@ -2,7 +2,7 @@
 
 A native, non-destructive macOS photo and video editor built specifically for Perception Media's documentary, interview, business, social, and photography workflows.
 
-This repository currently contains **V0.1: Photo Engine**.
+This repository currently contains **V0.2: Production Photo Workflow (in progress)**.
 
 ## What works now
 
@@ -11,7 +11,10 @@ This repository currently contains **V0.1: Photo Engine**.
 - Adjust exposure, contrast, highlights, shadows, temperature, tint, vibrance, saturation, sharpness, and vignette
 - Rotate and apply common social/photo aspect ratios
 - Apply four built-in Perception presets
-- Toggle between original and edited previews
+- Save and delete reusable user presets
+- Inspect a live RGB histogram
+- Compare original and edited photos in original, edited, split, and side-by-side modes
+- Cache thumbnails on disk and relink missing originals
 - Save and reopen non-destructive `.pmedit` project files
 - Export edited full-resolution JPEG or PNG files in sRGB
 

@@ -44,6 +44,8 @@ struct PerceptionEditorApp: App {
                 // the key alone while a text field is being edited.
                 Button("Toggle Before/After  \\") { store.toggleBeforeAfter() }
                     .disabled(store.workspace != .photo || store.selectedAsset == nil)
+                Button("Zoom to 100%  Z") { store.toggleZoom100() }
+                    .disabled(store.selectedAsset == nil || (store.workspace != .photo && store.workspace != .cull))
                 Button("Show Original") { store.setShowingOriginal(true) }
                 Button("Show Edited") { store.setShowingOriginal(false) }
                 Divider()

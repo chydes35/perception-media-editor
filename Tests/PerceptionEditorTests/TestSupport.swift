@@ -4,6 +4,12 @@ import ImageIO
 import Testing
 import UniformTypeIdentifiers
 
+/// An exact sRGB color. `CGColor(red:green:blue:alpha:)` uses Apple's generic RGB space,
+/// which shifts pure red to (255, 38, 0) once it is drawn into an sRGB image.
+func srgbColor(_ r: CGFloat, _ g: CGFloat, _ b: CGFloat) -> CGColor {
+    CGColor(colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!, components: [r, g, b, 1])!
+}
+
 /// Deletes its directory when released, so tests clean up even when an expectation fails.
 final class TempDirectory: @unchecked Sendable {
     let url: URL
@@ -77,7 +83,7 @@ func writeTestJPEG(
     ))
     let gradient = try #require(CGGradient(
         colorsSpace: space,
-        colors: [CGColor(red: 0.1, green: 0.2, blue: 0.8, alpha: 1), CGColor(red: 0.9, green: 0.6, blue: 0.1, alpha: 1)] as CFArray,
+        colors: [srgbColor(0.1, 0.2, 0.8), srgbColor(0.9, 0.6, 0.1)] as CFArray,
         locations: nil
     ))
     context.drawLinearGradient(gradient, start: .zero, end: CGPoint(x: width, y: height), options: [])
@@ -107,4 +113,73 @@ final class Collector<Value: Sendable>: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         return storage
     }
+}
+
+/// A PNG whose quadrants are red (top-left), green (top-right), blue (bottom-left), and
+/// yellow (bottom-right), for checking that positions map to the right pixels.
+@discardableResult
+func writeQuadrantPNG(to url: URL, width: Int = 800, height: Int = 600) throws -> URL {
+    let space = CGColorSpace(name: CGColorSpace.sRGB)!
+    let context = try #require(CGContext(
+        data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+        space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+    ))
+    let halfW = CGFloat(width) / 2, halfH = CGFloat(height) / 2
+    // CGContext's origin is the bottom-left corner.
+    context.setFillColor(srgbColor(1, 0, 0))
+    context.fill(CGRect(x: 0, y: halfH, width: halfW, height: halfH))
+    context.setFillColor(srgbColor(0, 1, 0))
+    context.fill(CGRect(x: halfW, y: halfH, width: halfW, height: halfH))
+    context.setFillColor(srgbColor(0, 0, 1))
+    context.fill(CGRect(x: 0, y: 0, width: halfW, height: halfH))
+    context.setFillColor(srgbColor(1, 1, 0))
+    context.fill(CGRect(x: halfW, y: 0, width: halfW, height: halfH))
+    let image = try #require(context.makeImage())
+
+    let destination = try #require(CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil))
+    CGImageDestinationAddImage(destination, image, nil)
+    #expect(CGImageDestinationFinalize(destination))
+    return url
+}
+
+/// The color of one pixel of `image`, counted from its top-left corner.
+func pixel(of image: CGImage, x: Int, y: Int) -> (r: Int, g: Int, b: Int) {
+    var data = [UInt8](repeating: 0, count: 4)
+    let space = CGColorSpace(name: CGColorSpace.sRGB)!
+    data.withUnsafeMutableBytes { buffer in
+        let context = CGContext(
+            data: buffer.baseAddress, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+            space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+        // Draw so that pixel (x, y) from the top-left lands on the single output pixel.
+        context.draw(image, in: CGRect(x: -x, y: -(image.height - 1 - y), width: image.width, height: image.height))
+    }
+    return (Int(data[0]), Int(data[1]), Int(data[2]))
+}
+
+/// Polls until `condition` holds, or fails the test after `timeout` seconds.
+@MainActor
+func waitUntil(timeout: Double = 15, _ condition: @MainActor () -> Bool) async throws {
+    let deadline = Date().addingTimeInterval(timeout)
+    while !condition() {
+        if Date() >= deadline {
+            Issue.record("Timed out waiting for a condition")
+            return
+        }
+        try await Task.sleep(for: .milliseconds(20))
+    }
+}
+
+/// A real RAW file for tests that need one. They run where the Lumix S5 samples are available
+/// (set PME_RAW_SAMPLES to a folder of .RW2 files) and are skipped elsewhere, such as in CI.
+enum RawSample {
+    static let url: URL? = {
+        let directory = ProcessInfo.processInfo.environment["PME_RAW_SAMPLES"] ?? "/Volumes/ExSSD1/110_PANA"
+        let files = (try? FileManager.default.contentsOfDirectory(atPath: directory))?
+            .filter { $0.uppercased().hasSuffix(".RW2") }
+            .sorted()
+        return files?.first.map { URL(fileURLWithPath: directory).appendingPathComponent($0) }
+    }()
+
+    static var isAvailable: Bool { url != nil }
 }

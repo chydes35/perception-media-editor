@@ -16,7 +16,9 @@ struct CullingModelTests {
         #expect(CullKeyMap.command(for: CullKeyMap.leftArrow) == .previous)
         #expect(CullKeyMap.command(for: "c") == .toggleCompare)
         #expect(CullKeyMap.command(for: "d") == .openInDevelop)
-        #expect(CullKeyMap.command(for: "z") == nil)
+        #expect(CullKeyMap.command(for: "z") == .toggleZoom)
+        #expect(CullKeyMap.command(for: "\u{1B}") == .exitZoom)
+        #expect(CullKeyMap.command(for: "q") == nil)
         #expect(CullKeyMap.command(for: "55") == nil)
         #expect(CullKeyMap.command(for: "") == nil)
     }

@@ -23,6 +23,12 @@ final class EditorStore: ObservableObject {
     }
     @Published var isShowingImportSheet = false
     @Published var ingest = IngestState.idle
+    /// RAW engine defaults for the selected photo; nil when it is not a RAW file.
+    @Published var rawInfo: RawInfo?
+    @Published var isRenderingPreview = false
+    @Published var isZoom100 = false
+    @Published var focusImage: CGImage?
+    @Published var isLoadingFocus = false
     @Published var selectedVideoAssetID: UUID?
     @Published var selectedTimelineClipID: UUID?
     @Published var videoPlayer: AVPlayer?
@@ -53,6 +59,15 @@ final class EditorStore: ObservableObject {
     let photoRenderer = PhotoRenderer()
     private let thumbnailRenderer = PhotoRenderer(workingCacheLimit: 0)
     let cullCache = CullPreviewCache()
+    /// Full-resolution decodes for the 100% view get their own renderer, so a one-second decode
+    /// never holds up slider previews.
+    let focusRenderer = PhotoRenderer(workingCacheLimit: 0)
+    var rawInfoAssetID: UUID?
+    var zoomCenter = CGPoint(x: 0.5, y: 0.5)
+    var focusFullSize = CGSize.zero
+    var focusViewportPixels = CGSize.zero
+    var focusTask: Task<Void, Never>?
+    var needsAnotherFocus = false
     /// Thumbnails read back from the disk cache during view updates. Not published, because
     /// filling it while SwiftUI is drawing must not trigger another update.
     private var diskThumbnailMemo: [UUID: PhotoThumbnail] = [:]
@@ -237,6 +252,7 @@ final class EditorStore: ObservableObject {
         selectedAssetIDs = [asset.id]
         refreshPreview()
         refreshLoupe()
+        if isZoom100 { refreshFocus() }
     }
 
     func selectVideo(_ asset: MediaAsset) {
@@ -468,6 +484,7 @@ final class EditorStore: ObservableObject {
     /// render is in flight, further requests collapse into one follow-up render with the
     /// latest adjustments, so slider drags never queue up stale work.
     func refreshPreview() {
+        if isZoom100 { refreshFocus() }
         // Develop-quality renders (a full RAW decode) only run where they are shown.
         guard workspace == .photo || workspace == .export else { return }
         guard let asset = selectedAsset, asset.kind == .photo else {
@@ -485,6 +502,7 @@ final class EditorStore: ObservableObject {
             originalPreview = nil
             histogram = .empty
         }
+        refreshRawInfo(for: asset)
 
         guard previewTask == nil else {
             needsAnotherPreviewRender = true
@@ -499,6 +517,7 @@ final class EditorStore: ObservableObject {
         let adjustments = isEditingCrop ? selectedAdjustments.withoutCrop : selectedAdjustments
         let needsOriginal = originalPreviewAssetID != assetID
         let renderer = photoRenderer
+        isRenderingPreview = true
 
         previewTask = Task { [weak self] in
             let original = needsOriginal ? await renderer.original(url: url) : nil
@@ -519,6 +538,7 @@ final class EditorStore: ObservableObject {
         result: PhotoPreviewResult?
     ) {
         previewTask = nil
+        isRenderingPreview = false
 
         if selectedAssetID == assetID {
             if needsOriginal {
@@ -554,6 +574,7 @@ final class EditorStore: ObservableObject {
 
     func beginCropEditing() {
         guard selectedAsset != nil, !isEditingCrop else { return }
+        exitZoom100()
         beginAdjustmentEdit()
         isEditingCrop = true
         refreshPreview()
@@ -820,6 +841,7 @@ final class EditorStore: ObservableObject {
         photoThumbnails = [:]
         diskThumbnailMemo = [:]
         pendingPhotoThumbnails = []
+        exitZoom100()
         cullCache.clear()
         loupeImage = nil
         compareImage = nil
@@ -914,8 +936,13 @@ final class EditorStore: ObservableObject {
             pendingPhotoThumbnails.remove(target.id)
             cullCache.remove(target.id)
             let renderer = photoRenderer
+            let focus = focusRenderer
             let previousURL = target.url
-            Task { await renderer.evict(url: previousURL) }
+            Task {
+                await renderer.evict(url: previousURL)
+                await focus.evict(url: previousURL)
+            }
+            rawInfoAssetID = nil
             originalPreviewAssetID = nil
             selectedAssetID = target.id
             refreshPreview()

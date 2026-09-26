@@ -1,4 +1,5 @@
 import CoreImage
+import CoreVideo
 import ImageIO
 import UniformTypeIdentifiers
 
@@ -11,6 +12,15 @@ struct RenderedImage: @unchecked Sendable {
 struct PhotoPreviewResult: Sendable {
     var edited: RenderedImage
     var histogram: HistogramData
+}
+
+/// A 1:1 pixel render of part of a photo, for checking focus at 100%.
+struct FocusRender: Sendable {
+    var image: RenderedImage
+    /// Size of the whole finished photo (after crop and rotation), in pixels.
+    var fullSize: CGSize
+    /// The part of the photo that `image` shows, in pixels from the top-left corner.
+    var region: CGRect
 }
 
 struct PhotoMetadata: Sendable, Equatable {
@@ -83,19 +93,68 @@ enum PhotoSourceLoader {
         return type?.conforms(to: .rawImage) == true
     }
 
+    /// The RAW engine's filter for a file with `settings` applied. Extended range stays on so
+    /// highlights above white survive the decode and later exposure and highlight edits can
+    /// recover them, as they can in Lightroom; with the engine's default they are clipped for good.
+    static func makeRawFilter(_ url: URL, settings: RawSettings, maxDimension: CGFloat?) -> CIRAWFilter? {
+        guard let filter = CIRAWFilter(imageURL: url) else { return nil }
+        filter.extendedDynamicRangeAmount = 2
+
+        if let maxDimension {
+            let native = filter.nativeSize
+            let longest = max(native.width, native.height)
+            if longest > 0 { filter.scaleFactor = Float(min(1, maxDimension / longest)) }
+        }
+
+        // Temperature and tint are coupled, so set both from the as-shot values when only one is given.
+        if settings.hasWhiteBalance {
+            let temperature = settings.temperature ?? Double(filter.neutralTemperature)
+            let tint = settings.tint ?? Double(filter.neutralTint)
+            filter.neutralTemperature = Float(min(50000, max(2000, temperature)))
+            filter.neutralTint = Float(min(150, max(-150, tint)))
+        }
+        if filter.isLuminanceNoiseReductionSupported, let value = settings.luminanceNoiseReduction {
+            filter.luminanceNoiseReductionAmount = Float(min(1, max(0, value)))
+        }
+        if filter.isColorNoiseReductionSupported, let value = settings.colorNoiseReduction {
+            filter.colorNoiseReductionAmount = Float(min(1, max(0, value)))
+        }
+        if filter.isSharpnessSupported, let value = settings.sharpness {
+            filter.sharpnessAmount = Float(min(1, max(0, value)))
+        }
+        if filter.isDetailSupported, let value = settings.detail {
+            filter.detailAmount = Float(min(3, max(0, value)))
+        }
+        if filter.isLensCorrectionSupported, let enabled = settings.lensCorrection {
+            filter.isLensCorrectionEnabled = enabled
+        }
+        return filter
+    }
+
+    /// As-shot white balance and the RAW engine's defaults for a file.
+    static func rawInfo(of url: URL) -> RawInfo? {
+        guard isRAW(url), let filter = CIRAWFilter(imageURL: url) else { return nil }
+        return RawInfo(
+            asShotTemperature: Double(filter.neutralTemperature),
+            asShotTint: Double(filter.neutralTint),
+            defaultLuminanceNoiseReduction: Double(filter.luminanceNoiseReductionAmount),
+            defaultColorNoiseReduction: Double(filter.colorNoiseReductionAmount),
+            defaultSharpness: Double(filter.sharpnessAmount),
+            defaultDetail: Double(filter.detailAmount),
+            supportsNoiseReduction: filter.isLuminanceNoiseReductionSupported && filter.isColorNoiseReductionSupported,
+            supportsSharpness: filter.isSharpnessSupported,
+            supportsDetail: filter.isDetailSupported,
+            supportsLensCorrection: filter.isLensCorrectionSupported,
+            lensCorrectionDefault: filter.isLensCorrectionEnabled
+        )
+    }
+
     /// Loads an oriented source image. When `maxDimension` is set, the decoder works at a
     /// reduced resolution: RAW files use the RAW engine's scale factor so highlight headroom
-    /// survives, and other formats use ImageIO's downsampling.
-    static func load(_ url: URL, maxDimension: CGFloat?) -> CIImage? {
-        if isRAW(url), let raw = CIRAWFilter(imageURL: url) {
-            if let maxDimension {
-                let native = raw.nativeSize
-                let longest = max(native.width, native.height)
-                if longest > 0 {
-                    raw.scaleFactor = Float(min(1, maxDimension / longest))
-                }
-            }
-            return raw.outputImage
+    /// survives, and other formats use ImageIO's downsampling. `raw` only affects RAW files.
+    static func load(_ url: URL, maxDimension: CGFloat?, raw: RawSettings = RawSettings()) -> CIImage? {
+        if isRAW(url), let filter = makeRawFilter(url, settings: raw, maxDimension: maxDimension) {
+            return filter.outputImage
         }
 
         if let maxDimension {
@@ -117,7 +176,12 @@ enum PhotoSourceLoader {
     /// Thumbnail-sized source. RAW files use the camera's embedded JPEG preview, which
     /// loads about 50× faster than a RAW decode (≈23 ms vs ≈1.1 s for a Lumix S5 RW2);
     /// the trade-off is that browse thumbnails show the camera's rendering, not the RAW engine's.
-    static func loadThumbnail(_ url: URL, maxDimension: CGFloat) -> CIImage? {
+    /// A RAW photo with its own RAW settings (white balance, noise reduction) is decoded instead,
+    /// so its thumbnail reflects the edit.
+    static func loadThumbnail(_ url: URL, maxDimension: CGFloat, raw: RawSettings = RawSettings()) -> CIImage? {
+        if isRAW(url), !raw.isDefault {
+            return load(url, maxDimension: maxDimension, raw: raw)
+        }
         if isRAW(url),
            let source = CGImageSourceCreateWithURL(url as CFURL, nil),
            let embedded = CGImageSourceCreateThumbnailAtIndex(source, 0, [
@@ -128,7 +192,7 @@ enum PhotoSourceLoader {
            CGFloat(max(embedded.width, embedded.height)) >= maxDimension / 2 {
             return CIImage(cgImage: embedded)
         }
-        return load(url, maxDimension: maxDimension)
+        return load(url, maxDimension: maxDimension, raw: raw)
     }
 }
 
@@ -136,11 +200,21 @@ enum PhotoSourceLoader {
 ///
 /// Editing works on a reduced-resolution "working" source (the longest edge is capped at
 /// `workingDimension`). Only a few working sources stay in memory at once, and full-resolution
-/// decodes happen only for export, which keeps a 200-image RAW session inside an 8 GB Mac.
+/// decodes happen only for export and for the 100% view, which keeps a 200-image RAW session
+/// inside an 8 GB Mac. Working sources live in GPU-shared pixel buffers, so a slider drag
+/// re-renders from memory instead of re-running the RAW decode.
 actor PhotoRenderer {
     static let workingDimension: CGFloat = 2560
     static let previewDimension: CGFloat = 1800
     static let thumbnailDimension: CGFloat = 420
+    /// Photos above this many pixels are not held at full resolution (a 24 MP frame takes 192 MB).
+    static let maximumFullResolutionPixels = 90_000_000.0
+
+    private struct WorkingEntry {
+        var url: String
+        var rawKey: String
+        var image: CIImage
+    }
 
     private let context = CIContext(options: [
         .cacheIntermediates: false,
@@ -149,7 +223,9 @@ actor PhotoRenderer {
     private let workingColorSpace = CGColorSpace(name: CGColorSpace.extendedLinearSRGB)!
     private let displayColorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
     private let workingCacheLimit: Int
-    private var workingSources: [(key: String, image: CIImage)] = []
+    private var workingSources: [WorkingEntry] = []
+    private var fullResolution: WorkingEntry?
+    private var rawInfoCache: [String: RawInfo?] = [:]
 
     init(workingCacheLimit: Int = 4) {
         self.workingCacheLimit = workingCacheLimit
@@ -157,20 +233,34 @@ actor PhotoRenderer {
 
     /// The edited preview and its histogram for the selected photo.
     func preview(url: URL, adjustments: PhotoAdjustments) -> PhotoPreviewResult? {
-        guard let source = workingSource(for: url) else { return nil }
+        guard let source = workingSource(for: url, raw: adjustments.raw) else { return nil }
         let edited = MediaColorRenderer.render(source, adjustments: adjustments, includesGeometry: true)
         guard let image = bitmap(edited, maxDimension: Self.previewDimension) else { return nil }
         return PhotoPreviewResult(edited: image, histogram: histogram(of: image.cgImage))
     }
 
+    /// The photo as the RAW engine renders it with no edits, for before/after.
     func original(url: URL) -> RenderedImage? {
-        guard let source = workingSource(for: url) else { return nil }
+        guard let source = workingSource(for: url, raw: RawSettings()) else { return nil }
         return bitmap(source, maxDimension: Self.previewDimension)
+    }
+
+    /// As-shot white balance and engine defaults, or nil for a file that is not RAW.
+    func rawInfo(url: URL) -> RawInfo? {
+        let key = cacheKey(for: url)
+        if let cached = rawInfoCache[key] { return cached }
+        let info = PhotoSourceLoader.rawInfo(of: url)
+        rawInfoCache[key] = .some(info)
+        return info
     }
 
     /// Thumbnails decode at thumbnail size and are never kept in the working cache.
     func thumbnail(url: URL, adjustments: PhotoAdjustments) -> RenderedImage? {
-        guard let source = PhotoSourceLoader.loadThumbnail(url, maxDimension: Self.thumbnailDimension) else {
+        guard let source = PhotoSourceLoader.loadThumbnail(
+            url,
+            maxDimension: Self.thumbnailDimension,
+            raw: adjustments.raw
+        ) else {
             return nil
         }
         let edited = MediaColorRenderer.render(source, adjustments: adjustments, includesGeometry: true)
@@ -184,7 +274,7 @@ actor PhotoRenderer {
         type: UTType,
         quality: CGFloat = 0.92
     ) throws {
-        guard let source = PhotoSourceLoader.load(url, maxDimension: nil) else {
+        guard let source = PhotoSourceLoader.load(url, maxDimension: nil, raw: adjustments.raw) else {
             throw PhotoRenderError.unreadableSource(url.lastPathComponent)
         }
         let image = MediaColorRenderer.render(source, adjustments: adjustments, includesGeometry: true)
@@ -206,50 +296,157 @@ actor PhotoRenderer {
         }
     }
 
+    // MARK: - 100% view
+
+    /// A 1:1 pixel render of the part of the finished photo around `center`, for checking focus.
+    /// The first call for a photo decodes it at full resolution (about a second for a 24 MP RAW)
+    /// and keeps that one buffer, so panning afterwards renders in milliseconds.
+    /// `center` is normalized (0–1) from the top-left of the finished photo.
+    func focusRegion(
+        url: URL,
+        adjustments: PhotoAdjustments,
+        center: CGPoint,
+        viewportPixels: CGSize
+    ) -> FocusRender? {
+        guard viewportPixels.width >= 1, viewportPixels.height >= 1,
+              let source = fullResolutionSource(for: url, raw: adjustments.raw)
+        else { return nil }
+
+        let finished = MediaColorRenderer.render(source, adjustments: adjustments, includesGeometry: true)
+        let extent = finished.extent.integral
+        guard extent.width >= 1, extent.height >= 1 else { return nil }
+
+        let width = min(extent.width, viewportPixels.width.rounded())
+        let height = min(extent.height, viewportPixels.height.rounded())
+        let left = min(max(0, center.x * extent.width - width / 2), extent.width - width).rounded()
+        let top = min(max(0, center.y * extent.height - height / 2), extent.height - height).rounded()
+        // Core Image measures from the bottom-left corner.
+        let region = CGRect(x: extent.minX + left, y: extent.minY + extent.height - top - height, width: width, height: height)
+
+        guard let cgImage = context.createCGImage(
+            finished.cropped(to: region),
+            from: region,
+            format: .RGBA8,
+            colorSpace: displayColorSpace
+        ) else { return nil }
+
+        return FocusRender(
+            image: RenderedImage(cgImage: cgImage),
+            fullSize: extent.size,
+            region: CGRect(x: left, y: top, width: width, height: height)
+        )
+    }
+
+    /// Frees the full-resolution buffer once the 100% view is closed.
+    func releaseFullResolution() {
+        fullResolution = nil
+    }
+
+    var hasFullResolution: Bool { fullResolution != nil }
+
+    private func fullResolutionSource(for url: URL, raw: RawSettings) -> CIImage? {
+        let rawKey = rawKey(for: url, raw: raw)
+        if let entry = fullResolution, entry.url == cacheKey(for: url), entry.rawKey == rawKey {
+            return entry.image
+        }
+        fullResolution = nil
+
+        guard let decoded = PhotoSourceLoader.load(url, maxDimension: nil, raw: raw) else { return nil }
+        let extent = decoded.extent
+        guard extent.width * extent.height <= Self.maximumFullResolutionPixels,
+              let image = materialize(decoded)
+        else { return nil }
+
+        fullResolution = WorkingEntry(url: cacheKey(for: url), rawKey: rawKey, image: image)
+        return image
+    }
+
+    // MARK: - Working sources
+
     /// Drops any cached working source for a file that was relinked or changed on disk.
     func evict(url: URL) {
         let prefix = url.path + "|"
-        workingSources.removeAll { $0.key.hasPrefix(prefix) }
+        workingSources.removeAll { $0.url.hasPrefix(prefix) }
+        rawInfoCache = rawInfoCache.filter { !$0.key.hasPrefix(prefix) }
+        if fullResolution?.url.hasPrefix(prefix) == true { fullResolution = nil }
     }
 
     func evictAll() {
         workingSources.removeAll()
+        fullResolution = nil
+        rawInfoCache.removeAll()
     }
 
     var cachedWorkingSourceCount: Int { workingSources.count }
 
-    // MARK: - Working sources
-
-    private func workingSource(for url: URL) -> CIImage? {
+    private func cacheKey(for url: URL) -> String {
         let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey])
             .contentModificationDate?.timeIntervalSinceReferenceDate) ?? 0
-        let key = "\(url.path)|\(modified)"
+        return "\(url.path)|\(modified)"
+    }
 
-        if let index = workingSources.firstIndex(where: { $0.key == key }) {
+    /// RAW settings only matter to RAW files; every other file shares one decode.
+    private func rawKey(for url: URL, raw: RawSettings) -> String {
+        PhotoSourceLoader.isRAW(url) ? raw.cacheKey : RawSettings().cacheKey
+    }
+
+    private func workingSource(for url: URL, raw: RawSettings) -> CIImage? {
+        let key = cacheKey(for: url)
+        let variant = rawKey(for: url, raw: raw)
+        let defaultVariant = RawSettings().cacheKey
+
+        if let index = workingSources.firstIndex(where: { $0.url == key && $0.rawKey == variant }) {
             let entry = workingSources.remove(at: index)
             workingSources.append(entry)
             return entry.image
         }
 
-        guard let decoded = PhotoSourceLoader.load(url, maxDimension: Self.workingDimension) else {
-            return nil
-        }
-        // Materialize once in a linear half-float space so repeated slider renders do not
-        // re-run RAW demosaicing, while exposure and highlight edits keep their headroom.
-        let extent = decoded.extent.integral
-        guard let materialized = context.createCGImage(
-            decoded,
-            from: extent,
-            format: .RGBAh,
-            colorSpace: workingColorSpace
-        ) else { return nil }
+        guard let decoded = PhotoSourceLoader.load(url, maxDimension: Self.workingDimension, raw: raw),
+              let image = materialize(decoded)
+        else { return nil }
 
-        let image = CIImage(cgImage: materialized)
-        workingSources.append((key, image))
+        // A photo keeps its untouched decode plus at most one edited variant, so dragging a
+        // white balance slider replaces the previous frame instead of filling the cache.
+        if variant != defaultVariant {
+            workingSources.removeAll { $0.url == key && $0.rawKey != defaultVariant }
+        }
+        workingSources.append(WorkingEntry(url: key, rawKey: variant, image: image))
         if workingSources.count > workingCacheLimit {
             workingSources.removeFirst(workingSources.count - workingCacheLimit)
         }
         return image
+    }
+
+    /// Renders `image` once into a half-float, GPU-shared pixel buffer in linear light, so later
+    /// renders read from memory and exposure and highlight edits keep their headroom.
+    private func materialize(_ image: CIImage) -> CIImage? {
+        let extent = image.extent.integral
+        guard extent.width >= 1, extent.height >= 1, extent.width.isFinite, extent.height.isFinite else {
+            return nil
+        }
+
+        var buffer: CVPixelBuffer?
+        let status = CVPixelBufferCreate(
+            nil,
+            Int(extent.width),
+            Int(extent.height),
+            kCVPixelFormatType_64RGBAHalf,
+            [
+                kCVPixelBufferIOSurfacePropertiesKey: [:] as CFDictionary,
+                kCVPixelBufferMetalCompatibilityKey: true
+            ] as CFDictionary,
+            &buffer
+        )
+        guard status == kCVReturnSuccess, let buffer else { return nil }
+
+        let origin = image.transformed(by: CGAffineTransform(translationX: -extent.minX, y: -extent.minY))
+        context.render(
+            origin,
+            to: buffer,
+            bounds: CGRect(origin: .zero, size: extent.size),
+            colorSpace: workingColorSpace
+        )
+        return CIImage(cvPixelBuffer: buffer, options: [.colorSpace: workingColorSpace])
     }
 
     // MARK: - Rendering

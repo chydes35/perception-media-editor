@@ -204,27 +204,31 @@ struct PhotoAdjustments: Codable, Equatable, Sendable {
     var cropAspect = CropAspect.original
     var cropRect: CropRect? = nil
     var straightenDegrees: Double? = nil
+    var raw = RawSettings()
 
     static let neutral = PhotoAdjustments()
 
-    /// Tone and color only. Presets, look matching, and batch edits carry this part;
-    /// crop, rotation, and straighten belong to an individual photo.
+    /// Tone, color, and detail. Presets, look matching, and batch edits carry this part.
+    /// Crop, rotation, straighten, and white balance belong to an individual photo.
     var lookOnly: PhotoAdjustments {
         var look = self
         look.rotationQuarterTurns = 0
         look.cropAspect = .original
         look.cropRect = nil
         look.straightenDegrees = nil
+        look.raw = raw.withoutWhiteBalance
         return look
     }
 
-    /// This look applied to a photo while keeping that photo's own geometry.
+    /// This look applied to a photo while keeping that photo's own geometry and white balance.
     func look(keepingGeometryOf target: PhotoAdjustments) -> PhotoAdjustments {
         var result = lookOnly
         result.rotationQuarterTurns = target.rotationQuarterTurns
         result.cropAspect = target.cropAspect
         result.cropRect = target.cropRect
         result.straightenDegrees = target.straightenDegrees
+        result.raw.temperature = target.raw.temperature
+        result.raw.tint = target.raw.tint
         return result
     }
 
@@ -235,6 +239,33 @@ struct PhotoAdjustments: Codable, Equatable, Sendable {
         uncropped.cropAspect = .original
         uncropped.cropRect = nil
         return uncropped
+    }
+}
+
+extension PhotoAdjustments {
+    enum CodingKeys: String, CodingKey {
+        case exposure, contrast, highlights, shadows, temperature, tint, vibrance, saturation
+        case sharpness, vignette, rotationQuarterTurns, cropAspect, cropRect, straightenDegrees, raw
+    }
+
+    /// Every field decodes with a default, so projects saved before a field existed still open.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        exposure = try container.decodeIfPresent(Double.self, forKey: .exposure) ?? 0
+        contrast = try container.decodeIfPresent(Double.self, forKey: .contrast) ?? 0
+        highlights = try container.decodeIfPresent(Double.self, forKey: .highlights) ?? 0
+        shadows = try container.decodeIfPresent(Double.self, forKey: .shadows) ?? 0
+        temperature = try container.decodeIfPresent(Double.self, forKey: .temperature) ?? 0
+        tint = try container.decodeIfPresent(Double.self, forKey: .tint) ?? 0
+        vibrance = try container.decodeIfPresent(Double.self, forKey: .vibrance) ?? 0
+        saturation = try container.decodeIfPresent(Double.self, forKey: .saturation) ?? 0
+        sharpness = try container.decodeIfPresent(Double.self, forKey: .sharpness) ?? 0
+        vignette = try container.decodeIfPresent(Double.self, forKey: .vignette) ?? 0
+        rotationQuarterTurns = try container.decodeIfPresent(Int.self, forKey: .rotationQuarterTurns) ?? 0
+        cropAspect = try container.decodeIfPresent(CropAspect.self, forKey: .cropAspect) ?? .original
+        cropRect = try container.decodeIfPresent(CropRect.self, forKey: .cropRect)
+        straightenDegrees = try container.decodeIfPresent(Double.self, forKey: .straightenDegrees)
+        raw = try container.decodeIfPresent(RawSettings.self, forKey: .raw) ?? RawSettings()
     }
 }
 
@@ -308,7 +339,7 @@ struct PhotoPreset: Identifiable, Codable, Equatable, Sendable {
 }
 
 struct EditorProject: Codable, Equatable {
-    static let currentSchemaVersion = 5
+    static let currentSchemaVersion = 6
 
     var schemaVersion = currentSchemaVersion
     var id = UUID()

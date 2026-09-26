@@ -178,6 +178,12 @@ extension EditorStore {
         case .openInDevelop:
             guard hasPhoto else { return false }
             workspace = .photo
+        case .toggleZoom:
+            guard hasPhoto, workspace == .cull || workspace == .photo else { return false }
+            toggleZoom100()
+        case .exitZoom:
+            guard isZoom100 else { return false }
+            exitZoom100()
         }
         return true
     }
@@ -196,13 +202,14 @@ extension EditorStore {
             return perform(command)
         case .library:
             switch command {
-            case .toggleCompare: return false
+            case .toggleCompare, .toggleZoom, .exitZoom: return false
             default: return perform(command)
             }
         case .photo:
             // Sliders and the crop editor own the arrow keys and Return here.
             switch command {
-            case .flag, .rating, .toggleLabel, .toggleFullScreen: return perform(command)
+            case .flag, .rating, .toggleLabel, .toggleFullScreen, .toggleZoom, .exitZoom:
+                return perform(command)
             default: return false
             }
         case .video, .export, .agents:
@@ -213,6 +220,7 @@ extension EditorStore {
     // MARK: - Compare
 
     func toggleCompare() {
+        exitZoom100()
         if compareAssetID != nil {
             compareAssetID = nil
             compareImage = nil
@@ -225,6 +233,7 @@ extension EditorStore {
     // MARK: - Loupe previews
 
     func workspaceDidChange() {
+        if isZoom100, workspace != .cull, workspace != .photo { exitZoom100() }
         switch workspace {
         case .cull:
             refreshLoupe()

@@ -4,7 +4,7 @@
 
 The goal is a full Lightroom replacement for a single photographer's workflow. Photo comes first and must be complete before video work resumes. Typical job: 100–200 Lumix S5 RW2 files per session, edited on an 8 GB M1 MacBook Air, so every feature has a memory budget. Existing Lightroom edits are not migrated; new shoots start fresh. Masks, healing, and presets are used on nearly every shoot.
 
-### Phase 0 — Foundation (in progress)
+### Phase 0 — Foundation (complete, PR #1)
 
 - [x] Swift Testing suite that runs with Command Line Tools or Xcode
 - [x] Off-main-thread preview, histogram, thumbnail, and export rendering
@@ -14,14 +14,20 @@ The goal is a full Lightroom replacement for a single photographer's workflow. P
 - [x] Unsaved-changes prompt on New, Open, and Quit
 - [x] `\` before/after toggle that never fires while typing
 - [x] Crop editor shows the whole frame while editing an existing crop
-- [ ] GitHub Actions build
-- [ ] Split photo, timeline, and project responsibilities out of `EditorStore`
+- [x] GitHub Actions build
+- [ ] Split photo, timeline, and project responsibilities out of `EditorStore` (carried into Phase 2; culling and ingest live in `EditorStore+Culling.swift` and `EditorStore+Ingest.swift`)
 
-### Phase 1 — Library and culling
+### Phase 1 — Library and culling (in progress)
 
-- Session-per-shoot projects, SD card import with copy, rename, and optional backup
-- Flags, stars, color labels, filters, and removing photos
-- Keyboard culling: full-screen loupe, P/X/1–5, instant next image, compare view
+- [x] One folder per shoot: `<Shoots>/<date> <Name>/{Name.pmedit, Originals/}`, saved automatically
+- [x] Import from card: verified copy (SHA-256 read back from disk), never modifies the card, skips files already imported, optional backup drive that is skipped safely when disconnected
+- [x] Camera filenames kept; capture time read from EXIF and used for ordering
+- [x] Flags (P/X/U), stars (0–5), color labels (6–9), filters, multi-select, remove from project
+- [x] Cull view: instant next/previous from a preview cache, compare (C), full screen (F), auto-advance, Develop (D)
+- [x] Delete Rejected moves originals inside the shoot's Originals folder to the Trash (recoverable) after confirmation
+- [ ] RAW+JPEG pairs treated as one photo
+- [ ] Zoom to 100% for focus checks (needs the full RAW decode; Phase 2)
+- [ ] Undo for rating, flag, and label changes
 
 ### Phase 2 — RAW develop and presets
 

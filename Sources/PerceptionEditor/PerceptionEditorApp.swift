@@ -20,8 +20,10 @@ struct PerceptionEditorApp: App {
                 Button("Open Project…") { store.openProject() }
                     .keyboardShortcut("o")
                 Divider()
-                Button("Import Media…") { store.importMedia() }
+                Button("Import from Card or Folder…") { store.showImportSheet() }
                     .keyboardShortcut("i")
+                Button("Add Files in Place…") { store.importMedia() }
+                    .keyboardShortcut("i", modifiers: [.command, .option])
                 Divider()
                 Button("Save Project") { store.saveProject() }
                     .keyboardShortcut("s")
@@ -46,6 +48,25 @@ struct PerceptionEditorApp: App {
                 Button("Show Edited") { store.setShowingOriginal(false) }
                 Divider()
                 Button("Reset Adjustments") { store.resetAdjustments() }
+            }
+
+            CommandMenu("Cull") {
+                // Single-key shortcuts are handled by AppDelegate's key monitor so they never
+                // fire while a text field is being edited; the keys are shown in the titles.
+                Button("Pick  P") { store.perform(.flag(.picked)) }
+                Button("Reject  X") { store.perform(.flag(.rejected)) }
+                Button("Clear Flag  U") { store.perform(.flag(.unflagged)) }
+                Divider()
+                Button("Next Photo  →") { store.perform(.next) }
+                Button("Previous Photo  ←") { store.perform(.previous) }
+                Button("Compare  C") { store.perform(.toggleCompare) }
+                Divider()
+                Button("Select All Visible") { store.selectAllVisible() }
+                    .keyboardShortcut("a")
+                Button("Remove from Project") { store.removeFromProject(store.commandTargetIDs) }
+                    .disabled(store.selectedAsset == nil)
+                Button("Delete Rejected…") { store.deleteRejected() }
+                    .disabled(store.rejectedCount == 0)
             }
 
             CommandMenu("Workspace") {
@@ -83,13 +104,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
               let store
         else { return false }
 
-        switch event.charactersIgnoringModifiers {
-        case "\\":
-            guard store.workspace == .photo, store.selectedAsset != nil else { return false }
-            store.toggleBeforeAfter()
-            return true
-        default:
-            return false
-        }
+        guard let characters = event.charactersIgnoringModifiers else { return false }
+        return store.handleKey(characters)
     }
 }

@@ -6,6 +6,8 @@ This repository currently contains **V0.3: Video Editor Foundation (in progress)
 
 ## What works now
 
+- Import from a camera card into a dated shoot folder with verified copies and an optional backup drive
+- Cull with Lightroom's keys (P/X/U, 0–5, 6–9, arrows), compare two photos, filter by flag, stars, and label
 - Import JPEG, HEIC, PNG, TIFF, and Core Image-supported RAW files by reference
 - Browse imported photos in a native library
 - Adjust exposure, contrast, highlights, shadows, temperature, tint, vibrance, saturation, sharpness, and vignette

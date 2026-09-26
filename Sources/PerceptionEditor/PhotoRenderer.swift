@@ -13,9 +13,20 @@ struct PhotoPreviewResult: Sendable {
     var histogram: HistogramData
 }
 
+struct PhotoMetadata: Sendable, Equatable {
+    var width: Int
+    var height: Int
+    var captureDate: Date?
+}
+
 enum PhotoSourceLoader {
     /// Pixel dimensions after EXIF orientation, read from file metadata without decoding pixels.
     static func dimensions(of url: URL) -> (width: Int, height: Int)? {
+        metadata(of: url).map { ($0.width, $0.height) }
+    }
+
+    /// Dimensions and capture time from file metadata, without decoding pixels.
+    static func metadata(of url: URL) -> PhotoMetadata? {
         guard
             let source = CGImageSourceCreateWithURL(url as CFURL, nil),
             let properties = CGImageSourceCopyPropertiesAtIndex(
@@ -28,7 +39,42 @@ enum PhotoSourceLoader {
         else { return nil }
 
         let orientation = properties[kCGImagePropertyOrientation] as? UInt32 ?? 1
-        return (5 ... 8).contains(orientation) ? (height, width) : (width, height)
+        let exif = properties[kCGImagePropertyExifDictionary] as? [CFString: Any]
+        let captured = (exif?[kCGImagePropertyExifDateTimeOriginal] as? String).flatMap(parseEXIFDate)
+        return (5 ... 8).contains(orientation)
+            ? PhotoMetadata(width: height, height: width, captureDate: captured)
+            : PhotoMetadata(width: width, height: height, captureDate: captured)
+    }
+
+    /// EXIF stores local time as `yyyy:MM:dd HH:mm:ss` with no time zone.
+    static func parseEXIFDate(_ text: String) -> Date? {
+        let parts = text.split(whereSeparator: { $0 == ":" || $0 == " " }).compactMap { Int($0) }
+        guard parts.count == 6 else { return nil }
+        return Calendar.current.date(from: DateComponents(
+            year: parts[0], month: parts[1], day: parts[2],
+            hour: parts[3], minute: parts[4], second: parts[5]
+        ))
+    }
+
+    /// A screen-sized image for culling. RAW files use the camera's embedded JPEG
+    /// (1920×1280 on a Lumix S5, ≈15 ms). The size cap must stay above the embedded size:
+    /// a smaller cap makes ImageIO fall back to a full RAW decode (≈470 ms).
+    static func loadCullPreview(_ url: URL) -> CGImage? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+        let cap = 2560
+        let raw = isRAW(url)
+
+        if let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+            raw ? kCGImageSourceCreateThumbnailFromImageIfAbsent : kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: cap
+        ] as CFDictionary), !raw || max(image.width, image.height) >= 1200 {
+            return image
+        }
+
+        // A RAW without a usable embedded preview: decode it once at reduced size.
+        guard let decoded = load(url, maxDimension: CGFloat(cap)) else { return nil }
+        return CIContext().createCGImage(decoded, from: decoded.extent.integral)
     }
 
     static func isRAW(_ url: URL) -> Bool {

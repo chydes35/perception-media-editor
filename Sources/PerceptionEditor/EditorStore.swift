@@ -7,8 +7,22 @@ import UniformTypeIdentifiers
 @MainActor
 final class EditorStore: ObservableObject {
     @Published var project = EditorProject.starter
-    @Published var workspace: Workspace = .library
+    @Published var workspace: Workspace = .library {
+        didSet { workspaceDidChange() }
+    }
     @Published var selectedAssetID: UUID?
+    @Published var selectedAssetIDs: Set<UUID> = []
+    @Published var filter = LibraryFilter() {
+        didSet { filterDidChange() }
+    }
+    @Published var compareAssetID: UUID?
+    @Published var loupeImage: NSImage?
+    @Published var compareImage: NSImage?
+    @Published var autoAdvance = UserDefaults.standard.bool(forKey: "perceptionEditor.autoAdvance") {
+        didSet { UserDefaults.standard.set(autoAdvance, forKey: "perceptionEditor.autoAdvance") }
+    }
+    @Published var isShowingImportSheet = false
+    @Published var ingest = IngestState.idle
     @Published var selectedVideoAssetID: UUID?
     @Published var selectedTimelineClipID: UUID?
     @Published var videoPlayer: AVPlayer?
@@ -30,21 +44,27 @@ final class EditorStore: ObservableObject {
     @Published var lastError: String?
     @Published private(set) var isEditingCrop = false
     @Published private(set) var isExporting = false
-    @Published private(set) var photoThumbnails: [UUID: NSImage] = [:]
+    @Published private(set) var photoThumbnails: [UUID: PhotoThumbnail] = [:]
 
-    private(set) var projectURL: URL?
+    var projectURL: URL?
     /// The project as it was last opened or saved; `hasUnsavedChanges` compares against it.
-    private var lastSavedProject = EditorProject.starter
+    var lastSavedProject = EditorProject.starter
 
-    private let photoRenderer = PhotoRenderer()
+    let photoRenderer = PhotoRenderer()
     private let thumbnailRenderer = PhotoRenderer(workingCacheLimit: 0)
+    let cullCache = CullPreviewCache()
+    /// Thumbnails read back from the disk cache during view updates. Not published, because
+    /// filling it while SwiftUI is drawing must not trigger another update.
+    private var diskThumbnailMemo: [UUID: PhotoThumbnail] = [:]
+    private var cancellables: Set<AnyCancellable> = []
+    var ingestWorker: Task<Result<IngestResult, Error>, Never>?
     private var previewTask: Task<Void, Never>?
     private var needsAnotherPreviewRender = false
     private var originalPreviewAssetID: UUID?
     private var pendingPhotoThumbnails: Set<UUID> = []
-    private let document = ProjectDocument()
+    let document = ProjectDocument()
     private let userPresetRepository = UserPresetRepository()
-    private let thumbnailCache = ThumbnailCache()
+    let thumbnailCache = ThumbnailCache()
     private let videoMediaService = VideoMediaService.shared
     private let audioWaveformService = AudioWaveformService.shared
     private let timelineCompositionService = TimelineCompositionService.shared
@@ -59,6 +79,17 @@ final class EditorStore: ObservableObject {
 
     init() {
         userPresets = userPresetRepository.load()
+        cullCache.onLoaded = { [weak self] id in self?.cullPreviewLoaded(id) }
+
+        // Projects with a file on disk save themselves shortly after every change, so culling
+        // and rating work is never lost to a crash or a forgotten ⌘S.
+        $project
+            .dropFirst()
+            .debounce(for: .seconds(1.5), scheduler: RunLoop.main)
+            .sink { [weak self] _ in
+                MainActor.assumeIsolated { self?.autosaveIfNeeded() }
+            }
+            .store(in: &cancellables)
     }
 
     var presets: [PhotoPreset] {
@@ -203,7 +234,9 @@ final class EditorStore: ObservableObject {
             return
         }
         selectedAssetID = asset.id
+        selectedAssetIDs = [asset.id]
         refreshPreview()
+        refreshLoupe()
     }
 
     func selectVideo(_ asset: MediaAsset) {
@@ -435,6 +468,8 @@ final class EditorStore: ObservableObject {
     /// render is in flight, further requests collapse into one follow-up render with the
     /// latest adjustments, so slider drags never queue up stale work.
     func refreshPreview() {
+        // Develop-quality renders (a full RAW decode) only run where they are shown.
+        guard workspace == .photo || workspace == .export else { return }
         guard let asset = selectedAsset, asset.kind == .photo else {
             needsAnotherPreviewRender = false
             originalPreviewAssetID = nil
@@ -544,6 +579,9 @@ final class EditorStore: ObservableObject {
     func confirmDiscardingUnsavedChanges() -> Bool {
         guard hasUnsavedChanges else { return true }
 
+        // A project that already has a file autosaves, so just flush the pending change.
+        if projectURL != nil, saveProject() { return true }
+
         let alert = NSAlert()
         alert.messageText = "Save changes to “\(project.name)”?"
         alert.informativeText = "Your changes will be lost if you don’t save them."
@@ -563,10 +601,18 @@ final class EditorStore: ObservableObject {
 
     func newProject() {
         guard confirmDiscardingUnsavedChanges() else { return }
-        project = EditorProject(name: "Untitled Project")
+        resetToEmptyProject(named: "Untitled Project")
+        statusMessage = "New project"
+    }
+
+    /// Replaces the current project with an empty one. Callers confirm unsaved changes first.
+    func resetToEmptyProject(named name: String) {
+        project = EditorProject(name: name)
         lastSavedProject = project
         projectURL = nil
+        filter = LibraryFilter()
         selectedAssetID = nil
+        selectedAssetIDs = []
         selectedVideoAssetID = nil
         selectedTimelineClipID = nil
         playbackRequestID = UUID()
@@ -583,7 +629,6 @@ final class EditorStore: ObservableObject {
         previewMode = .edited
         thumbnailCache.clearMemory()
         workspace = .library
-        statusMessage = "New project"
     }
 
     @discardableResult
@@ -625,35 +670,43 @@ final class EditorStore: ObservableObject {
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
         do {
-            project = try document.load(from: url)
-            lastSavedProject = project
-            projectURL = url
-            selectedAssetID = nil
-            selectedVideoAssetID = nil
-            selectedTimelineClipID = project.timelineClips.first?.id
-            resetPhotoRenderState()
-            audioWaveforms = [:]
-            pendingAudioWaveforms = []
-            clearAdjustmentHistory()
-            backfillPhotoDimensions()
-            for asset in project.media where asset.kind == .video || asset.kind == .audio {
-                requestAudioWaveform(for: asset)
-            }
-            if let first = project.media.first {
-                if first.kind == .photo {
-                    selectedAssetID = first.id
-                } else {
-                    selectVideo(first)
-                }
-            }
-            refreshPreview()
-            if !project.timelineClips.isEmpty {
-                rebuildTimelinePlayback()
-            }
-            statusMessage = "Opened \(url.lastPathComponent)"
+            try loadProject(from: url)
         } catch {
             lastError = error.localizedDescription
         }
+    }
+
+    /// Loads a project file and resets everything derived from the previous one.
+    func loadProject(from url: URL) throws {
+        let loaded = try document.load(from: url)
+        project = loaded
+        lastSavedProject = project
+        projectURL = url
+        filter = LibraryFilter()
+        selectedAssetID = nil
+        selectedAssetIDs = []
+        selectedVideoAssetID = nil
+        selectedTimelineClipID = project.timelineClips.first?.id
+        resetPhotoRenderState()
+        audioWaveforms = [:]
+        pendingAudioWaveforms = []
+        clearAdjustmentHistory()
+        backfillPhotoDimensions()
+        for asset in project.media where asset.kind == .video || asset.kind == .audio {
+            requestAudioWaveform(for: asset)
+        }
+        if let first = allPhotos.first {
+            selectedAssetID = first.id
+            selectedAssetIDs = [first.id]
+        } else if let first = project.media.first {
+            selectVideo(first)
+        }
+        refreshPreview()
+        refreshLoupe()
+        if !project.timelineClips.isEmpty {
+            rebuildTimelinePlayback()
+        }
+        statusMessage = "Opened \(url.lastPathComponent)"
     }
 
     func exportSelectedPhoto() {
@@ -715,13 +768,20 @@ final class EditorStore: ObservableObject {
 
         guard asset.kind == .photo else { return nil }
         let adjustments = project.adjustmentsByAssetID[asset.id] ?? .neutral
+
+        // Fast path: no file or disk access while the grid redraws.
+        if let entry = photoThumbnails[asset.id] ?? diskThumbnailMemo[asset.id],
+           entry.matches(url: asset.url, adjustments: adjustments) {
+            return entry.image
+        }
         if let cached = thumbnailCache.image(for: asset, adjustments: adjustments) {
+            diskThumbnailMemo[asset.id] = PhotoThumbnail(image: cached, url: asset.url, adjustments: adjustments)
             return cached
         }
 
         requestPhotoThumbnail(for: asset, adjustments: adjustments)
         // Keep showing the last thumbnail while an updated one renders.
-        return photoThumbnails[asset.id]
+        return photoThumbnails[asset.id]?.image ?? diskThumbnailMemo[asset.id]?.image
     }
 
     /// Renders one photo thumbnail at a time on a dedicated renderer. If the photo's
@@ -740,8 +800,17 @@ final class EditorStore: ObservableObject {
             }
             let image = Self.nsImage(rendered)
             thumbnailCache.store(image, for: asset, adjustments: adjustments)
-            photoThumbnails[asset.id] = image
+            diskThumbnailMemo[asset.id] = nil
+            photoThumbnails[asset.id] = PhotoThumbnail(image: image, url: asset.url, adjustments: adjustments)
         }
+    }
+
+    /// Drops every cached thumbnail for a photo that left the project.
+    func photoThumbnailsForget(_ id: UUID) {
+        photoThumbnails[id] = nil
+        diskThumbnailMemo[id] = nil
+        pendingPhotoThumbnails.remove(id)
+        thumbnailCache.invalidate(assetID: id)
     }
 
     private func resetPhotoRenderState() {
@@ -749,7 +818,12 @@ final class EditorStore: ObservableObject {
         originalPreviewAssetID = nil
         isEditingCrop = false
         photoThumbnails = [:]
+        diskThumbnailMemo = [:]
         pendingPhotoThumbnails = []
+        cullCache.clear()
+        loupeImage = nil
+        compareImage = nil
+        compareAssetID = nil
         renderedPreview = nil
         originalPreview = nil
         histogram = .empty
@@ -836,7 +910,9 @@ final class EditorStore: ObservableObject {
             project.media[index].pixelWidth = photoSize.width
             project.media[index].pixelHeight = photoSize.height
             photoThumbnails[target.id] = nil
+            diskThumbnailMemo[target.id] = nil
             pendingPhotoThumbnails.remove(target.id)
+            cullCache.remove(target.id)
             let renderer = photoRenderer
             let previousURL = target.url
             Task { await renderer.evict(url: previousURL) }

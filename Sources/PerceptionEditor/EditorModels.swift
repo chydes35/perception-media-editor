@@ -205,6 +205,9 @@ struct PhotoAdjustments: Codable, Equatable, Sendable {
     var cropRect: CropRect? = nil
     var straightenDegrees: Double? = nil
     var raw = RawSettings()
+    var curves = ToneCurves()
+    /// Nil when every color band is untouched.
+    var hsl: HSLAdjustments?
 
     static let neutral = PhotoAdjustments()
 
@@ -245,7 +248,7 @@ struct PhotoAdjustments: Codable, Equatable, Sendable {
 extension PhotoAdjustments {
     enum CodingKeys: String, CodingKey {
         case exposure, contrast, highlights, shadows, temperature, tint, vibrance, saturation
-        case sharpness, vignette, rotationQuarterTurns, cropAspect, cropRect, straightenDegrees, raw
+        case sharpness, vignette, rotationQuarterTurns, cropAspect, cropRect, straightenDegrees, raw, curves, hsl
     }
 
     /// Every field decodes with a default, so projects saved before a field existed still open.
@@ -266,6 +269,8 @@ extension PhotoAdjustments {
         cropRect = try container.decodeIfPresent(CropRect.self, forKey: .cropRect)
         straightenDegrees = try container.decodeIfPresent(Double.self, forKey: .straightenDegrees)
         raw = try container.decodeIfPresent(RawSettings.self, forKey: .raw) ?? RawSettings()
+        curves = try container.decodeIfPresent(ToneCurves.self, forKey: .curves) ?? ToneCurves()
+        hsl = try container.decodeIfPresent(HSLAdjustments.self, forKey: .hsl)
     }
 }
 

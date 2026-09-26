@@ -251,6 +251,14 @@ struct PhotoWorkspace: View {
                     adjustment("Vignette", keyPath: \.vignette, range: 0...1)
                 }
 
+                adjustmentGroup("TONE CURVE") {
+                    ToneCurveEditor()
+                }
+
+                adjustmentGroup("HSL") {
+                    HSLPanel()
+                }
+
                 if store.selectedIsRAW {
                     adjustmentGroup("RAW DETAIL") { rawDetailControls }
                 }

@@ -2,6 +2,8 @@ import CoreImage
 import CoreImage.CIFilterBuiltins
 
 enum MediaColorRenderer {
+    private static let encodingSpace = CGColorSpace(name: CGColorSpace.sRGB)!
+
     static func render(
         _ source: CIImage,
         adjustments: PhotoAdjustments,
@@ -43,6 +45,17 @@ enum MediaColorRenderer {
         highlightShadow.shadowAmount = Float(adjustments.shadows)
         image = highlightShadow.outputImage ?? image
 
+        // Curves and HSL work on gamma-encoded color, where equal steps look equal. Both are
+        // skipped when untouched so highlights above white keep their headroom.
+        if let curveData = ColorGrading.curveData(adjustments.curves) {
+            let curves = CIFilter.colorCurves()
+            curves.inputImage = image
+            curves.curvesData = curveData
+            curves.curvesDomain = CIVector(x: 0, y: 1)
+            curves.colorSpace = Self.encodingSpace
+            image = curves.outputImage ?? image
+        }
+
         if adjustments.temperature != 0 || adjustments.tint != 0 {
             let temperature = CIFilter.temperatureAndTint()
             temperature.inputImage = image
@@ -59,6 +72,16 @@ enum MediaColorRenderer {
             vibrance.inputImage = image
             vibrance.amount = Float(adjustments.vibrance)
             image = vibrance.outputImage ?? image
+        }
+
+        if let hsl = adjustments.hsl, !hsl.isNeutral {
+            let cube = CIFilter.colorCubeWithColorSpace()
+            cube.inputImage = image
+            cube.cubeDimension = Float(ColorGrading.cubeDimension)
+            cube.cubeData = ColorGrading.hslCube(hsl)
+            cube.colorSpace = Self.encodingSpace
+            cube.extrapolate = true
+            image = cube.outputImage ?? image
         }
 
         if adjustments.sharpness > 0 {

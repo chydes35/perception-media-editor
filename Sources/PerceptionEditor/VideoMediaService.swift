@@ -1,5 +1,5 @@
 import AppKit
-import AVFoundation
+@preconcurrency import AVFoundation
 
 struct VideoMetadata: Sendable {
     var durationSeconds: Double

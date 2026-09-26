@@ -63,6 +63,7 @@ struct RootView: View {
                 Label("Export", systemImage: "square.and.arrow.up")
             }
             .buttonStyle(.bordered)
+            .disabled(store.isExporting)
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 12)
@@ -92,6 +93,13 @@ struct RootView: View {
                 .frame(width: 7, height: 7)
             Text(store.statusMessage)
             Spacer()
+            if store.hasUnsavedChanges {
+                Label("Unsaved changes", systemImage: "circle.fill")
+                    .labelStyle(.titleAndIcon)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.orange)
+                    .imageScale(.small)
+            }
             Text("V0.3 AUDIO MIX")
                 .font(.system(size: 10, weight: .semibold, design: .monospaced))
                 .foregroundStyle(.secondary)

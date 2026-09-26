@@ -10,9 +10,9 @@ Original media is never modified. A `.pmedit` project stores references to the o
 
 - `EditorModels.swift`: versioned project, media, adjustments, crop, and preset data.
 - `ProjectDocument.swift`: atomic JSON project persistence and schema guard.
-- `PhotoRenderer.swift`: GPU-backed Core Image render and export pipeline.
+- `PhotoRenderer.swift`: an actor that renders previews, histograms, thumbnails, and exports off the main thread. Editing uses a working copy capped at 2560 px (RAW files decode through `CIRAWFilter` at reduced scale into a linear half-float buffer), and only four working copies stay in memory. Full-resolution decodes happen only for export. RAW thumbnails use the camera's embedded JPEG preview.
 - `MediaColorRenderer.swift`: shared Core Image adjustment graph used by photo rendering and timeline clip playback.
-- `EditorStore.swift`: main-actor application state and file-panel workflows.
+- `EditorStore.swift`: main-actor application state and file-panel workflows. Preview requests collapse while a render is in flight, so slider drags render only the latest values. Unsaved changes are tracked against the last saved project and confirmed before New, Open, and Quit.
 - Workspace views: Library, Photo, Video placeholder, and Export.
 - `HistogramView.swift`: accessible RGB histogram rendered from the edited image pipeline.
 - `PhotoComparisonView.swift`: original, edited, split, and side-by-side presentation modes.

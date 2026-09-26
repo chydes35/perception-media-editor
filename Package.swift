@@ -16,6 +16,10 @@ let package = Package(
             linkerSettings: [
                 .linkedFramework("AVKit")
             ]
+        ),
+        .testTarget(
+            name: "PerceptionEditorTests",
+            dependencies: ["PerceptionEditor"]
         )
     ]
 )

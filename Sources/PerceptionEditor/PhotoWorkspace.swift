@@ -21,6 +21,11 @@ struct PhotoWorkspace: View {
         .onChange(of: store.selectedAssetID) { _, _ in
             resetPreviewViewport()
         }
+        .onDisappear {
+            if isCropping {
+                cancelCrop()
+            }
+        }
     }
 
     private var presetPanel: some View {
@@ -426,7 +431,9 @@ struct PhotoWorkspace: View {
     private func beginCrop() {
         guard store.selectedAsset != nil else { return }
         store.previewMode = .edited
-        store.beginAdjustmentEdit()
+        // The store renders the uncropped frame while editing, so the stored crop maps
+        // directly onto the visible image.
+        store.beginCropEditing()
         let stored = store.selectedAdjustments.cropRect
         draftCropRect = stored.map {
             CGRect(x: $0.x, y: 1 - $0.y - $0.height, width: $0.width, height: $0.height)
@@ -435,19 +442,22 @@ struct PhotoWorkspace: View {
     }
 
     private func applyCrop() {
-        store.updateCropRectFromDisplay(draftCropRect)
-        store.endAdjustmentEdit()
+        store.applyCropEditing(displayRect: draftCropRect)
         draftCropRect = nil
         isCropping = false
     }
 
     private func cancelCrop() {
-        store.cancelAdjustmentEdit()
+        store.cancelCropEditing()
         draftCropRect = nil
         isCropping = false
     }
 
     private func resetPreviewViewport() {
+        // Leaving a photo mid-crop discards the draft and closes its undo group.
+        if isCropping {
+            cancelCrop()
+        }
         zoomScale = 1
         panOffset = .zero
         draftCropRect = nil

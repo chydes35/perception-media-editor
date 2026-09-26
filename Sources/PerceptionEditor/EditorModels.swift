@@ -173,6 +173,36 @@ struct PhotoAdjustments: Codable, Equatable, Sendable {
     var straightenDegrees: Double? = nil
 
     static let neutral = PhotoAdjustments()
+
+    /// Tone and color only. Presets, look matching, and batch edits carry this part;
+    /// crop, rotation, and straighten belong to an individual photo.
+    var lookOnly: PhotoAdjustments {
+        var look = self
+        look.rotationQuarterTurns = 0
+        look.cropAspect = .original
+        look.cropRect = nil
+        look.straightenDegrees = nil
+        return look
+    }
+
+    /// This look applied to a photo while keeping that photo's own geometry.
+    func look(keepingGeometryOf target: PhotoAdjustments) -> PhotoAdjustments {
+        var result = lookOnly
+        result.rotationQuarterTurns = target.rotationQuarterTurns
+        result.cropAspect = target.cropAspect
+        result.cropRect = target.cropRect
+        result.straightenDegrees = target.straightenDegrees
+        return result
+    }
+
+    /// Geometry without the crop, used while the crop editor is open so the whole
+    /// frame is visible and the crop rectangle maps onto it directly.
+    var withoutCrop: PhotoAdjustments {
+        var uncropped = self
+        uncropped.cropAspect = .original
+        uncropped.cropRect = nil
+        return uncropped
+    }
 }
 
 struct PhotoPreset: Identifiable, Codable, Equatable, Sendable {

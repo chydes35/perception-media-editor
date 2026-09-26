@@ -75,11 +75,14 @@ enum AgentEngine {
             ))
         }
 
-        for asset in photos where (asset.pixelWidth ?? 0) < 1200 || (asset.pixelHeight ?? 0) < 1200 {
+        for asset in photos {
+            guard let width = asset.pixelWidth, let height = asset.pixelHeight,
+                  min(width, height) < 1200
+            else { continue }
             findings.append(AgentFinding(
                 severity: .low,
                 title: "Low-resolution source",
-                detail: "\(asset.filename) is missing dimensions or is below the 1200 px review threshold.",
+                detail: "\(asset.filename) is \(width)×\(height), below the 1200 px review threshold.",
                 recommendation: "Confirm that this is intentional before using it for print or large delivery.",
                 assetID: asset.id
             ))

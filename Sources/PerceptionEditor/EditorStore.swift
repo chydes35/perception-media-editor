@@ -1,5 +1,5 @@
 import AppKit
-import AVFoundation
+@preconcurrency import AVFoundation
 import Combine
 import CoreImage
 import UniformTypeIdentifiers
@@ -28,11 +28,20 @@ final class EditorStore: ObservableObject {
     @Published var latestAgentReport: AgentReport?
     @Published var statusMessage = "Ready"
     @Published var lastError: String?
+    @Published private(set) var isEditingCrop = false
+    @Published private(set) var isExporting = false
+    @Published private(set) var photoThumbnails: [UUID: NSImage] = [:]
 
-    private(set) var sourceImages: [UUID: CIImage] = [:]
     private(set) var projectURL: URL?
+    /// The project as it was last opened or saved; `hasUnsavedChanges` compares against it.
+    private var lastSavedProject = EditorProject.starter
 
-    private let renderer = PhotoRenderer.shared
+    private let photoRenderer = PhotoRenderer()
+    private let thumbnailRenderer = PhotoRenderer(workingCacheLimit: 0)
+    private var previewTask: Task<Void, Never>?
+    private var needsAnotherPreviewRender = false
+    private var originalPreviewAssetID: UUID?
+    private var pendingPhotoThumbnails: Set<UUID> = []
     private let document = ProjectDocument()
     private let userPresetRepository = UserPresetRepository()
     private let thumbnailCache = ThumbnailCache()
@@ -58,6 +67,10 @@ final class EditorStore: ObservableObject {
 
     var isShowingOriginal: Bool {
         previewMode == .original
+    }
+
+    var hasUnsavedChanges: Bool {
+        project != lastSavedProject
     }
 
     var selectedAsset: MediaAsset? {
@@ -91,7 +104,6 @@ final class EditorStore: ObservableObject {
         set {
             guard let selectedAssetID else { return }
             project.adjustmentsByAssetID[selectedAssetID] = newValue
-            thumbnailCache.invalidate(assetID: selectedAssetID)
             refreshPreview()
         }
     }
@@ -137,11 +149,18 @@ final class EditorStore: ObservableObject {
 
             switch kind {
             case .photo:
-                guard let image = renderer.loadImage(from: url) else { continue }
-                let asset = MediaAsset(url: url, kind: .photo)
+                // Import reads metadata only; pixels are decoded later, on demand and off the main actor.
+                guard let size = await Task.detached(operation: { PhotoSourceLoader.dimensions(of: url) }).value else {
+                    continue
+                }
+                let asset = MediaAsset(
+                    url: url,
+                    kind: .photo,
+                    pixelWidth: size.width,
+                    pixelHeight: size.height
+                )
                 project.media.append(asset)
                 project.adjustmentsByAssetID[asset.id] = .neutral
-                sourceImages[asset.id] = image
                 selectedAssetID = asset.id
                 importedCount += 1
             case .video, .audio:
@@ -184,7 +203,6 @@ final class EditorStore: ObservableObject {
             return
         }
         selectedAssetID = asset.id
-        loadSourceIfNeeded(for: asset)
         refreshPreview()
     }
 
@@ -238,7 +256,7 @@ final class EditorStore: ObservableObject {
     }
 
     func apply(_ preset: PhotoPreset) {
-        updateAdjustments { $0 = preset.adjustments }
+        updateAdjustments { $0 = preset.adjustments.look(keepingGeometryOf: $0) }
         statusMessage = "Applied \(preset.name)"
     }
 
@@ -249,13 +267,13 @@ final class EditorStore: ObservableObject {
         if let index = userPresets.firstIndex(where: {
             $0.name.localizedCaseInsensitiveCompare(cleanedName) == .orderedSame
         }) {
-            userPresets[index].adjustments = selectedAdjustments
+            userPresets[index].adjustments = selectedAdjustments.lookOnly
         } else {
             userPresets.append(
                 PhotoPreset(
                     name: cleanedName,
                     category: "User",
-                    adjustments: selectedAdjustments
+                    adjustments: selectedAdjustments.lookOnly
                 )
             )
         }
@@ -340,8 +358,9 @@ final class EditorStore: ObservableObject {
                   let sourceAdjustments = project.adjustmentsByAssetID[sourceAssetID]
             else { continue }
 
-            project.adjustmentsByAssetID[targetAssetID] = sourceAdjustments
-            thumbnailCache.invalidate(assetID: targetAssetID)
+            project.adjustmentsByAssetID[targetAssetID] = sourceAdjustments.look(
+                keepingGeometryOf: project.adjustmentsByAssetID[targetAssetID] ?? .neutral
+            )
             applied += 1
         }
 
@@ -372,12 +391,7 @@ final class EditorStore: ObservableObject {
 
     func applyVideoPreset(_ preset: PhotoPreset) {
         guard let selectedTimelineClipID else { return }
-        var adjustments = preset.adjustments
-        adjustments.rotationQuarterTurns = 0
-        adjustments.cropAspect = .original
-        adjustments.cropRect = nil
-        adjustments.straightenDegrees = nil
-        project.videoAdjustmentsByClipID[selectedTimelineClipID] = adjustments
+        project.videoAdjustmentsByClipID[selectedTimelineClipID] = preset.adjustments.lookOnly
         rebuildTimelinePlayback()
         statusMessage = "Applied \(preset.name) to clip"
     }
@@ -417,36 +431,140 @@ final class EditorStore: ObservableObject {
         }
     }
 
+    /// Requests a preview of the selected photo. Rendering runs on `PhotoRenderer`; while a
+    /// render is in flight, further requests collapse into one follow-up render with the
+    /// latest adjustments, so slider drags never queue up stale work.
     func refreshPreview() {
-        guard let selectedAssetID else {
+        guard let asset = selectedAsset, asset.kind == .photo else {
+            needsAnotherPreviewRender = false
+            originalPreviewAssetID = nil
             renderedPreview = nil
             originalPreview = nil
             histogram = .empty
             return
         }
 
-        if sourceImages[selectedAssetID] == nil, let asset = selectedAsset {
-            loadSourceIfNeeded(for: asset)
-        }
-
-        guard let source = sourceImages[selectedAssetID] else {
+        if originalPreviewAssetID != asset.id {
+            // Never show the previous photo's preview under this photo's selection.
             renderedPreview = nil
             originalPreview = nil
             histogram = .empty
-            return
         }
 
-        originalPreview = renderer.preview(source, adjustments: .neutral)
-        renderedPreview = renderer.preview(source, adjustments: selectedAdjustments)
-        histogram = renderer.histogram(source, adjustments: selectedAdjustments)
+        guard previewTask == nil else {
+            needsAnotherPreviewRender = true
+            return
+        }
+        startPreviewRender(for: asset)
+    }
+
+    private func startPreviewRender(for asset: MediaAsset) {
+        let url = asset.url
+        let assetID = asset.id
+        let adjustments = isEditingCrop ? selectedAdjustments.withoutCrop : selectedAdjustments
+        let needsOriginal = originalPreviewAssetID != assetID
+        let renderer = photoRenderer
+
+        previewTask = Task { [weak self] in
+            let original = needsOriginal ? await renderer.original(url: url) : nil
+            let result = await renderer.preview(url: url, adjustments: adjustments)
+            self?.finishPreviewRender(
+                assetID: assetID,
+                needsOriginal: needsOriginal,
+                original: original,
+                result: result
+            )
+        }
+    }
+
+    private func finishPreviewRender(
+        assetID: UUID,
+        needsOriginal: Bool,
+        original: RenderedImage?,
+        result: PhotoPreviewResult?
+    ) {
+        previewTask = nil
+
+        if selectedAssetID == assetID {
+            if needsOriginal {
+                originalPreview = original.map(Self.nsImage)
+                originalPreviewAssetID = assetID
+            }
+            renderedPreview = result.map { Self.nsImage($0.edited) }
+            histogram = result?.histogram ?? .empty
+        }
+
+        if needsAnotherPreviewRender {
+            needsAnotherPreviewRender = false
+            refreshPreview()
+        }
+    }
+
+    private static func nsImage(_ image: RenderedImage) -> NSImage {
+        NSImage(
+            cgImage: image.cgImage,
+            size: NSSize(width: image.cgImage.width, height: image.cgImage.height)
+        )
     }
 
     func setShowingOriginal(_ showing: Bool) {
         previewMode = showing ? .original : .edited
     }
 
+    /// Lightroom's `\` behavior: flip between the original and the edit.
+    func toggleBeforeAfter() {
+        guard workspace == .photo, selectedAsset != nil else { return }
+        previewMode = previewMode == .original ? .edited : .original
+    }
+
+    func beginCropEditing() {
+        guard selectedAsset != nil, !isEditingCrop else { return }
+        beginAdjustmentEdit()
+        isEditingCrop = true
+        refreshPreview()
+    }
+
+    func applyCropEditing(displayRect: CGRect?) {
+        guard isEditingCrop else { return }
+        updateCropRectFromDisplay(displayRect)
+        endAdjustmentEdit()
+        isEditingCrop = false
+        refreshPreview()
+    }
+
+    func cancelCropEditing() {
+        guard isEditingCrop else { return }
+        cancelAdjustmentEdit()
+        isEditingCrop = false
+        refreshPreview()
+    }
+
+    /// Asks whether to save before the current project is replaced or the app quits.
+    /// Returns `false` when the user cancels or the save does not complete.
+    func confirmDiscardingUnsavedChanges() -> Bool {
+        guard hasUnsavedChanges else { return true }
+
+        let alert = NSAlert()
+        alert.messageText = "Save changes to “\(project.name)”?"
+        alert.informativeText = "Your changes will be lost if you don’t save them."
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Don’t Save")
+        alert.addButton(withTitle: "Cancel")
+
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            return saveProject()
+        case .alertSecondButtonReturn:
+            return true
+        default:
+            return false
+        }
+    }
+
     func newProject() {
-        project = EditorProject.starter
+        guard confirmDiscardingUnsavedChanges() else { return }
+        project = EditorProject(name: "Untitled Project")
+        lastSavedProject = project
         projectURL = nil
         selectedAssetID = nil
         selectedVideoAssetID = nil
@@ -460,18 +578,16 @@ final class EditorStore: ObservableObject {
         pendingVideoThumbnails = []
         audioWaveforms = [:]
         pendingAudioWaveforms = []
-        sourceImages = [:]
+        resetPhotoRenderState()
         clearAdjustmentHistory()
-        renderedPreview = nil
-        originalPreview = nil
-        histogram = .empty
         previewMode = .edited
         thumbnailCache.clearMemory()
         workspace = .library
         statusMessage = "New project"
     }
 
-    func saveProject(saveAs: Bool = false) {
+    @discardableResult
+    func saveProject(saveAs: Bool = false) -> Bool {
         let destination: URL?
 
         if !saveAs, let projectURL {
@@ -484,18 +600,23 @@ final class EditorStore: ObservableObject {
             destination = panel.runModal() == .OK ? panel.url : nil
         }
 
-        guard let destination else { return }
+        guard let destination else { return false }
 
         do {
             try document.save(project, to: destination)
             projectURL = destination
+            lastSavedProject = project
             statusMessage = "Saved \(destination.lastPathComponent)"
+            return true
         } catch {
             lastError = error.localizedDescription
+            return false
         }
     }
 
     func openProject() {
+        guard confirmDiscardingUnsavedChanges() else { return }
+
         let panel = NSOpenPanel()
         panel.title = "Open Perception Media Project"
         panel.allowedContentTypes = [UTType(filenameExtension: ProjectDocument.fileExtension) ?? .json]
@@ -505,21 +626,22 @@ final class EditorStore: ObservableObject {
 
         do {
             project = try document.load(from: url)
+            lastSavedProject = project
             projectURL = url
             selectedAssetID = nil
             selectedVideoAssetID = nil
             selectedTimelineClipID = project.timelineClips.first?.id
-            sourceImages = [:]
+            resetPhotoRenderState()
             audioWaveforms = [:]
             pendingAudioWaveforms = []
             clearAdjustmentHistory()
+            backfillPhotoDimensions()
             for asset in project.media where asset.kind == .video || asset.kind == .audio {
                 requestAudioWaveform(for: asset)
             }
             if let first = project.media.first {
                 if first.kind == .photo {
                     selectedAssetID = first.id
-                    loadSourceIfNeeded(for: first)
                 } else {
                     selectVideo(first)
                 }
@@ -535,16 +657,12 @@ final class EditorStore: ObservableObject {
     }
 
     func exportSelectedPhoto() {
-        guard
-            let selectedAssetID,
-            let asset = selectedAsset
-        else {
+        guard let asset = selectedAsset, asset.kind == .photo else {
             lastError = "Select a photo before exporting."
             return
         }
-
-        loadSourceIfNeeded(for: asset)
-        guard let source = sourceImages[selectedAssetID] else {
+        guard !isExporting else { return }
+        guard !isMissing(asset) else {
             lastError = "The original file could not be loaded. Relink it from the Photo or Library workspace."
             return
         }
@@ -556,11 +674,22 @@ final class EditorStore: ObservableObject {
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
         let type: UTType = url.pathExtension.lowercased() == "png" ? .png : .jpeg
-        do {
-            try renderer.export(source, adjustments: selectedAdjustments, to: url, type: type)
-            statusMessage = "Exported \(url.lastPathComponent)"
-        } catch {
-            lastError = error.localizedDescription
+        let adjustments = selectedAdjustments
+        // Full-resolution decodes get their own renderer so they neither block previews
+        // nor stay cached after the export finishes.
+        let exporter = PhotoRenderer(workingCacheLimit: 0)
+        isExporting = true
+        statusMessage = "Exporting \(url.lastPathComponent)…"
+
+        Task {
+            do {
+                try await exporter.export(url: asset.url, adjustments: adjustments, to: url, type: type)
+                statusMessage = "Exported \(url.lastPathComponent)"
+            } catch {
+                lastError = error.localizedDescription
+                statusMessage = "Export failed"
+            }
+            isExporting = false
         }
     }
 
@@ -590,13 +719,72 @@ final class EditorStore: ObservableObject {
             return cached
         }
 
-        loadSourceIfNeeded(for: asset)
-        guard let source = sourceImages[asset.id] else { return nil }
-        guard let image = renderer.preview(source, adjustments: adjustments, maxDimension: 420) else {
-            return nil
+        requestPhotoThumbnail(for: asset, adjustments: adjustments)
+        // Keep showing the last thumbnail while an updated one renders.
+        return photoThumbnails[asset.id]
+    }
+
+    /// Renders one photo thumbnail at a time on a dedicated renderer. If the photo's
+    /// adjustments changed while it rendered, the next view update requests a fresh one.
+    private func requestPhotoThumbnail(for asset: MediaAsset, adjustments: PhotoAdjustments) {
+        guard !pendingPhotoThumbnails.contains(asset.id), !isMissing(asset) else { return }
+        pendingPhotoThumbnails.insert(asset.id)
+        let renderer = thumbnailRenderer
+
+        Task { [weak self] in
+            let rendered = await renderer.thumbnail(url: asset.url, adjustments: adjustments)
+            guard let self else { return }
+            pendingPhotoThumbnails.remove(asset.id)
+            guard let rendered, project.media.contains(where: { $0.id == asset.id && $0.url == asset.url }) else {
+                return
+            }
+            let image = Self.nsImage(rendered)
+            thumbnailCache.store(image, for: asset, adjustments: adjustments)
+            photoThumbnails[asset.id] = image
         }
-        thumbnailCache.store(image, for: asset, adjustments: adjustments)
-        return image
+    }
+
+    private func resetPhotoRenderState() {
+        needsAnotherPreviewRender = false
+        originalPreviewAssetID = nil
+        isEditingCrop = false
+        photoThumbnails = [:]
+        pendingPhotoThumbnails = []
+        renderedPreview = nil
+        originalPreview = nil
+        histogram = .empty
+        let renderer = photoRenderer
+        Task { await renderer.evictAll() }
+    }
+
+    /// Projects saved before photo dimensions were recorded get them from file metadata.
+    /// The saved snapshot is updated too, so this alone does not mark the project edited.
+    private func backfillPhotoDimensions() {
+        let targets = project.media
+            .filter { $0.kind == .photo && ($0.pixelWidth == nil || $0.pixelHeight == nil) }
+            .map { ($0.id, $0.url) }
+        guard !targets.isEmpty else { return }
+        let projectID = project.id
+
+        Task {
+            let found = await Task.detached {
+                targets.compactMap { id, url in
+                    PhotoSourceLoader.dimensions(of: url).map { (id, $0.width, $0.height) }
+                }
+            }.value
+            guard project.id == projectID else { return }
+
+            for (id, width, height) in found {
+                if let index = project.media.firstIndex(where: { $0.id == id }) {
+                    project.media[index].pixelWidth = width
+                    project.media[index].pixelHeight = height
+                }
+                if let index = lastSavedProject.media.firstIndex(where: { $0.id == id }) {
+                    lastSavedProject.media[index].pixelWidth = width
+                    lastSavedProject.media[index].pixelHeight = height
+                }
+            }
+        }
     }
 
     func isMissing(_ asset: MediaAsset) -> Bool {
@@ -626,15 +814,13 @@ final class EditorStore: ObservableObject {
         guard panel.runModal() == .OK, let url = panel.url else { return }
         guard let index = project.media.firstIndex(where: { $0.id == target.id }) else { return }
 
-        let photoSource: CIImage?
+        var photoSize: (width: Int, height: Int)?
         if target.kind == .photo {
-            guard let source = renderer.loadImage(from: url) else {
+            guard let size = PhotoSourceLoader.dimensions(of: url) else {
                 lastError = "The selected file is not a supported photo."
                 return
             }
-            photoSource = source
-        } else {
-            photoSource = nil
+            photoSize = size
         }
 
         thumbnailCache.invalidate(assetID: target.id)
@@ -646,8 +832,15 @@ final class EditorStore: ObservableObject {
             await audioWaveformService.invalidate(url: target.url)
         }
         project.media[index].url = url
-        if target.kind == .photo {
-            sourceImages[target.id] = photoSource
+        if let photoSize {
+            project.media[index].pixelWidth = photoSize.width
+            project.media[index].pixelHeight = photoSize.height
+            photoThumbnails[target.id] = nil
+            pendingPhotoThumbnails.remove(target.id)
+            let renderer = photoRenderer
+            let previousURL = target.url
+            Task { await renderer.evict(url: previousURL) }
+            originalPreviewAssetID = nil
             selectedAssetID = target.id
             refreshPreview()
         } else {
@@ -846,11 +1039,6 @@ final class EditorStore: ObservableObject {
 
     func audioWaveform(for clip: TimelineClip) -> [Float] {
         audioWaveforms[clip.assetID] ?? []
-    }
-
-    private func loadSourceIfNeeded(for asset: MediaAsset) {
-        guard sourceImages[asset.id] == nil else { return }
-        sourceImages[asset.id] = renderer.loadImage(from: asset.url)
     }
 
     private func requestAudioWaveform(for asset: MediaAsset) {

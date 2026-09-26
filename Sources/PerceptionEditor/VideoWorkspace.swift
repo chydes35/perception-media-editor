@@ -123,10 +123,11 @@ struct VideoWorkspace: View {
                         in: Capsule()
                     )
                 Spacer()
-                Button("Preview Timeline", systemImage: "play.rectangle.on.rectangle") {
-                    store.previewTimeline()
+                if !store.isTimelinePlayback, !store.project.timelineClips.isEmpty {
+                    Button("Preview Timeline", systemImage: "play.rectangle.on.rectangle") {
+                        store.previewTimeline()
+                    }
                 }
-                .disabled(store.project.timelineClips.isEmpty)
                 Button("Add to Timeline", systemImage: "plus.rectangle.on.rectangle") {
                     store.addToTimeline()
                 }
@@ -141,7 +142,7 @@ struct VideoWorkspace: View {
             ZStack {
                 Color.black
                 if let player = store.videoPlayer {
-                    VideoPlayer(player: player)
+                    EditorPlayerView(player: player, showsControls: !store.isTimelinePlayback)
                         .id(ObjectIdentifier(player))
                         .padding(20)
                 } else {
@@ -155,7 +156,9 @@ struct VideoWorkspace: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            timelineTransport
+            if store.isTimelinePlayback {
+                timelineTransport
+            }
         }
     }
 
@@ -280,6 +283,8 @@ struct VideoWorkspace: View {
             Spacer()
             Text(value)
                 .lineLimit(1)
+                .truncationMode(.middle)
+                .help(value)
         }
         .font(.caption)
     }
@@ -312,10 +317,19 @@ private struct EditorTimelineView: View {
                     trackHeaders
                     Divider()
                     ScrollView(.horizontal) {
-                        VStack(alignment: .leading, spacing: 5) {
-                            trackRow(video: true)
-                            trackRow(video: false)
+                        ZStack(alignment: .topLeading) {
+                            VStack(alignment: .leading, spacing: 5) {
+                                trackRow(video: true)
+                                trackRow(video: false)
+                            }
+
+                            if store.isTimelinePlayback {
+                                timelinePlayhead
+                                    .offset(x: timelinePlayheadOffset)
+                                    .accessibilityHidden(true)
+                            }
                         }
+                        .frame(width: timelineContentWidth, alignment: .leading)
                         .padding(10)
                     }
                 }
@@ -337,16 +351,24 @@ private struct EditorTimelineView: View {
             Button { store.moveSelectedTimelineClip(by: -1) } label: {
                 Image(systemName: "arrow.left")
             }
+            .disabled(!store.canMoveSelectedTimelineClip(by: -1))
+            .help("Move selected clip earlier")
+            .accessibilityLabel("Move selected clip earlier")
             Button { store.moveSelectedTimelineClip(by: 1) } label: {
                 Image(systemName: "arrow.right")
             }
+            .disabled(!store.canMoveSelectedTimelineClip(by: 1))
+            .help("Move selected clip later")
+            .accessibilityLabel("Move selected clip later")
             Button { store.toggleVideoPlayback() } label: {
                 Image(systemName: store.isVideoPlaying ? "pause.fill" : "play.fill")
             }
+            .help(store.isVideoPlaying ? "Pause timeline" : "Play timeline")
             Button(role: .destructive) { store.removeSelectedTimelineClip() } label: {
                 Image(systemName: "trash")
             }
             .disabled(store.selectedTimelineClip == nil)
+            .help("Ripple delete selected clip")
         }
         .buttonStyle(.borderless)
         .padding(.horizontal, 12)
@@ -389,7 +411,7 @@ private struct EditorTimelineView: View {
 
     private func timelineClip(_ clip: TimelineClip, video: Bool) -> some View {
         let selected = store.selectedTimelineClipID == clip.id
-        let width = max(100, min(360, clip.durationSeconds * 18))
+        let width = timelineClipWidth(clip)
         let asset = store.timelineAsset(for: clip)
 
         return HStack(spacing: 7) {
@@ -418,10 +440,68 @@ private struct EditorTimelineView: View {
         .opacity(clip.isEnabled ? 1 : 0.45)
     }
 
+    private var timelinePlayhead: some View {
+        VStack(spacing: 0) {
+            Image(systemName: "triangle.fill")
+                .font(.system(size: 7))
+                .rotationEffect(.degrees(180))
+            Rectangle()
+                .frame(width: 2, height: 110)
+        }
+        .foregroundStyle(.white)
+        .shadow(color: .black.opacity(0.85), radius: 1)
+    }
+
+    private var timelineContentWidth: CGFloat {
+        let clips = store.project.timelineClips
+        let gaps = CGFloat(max(0, clips.count - 1)) * 4
+        return max(1, clips.reduce(CGFloat.zero) { $0 + timelineClipWidth($1) } + gaps)
+    }
+
+    private var timelinePlayheadOffset: CGFloat {
+        let position = min(max(0, store.timelinePlaybackPositionSeconds), store.timelineDurationSeconds)
+        var cursor = CGFloat.zero
+
+        for clip in store.project.timelineClips {
+            let width = timelineClipWidth(clip)
+            let clipEnd = clip.timelineStartSeconds + clip.durationSeconds
+            if position <= clipEnd {
+                let elapsed = max(0, position - clip.timelineStartSeconds)
+                let fraction = clip.durationSeconds > 0 ? min(1, elapsed / clip.durationSeconds) : 0
+                return cursor + width * CGFloat(fraction)
+            }
+            cursor += width + 4
+        }
+
+        return max(0, timelineContentWidth - 2)
+    }
+
+    private func timelineClipWidth(_ clip: TimelineClip) -> CGFloat {
+        max(100, min(360, clip.durationSeconds * 18))
+    }
+
     private func formatTime(_ seconds: Double) -> String {
         let safeSeconds = max(0, seconds.isFinite ? seconds : 0)
         let minutes = Int(safeSeconds) / 60
         let remaining = safeSeconds - Double(minutes * 60)
         return String(format: "%02d:%05.2f", minutes, remaining)
+    }
+}
+
+private struct EditorPlayerView: NSViewRepresentable {
+    let player: AVPlayer
+    let showsControls: Bool
+
+    func makeNSView(context: Context) -> AVPlayerView {
+        let playerView = AVPlayerView()
+        playerView.player = player
+        playerView.videoGravity = .resizeAspect
+        playerView.controlsStyle = showsControls ? .floating : .none
+        return playerView
+    }
+
+    func updateNSView(_ playerView: AVPlayerView, context: Context) {
+        playerView.player = player
+        playerView.controlsStyle = showsControls ? .floating : .none
     }
 }

@@ -513,6 +513,13 @@ final class EditorStore: ObservableObject {
         rebuildTimelinePlayback()
     }
 
+    func canMoveSelectedTimelineClip(by offset: Int) -> Bool {
+        guard let selectedTimelineClipID,
+              let index = project.timelineClips.firstIndex(where: { $0.id == selectedTimelineClipID })
+        else { return false }
+        return project.timelineClips.indices.contains(index + offset)
+    }
+
     func trimSelectedClipStart(by delta: Double) {
         guard let selectedTimelineClipID,
               let index = project.timelineClips.firstIndex(where: { $0.id == selectedTimelineClipID }),

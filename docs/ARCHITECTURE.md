@@ -16,6 +16,12 @@ Original media is never modified. A `.pmedit` project stores references to the o
 - Workspace views: Library, Photo, Video placeholder, and Export.
 - `HistogramView.swift`: accessible RGB histogram rendered from the edited image pipeline.
 - `PhotoComparisonView.swift`: original, edited, split, and side-by-side presentation modes.
+- `IngestService.swift`: card-to-shoot copy. Streams each file to `name.partial` while hashing it, flushes, reads it back without the file cache, compares, then renames into place. Skips a file already present (same name, size, and timestamp, or same content), gives a different file with a colliding name a `-1` suffix, and mirrors to an optional backup. The card is only read.
+- `EditorStore+Ingest.swift`: shoot folder layout, remembered locations, and the import flow that fills the project as files arrive.
+- `EditorStore+Culling.swift`: capture-ordered visible photos, filters, selection, rating/flag/label commands, key handling, remove, Delete Rejected, and autosave.
+- `CullingModels.swift`: flag, color label, filter, and the Lightroom key map.
+- `CullPreviewCache.swift`: ten screen-sized previews kept around the current photo. RAW files use the camera's embedded JPEG (about 15 ms each).
+- `CullWorkspace.swift` and `ImportSheet.swift`: the loupe, compare view, filmstrip, filter bar, and import dialog.
 - `ThumbnailCache.swift`: stable, adjustment-aware JPEG thumbnails in Application Support.
 - `UserPresetRepository.swift`: persistent user presets backed by app preferences.
 - `VideoMediaService.swift`: AVFoundation metadata and poster-frame extraction.
@@ -26,6 +32,10 @@ Original media is never modified. A `.pmedit` project stores references to the o
 - `scripts/agent-review.sh`: deterministic developer reviewers for workflow, renderer, schema, compatibility, and release checks.
 
 Photo geometry is stored as optional normalized crop data for backward-compatible `.pmedit` loading. Preview zoom and pan are view state, while crop, straighten, and adjustment history remain non-destructive project edits.
+
+## Autosave
+
+A project that has a file on disk saves itself 1.5 seconds after each change, and immediately before New, Open, or Quit. Only a project that has never been saved asks whether to save.
 
 ## Project format
 

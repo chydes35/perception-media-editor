@@ -2,6 +2,7 @@ import Foundation
 
 enum Workspace: String, CaseIterable, Identifiable {
     case library = "Library"
+    case cull = "Cull"
     case photo = "Photo"
     case video = "Video"
     case export = "Export"
@@ -50,6 +51,10 @@ struct MediaAsset: Identifiable, Codable, Equatable {
     var importedAt: Date
     var rating: Int
     var isFavorite: Bool
+    var flag: PhotoFlag
+    var colorLabel: ColorLabel?
+    /// EXIF capture time in the camera's local time, when the file has one.
+    var captureDate: Date?
     var durationSeconds: Double?
     var pixelWidth: Int?
     var pixelHeight: Int?
@@ -61,6 +66,9 @@ struct MediaAsset: Identifiable, Codable, Equatable {
         importedAt: Date = .now,
         rating: Int = 0,
         isFavorite: Bool = false,
+        flag: PhotoFlag = .unflagged,
+        colorLabel: ColorLabel? = nil,
+        captureDate: Date? = nil,
         durationSeconds: Double? = nil,
         pixelWidth: Int? = nil,
         pixelHeight: Int? = nil
@@ -71,9 +79,34 @@ struct MediaAsset: Identifiable, Codable, Equatable {
         self.importedAt = importedAt
         self.rating = rating
         self.isFavorite = isFavorite
+        self.flag = flag
+        self.colorLabel = colorLabel
+        self.captureDate = captureDate
         self.durationSeconds = durationSeconds
         self.pixelWidth = pixelWidth
         self.pixelHeight = pixelHeight
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, url, kind, importedAt, rating, isFavorite, flag, colorLabel, captureDate
+        case durationSeconds, pixelWidth, pixelHeight
+    }
+
+    /// Fields added after schema 1 decode with defaults so older projects keep opening.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        url = try container.decode(URL.self, forKey: .url)
+        kind = try container.decodeIfPresent(MediaKind.self, forKey: .kind) ?? .photo
+        importedAt = try container.decodeIfPresent(Date.self, forKey: .importedAt) ?? .now
+        rating = try container.decodeIfPresent(Int.self, forKey: .rating) ?? 0
+        isFavorite = try container.decodeIfPresent(Bool.self, forKey: .isFavorite) ?? false
+        flag = try container.decodeIfPresent(PhotoFlag.self, forKey: .flag) ?? .unflagged
+        colorLabel = try container.decodeIfPresent(ColorLabel.self, forKey: .colorLabel)
+        captureDate = try container.decodeIfPresent(Date.self, forKey: .captureDate)
+        durationSeconds = try container.decodeIfPresent(Double.self, forKey: .durationSeconds)
+        pixelWidth = try container.decodeIfPresent(Int.self, forKey: .pixelWidth)
+        pixelHeight = try container.decodeIfPresent(Int.self, forKey: .pixelHeight)
     }
 
     var filename: String { url.lastPathComponent }
@@ -275,7 +308,7 @@ struct PhotoPreset: Identifiable, Codable, Equatable, Sendable {
 }
 
 struct EditorProject: Codable, Equatable {
-    static let currentSchemaVersion = 4
+    static let currentSchemaVersion = 5
 
     var schemaVersion = currentSchemaVersion
     var id = UUID()

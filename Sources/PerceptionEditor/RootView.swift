@@ -22,6 +22,10 @@ struct RootView: View {
             actions: { Button("OK") { store.lastError = nil } },
             message: { Text(store.lastError ?? "Unknown error") }
         )
+        .sheet(isPresented: $store.isShowingImportSheet) {
+            ImportSheet()
+                .environmentObject(store)
+        }
     }
 
     private var topBar: some View {
@@ -45,17 +49,21 @@ struct RootView: View {
                 }
             }
             .pickerStyle(.segmented)
-            .frame(width: 410)
+            .frame(width: 490)
 
             Spacer()
 
-            Button {
-                store.importMedia()
+            Menu {
+                Button("Import from Card or Folder…") { store.showImportSheet() }
+                Button("Add Files in Place…") { store.importMedia() }
             } label: {
                 Label("Import", systemImage: "square.and.arrow.down")
+            } primaryAction: {
+                store.showImportSheet()
             }
             .buttonStyle(.borderedProminent)
             .tint(.orange)
+            .disabled(store.ingest.isRunning)
 
             Button {
                 store.exportSelectedPhoto()
@@ -75,6 +83,8 @@ struct RootView: View {
         switch store.workspace {
         case .library:
             LibraryWorkspace()
+        case .cull:
+            CullWorkspace()
         case .photo:
             PhotoWorkspace()
         case .video:
@@ -93,14 +103,14 @@ struct RootView: View {
                 .frame(width: 7, height: 7)
             Text(store.statusMessage)
             Spacer()
-            if store.hasUnsavedChanges {
+            if store.hasUnsavedChanges, store.projectURL == nil {
                 Label("Unsaved changes", systemImage: "circle.fill")
                     .labelStyle(.titleAndIcon)
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(.orange)
                     .imageScale(.small)
             }
-            Text("V0.3 AUDIO MIX")
+            Text("V0.4 LIBRARY + CULLING")
                 .font(.system(size: 10, weight: .semibold, design: .monospaced))
                 .foregroundStyle(.secondary)
         }

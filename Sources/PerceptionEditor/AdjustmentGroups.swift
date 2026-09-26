@@ -10,6 +10,7 @@ enum AdjustmentGroup: String, CaseIterable, Codable, Identifiable, Sendable {
     case toneCurve
     case hsl
     case rawDetail
+    case masks
 
     var id: String { rawValue }
 
@@ -22,6 +23,7 @@ enum AdjustmentGroup: String, CaseIterable, Codable, Identifiable, Sendable {
         case .toneCurve: "Tone Curve"
         case .hsl: "HSL"
         case .rawDetail: "RAW Detail"
+        case .masks: "Masks"
         }
     }
 
@@ -34,6 +36,7 @@ enum AdjustmentGroup: String, CaseIterable, Codable, Identifiable, Sendable {
         case .toneCurve: "RGB and channel curves"
         case .hsl: "Hue, saturation, luminance by color"
         case .rawDetail: "Noise reduction, RAW sharpness, detail, lens corrections"
+        case .masks: "Gradient masks and their adjustments (brush strokes stay with their photo)"
         }
     }
 
@@ -73,6 +76,11 @@ extension PhotoAdjustments {
                 result.curves = source.curves
             case .hsl:
                 result.hsl = source.hsl
+            case .masks:
+                // Gradients describe a look (a darker sky, a vignette) and travel between photos;
+                // a brush stroke is painted on one photo's subject, so it stays where it is.
+                result.masks = result.masks.filter { !$0.shape.isGradient }
+                    + source.masks.filter { $0.shape.isGradient }.map { $0.duplicated() }
             case .rawDetail:
                 result.raw.luminanceNoiseReduction = source.raw.luminanceNoiseReduction
                 result.raw.colorNoiseReduction = source.raw.colorNoiseReduction
@@ -113,6 +121,7 @@ extension PhotoAdjustments {
         note("Vignette", vignette != old.vignette)
         note("Tone Curve", curves != old.curves)
         note("HSL", hsl != old.hsl)
+        note("Masks", masks != old.masks)
         note("Noise Reduction", raw.luminanceNoiseReduction != old.raw.luminanceNoiseReduction
             || raw.colorNoiseReduction != old.raw.colorNoiseReduction)
         note("RAW Sharpness", raw.sharpness != old.raw.sharpness)

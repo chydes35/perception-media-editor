@@ -77,7 +77,8 @@ struct AdjustmentGroupTests {
 
     @Test func editedGroupsListsWhatWasTouched() {
         #expect(PhotoAdjustments().editedGroups.isEmpty)
-        #expect(sample().editedGroups == Set(AdjustmentGroup.allCases))
+        // The sample has no masks.
+        #expect(sample().editedGroups == Set(AdjustmentGroup.allCases).subtracting([.masks]))
 
         var onlyCurve = PhotoAdjustments()
         onlyCurve.curves[.rgb] = ToneCurve.presets[2].curve

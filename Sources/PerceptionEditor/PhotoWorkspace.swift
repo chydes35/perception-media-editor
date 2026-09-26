@@ -200,6 +200,10 @@ struct PhotoWorkspace: View {
                     HSLPanel()
                 }
 
+                adjustmentGroup("MASKS") {
+                    MaskPanel()
+                }
+
                 if store.selectedIsRAW {
                     adjustmentGroup("RAW DETAIL") { rawDetailControls }
                 }

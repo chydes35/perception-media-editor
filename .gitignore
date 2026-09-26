@@ -1,0 +1,6 @@
+.DS_Store
+.build/
+DerivedData/
+PerceptionEditor.app/
+*.xcuserstate
+.swiftpm/xcode/package.xcworkspace/xcuserdata/

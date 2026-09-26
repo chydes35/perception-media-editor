@@ -2,16 +2,12 @@ import SwiftUI
 
 struct PhotoWorkspace: View {
     @EnvironmentObject private var store: EditorStore
-    @State private var isSavingPreset = false
-    @State private var presetName = ""
-    @State private var zoomScale: CGFloat = 1
-    @State private var panOffset: CGSize = .zero
     @State private var isCropping = false
     @State private var draftCropRect: CGRect?
 
     var body: some View {
         HSplitView {
-            presetPanel
+            PresetPanel()
                 .frame(minWidth: 185, idealWidth: 210, maxWidth: 250)
             previewPanel
                 .frame(minWidth: 580, maxWidth: .infinity, maxHeight: .infinity)
@@ -25,74 +21,6 @@ struct PhotoWorkspace: View {
             if isCropping {
                 cancelCrop()
             }
-        }
-    }
-
-    private var presetPanel: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                panelHeading("PRESETS", symbol: "camera.filters")
-                Spacer()
-                Button {
-                    presetName = ""
-                    isSavingPreset = true
-                } label: {
-                    Image(systemName: "plus")
-                }
-                .buttonStyle(.borderless)
-                .help("Save current adjustments as a user preset")
-                .disabled(store.selectedAsset == nil)
-            }
-
-            ScrollView {
-                VStack(spacing: 9) {
-                    ForEach(store.presets) { preset in
-                        Button {
-                            store.apply(preset)
-                        } label: {
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(preset.name)
-                                    .font(.callout.weight(.semibold))
-                                Text(preset.category.uppercased())
-                                    .font(.system(size: 9, weight: .bold))
-                                    .tracking(0.8)
-                                    .foregroundStyle(.secondary)
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(10)
-                            .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
-                        }
-                        .buttonStyle(.plain)
-                        .contextMenu {
-                            if store.isUserPreset(preset) {
-                                Button("Delete Preset", role: .destructive) {
-                                    store.deleteUserPreset(preset)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            Spacer()
-
-            Button("Reset Adjustments", systemImage: "arrow.counterclockwise") {
-                store.resetAdjustments()
-            }
-            .buttonStyle(.bordered)
-            .disabled(store.selectedAsset == nil)
-        }
-        .padding(14)
-        .background(Color(nsColor: .controlBackgroundColor))
-        .alert("Save User Preset", isPresented: $isSavingPreset) {
-            TextField("Preset name", text: $presetName)
-            Button("Cancel", role: .cancel) {}
-            Button("Save") {
-                store.saveUserPreset(named: presetName)
-            }
-            .disabled(presetName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        } message: {
-            Text("Save the selected photo's current adjustments for reuse.")
         }
     }
 
@@ -153,6 +81,7 @@ struct PhotoWorkspace: View {
                     }
                 }
                 .pickerStyle(.segmented)
+                .labelsHidden()
                 .frame(width: 330)
                 .disabled(store.selectedAsset == nil)
 
@@ -162,16 +91,21 @@ struct PhotoWorkspace: View {
             .frame(height: 44)
             .background(Color(nsColor: .controlBackgroundColor))
 
-            PhotoComparisonView(
-                original: store.originalPreview,
-                edited: store.renderedPreview,
-                mode: store.previewMode,
-                zoomScale: $zoomScale,
-                panOffset: $panOffset,
-                isCropping: isCropping,
-                cropRect: $draftCropRect,
-                cropAspect: store.selectedAdjustments.cropAspect
-            )
+            Group {
+                if store.isZoom100 {
+                    FocusLoupeView()
+                } else {
+                    PhotoComparisonView(
+                        original: store.originalPreview,
+                        edited: store.renderedPreview,
+                        mode: store.previewMode,
+                        isCropping: isCropping,
+                        cropRect: $draftCropRect,
+                        cropAspect: store.selectedAdjustments.cropAspect,
+                        onZoomRequest: { store.enterZoom100(at: $0) }
+                    )
+                }
+            }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             filmstrip
@@ -184,7 +118,14 @@ struct PhotoWorkspace: View {
             HStack(spacing: 10) {
                 ForEach(store.visiblePhotos) { asset in
                     Button {
-                        store.select(asset)
+                        let modifiers = NSEvent.modifierFlags
+                        if modifiers.contains(.command) {
+                            store.toggleSelection(asset)
+                        } else if modifiers.contains(.shift) {
+                            store.extendSelection(to: asset)
+                        } else {
+                            store.select(asset)
+                        }
                     } label: {
                         Group {
                             if let image = store.thumbnail(for: asset) {
@@ -199,7 +140,11 @@ struct PhotoWorkspace: View {
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                         .overlay {
                             RoundedRectangle(cornerRadius: 6)
-                                .stroke(asset.id == store.selectedAssetID ? Color.orange : .clear, lineWidth: 3)
+                                .stroke(
+                                    asset.id == store.selectedAssetID ? Color.orange
+                                        : (store.selectedAssetIDs.contains(asset.id) ? Color.orange.opacity(0.5) : .clear),
+                                    lineWidth: 3
+                                )
                         }
                     }
                     .buttonStyle(.plain)
@@ -224,6 +169,10 @@ struct PhotoWorkspace: View {
                         .frame(height: 92)
                 }
 
+                if store.selectedIsRAW {
+                    adjustmentGroup("WHITE BALANCE") { whiteBalanceControls }
+                }
+
                 adjustmentGroup("LIGHT") {
                     adjustment("Exposure", keyPath: \.exposure, range: -3...3)
                     adjustment("Contrast", keyPath: \.contrast, range: -1...1)
@@ -232,7 +181,7 @@ struct PhotoWorkspace: View {
                 }
 
                 adjustmentGroup("COLOR") {
-                    adjustment("Temperature", keyPath: \.temperature, range: -1...1)
+                    adjustment("Warmth", keyPath: \.temperature, range: -1...1)
                     adjustment("Tint", keyPath: \.tint, range: -1...1)
                     adjustment("Vibrance", keyPath: \.vibrance, range: -1...1)
                     adjustment("Saturation", keyPath: \.saturation, range: -1...1)
@@ -241,6 +190,18 @@ struct PhotoWorkspace: View {
                 adjustmentGroup("PRESENCE") {
                     adjustment("Sharpness", keyPath: \.sharpness, range: 0...1)
                     adjustment("Vignette", keyPath: \.vignette, range: 0...1)
+                }
+
+                adjustmentGroup("TONE CURVE") {
+                    ToneCurveEditor()
+                }
+
+                adjustmentGroup("HSL") {
+                    HSLPanel()
+                }
+
+                if store.selectedIsRAW {
+                    adjustmentGroup("RAW DETAIL") { rawDetailControls }
                 }
 
                 adjustmentGroup("CROP") {
@@ -335,6 +296,215 @@ struct PhotoWorkspace: View {
         }
     }
 
+    // MARK: - RAW controls
+
+    private var whiteBalanceControls: some View {
+        let raw = store.selectedAdjustments.raw
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Menu {
+                    Button("As Shot") { store.resetWhiteBalance() }
+                    Divider()
+                    ForEach(WhiteBalancePreset.allCases) { preset in
+                        Button("\(preset.rawValue)  \(Int(preset.temperature)) K") {
+                            store.applyWhiteBalance(preset)
+                        }
+                    }
+                } label: {
+                    Text(raw.hasWhiteBalance ? "Custom" : "As Shot")
+                        .font(.caption.weight(.semibold))
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help("White balance presets")
+
+                Spacer()
+
+                if store.isRenderingPreview {
+                    ProgressView().controlSize(.small)
+                }
+                if raw.hasWhiteBalance {
+                    Button {
+                        store.resetWhiteBalance()
+                    } label: {
+                        Image(systemName: "arrow.counterclockwise")
+                    }
+                    .buttonStyle(.borderless)
+                    .font(.caption2)
+                    .help("Back to the camera's white balance")
+                }
+            }
+
+            VStack(spacing: 4) {
+                HStack {
+                    Text("Temperature").font(.caption)
+                    Spacer()
+                    TextField(
+                        "Temperature",
+                        value: Binding(
+                            get: { store.displayedTemperature.rounded() },
+                            set: { value in
+                                store.updateAdjustments { $0.raw.temperature = min(50000, max(2000, value)) }
+                            }
+                        ),
+                        format: .number.precision(.fractionLength(0))
+                    )
+                    .labelsHidden()
+                    .textFieldStyle(.roundedBorder)
+                    .multilineTextAlignment(.trailing)
+                    .frame(width: 66)
+                    Text("K").font(.caption2).foregroundStyle(.secondary)
+                }
+                // Kelvin is perceptually logarithmic, so the slider moves in equal steps of color, not of Kelvin.
+                Slider(
+                    value: Binding(
+                        get: { log(min(12000, max(2000, store.displayedTemperature))) },
+                        set: { value in
+                            store.updateAdjustments { $0.raw.temperature = exp(value).rounded() }
+                        }
+                    ),
+                    in: log(2000.0) ... log(12000.0),
+                    onEditingChanged: { editing in
+                        if editing { store.beginAdjustmentEdit() } else { store.endAdjustmentEdit() }
+                    }
+                )
+                .tint(.orange)
+                .accessibilityLabel("White balance temperature")
+                .accessibilityValue("\(Int(store.displayedTemperature)) Kelvin")
+            }
+
+            VStack(spacing: 4) {
+                HStack {
+                    Text("Tint").font(.caption)
+                    Spacer()
+                    TextField(
+                        "Tint",
+                        value: Binding(
+                            get: { store.displayedTint.rounded() },
+                            set: { value in
+                                store.updateAdjustments { $0.raw.tint = min(150, max(-150, value)) }
+                            }
+                        ),
+                        format: .number.precision(.fractionLength(0))
+                    )
+                    .labelsHidden()
+                    .textFieldStyle(.roundedBorder)
+                    .multilineTextAlignment(.trailing)
+                    .frame(width: 66)
+                }
+                Slider(
+                    value: Binding(
+                        get: { store.displayedTint },
+                        set: { value in store.updateAdjustments { $0.raw.tint = value.rounded() } }
+                    ),
+                    in: -150 ... 150,
+                    onEditingChanged: { editing in
+                        if editing { store.beginAdjustmentEdit() } else { store.endAdjustmentEdit() }
+                    }
+                )
+                .tint(.orange)
+                .accessibilityLabel("White balance tint")
+            }
+        }
+    }
+
+    private var rawDetailControls: some View {
+        let info = store.rawInfo
+        return VStack(alignment: .leading, spacing: 12) {
+            if info?.supportsNoiseReduction == true {
+                rawSlider(
+                    "Luminance Noise",
+                    keyPath: \.luminanceNoiseReduction,
+                    range: 0...1,
+                    defaultValue: info?.defaultLuminanceNoiseReduction ?? 0
+                )
+                rawSlider(
+                    "Color Noise",
+                    keyPath: \.colorNoiseReduction,
+                    range: 0...1,
+                    defaultValue: info?.defaultColorNoiseReduction ?? 0
+                )
+            }
+            if info?.supportsSharpness == true {
+                rawSlider(
+                    "Sharpness",
+                    keyPath: \.sharpness,
+                    range: 0...1,
+                    defaultValue: info?.defaultSharpness ?? 0
+                )
+            }
+            if info?.supportsDetail == true {
+                rawSlider(
+                    "Detail",
+                    keyPath: \.detail,
+                    range: 0...3,
+                    defaultValue: info?.defaultDetail ?? 0
+                )
+            }
+            if info?.supportsLensCorrection == true {
+                Toggle(
+                    "Lens corrections",
+                    isOn: Binding(
+                        get: { store.selectedAdjustments.raw.lensCorrection ?? info?.lensCorrectionDefault ?? true },
+                        set: { value in
+                            store.updateAdjustments {
+                                $0.raw.lensCorrection = value == info?.lensCorrectionDefault ? nil : value
+                            }
+                        }
+                    )
+                )
+                .toggleStyle(.checkbox)
+                .font(.caption)
+            }
+            Text("These change how the RAW file is decoded, so the preview takes about half a second to update.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    /// A slider for a RAW setting whose untouched value comes from the camera and RAW engine.
+    private func rawSlider(
+        _ label: String,
+        keyPath: WritableKeyPath<RawSettings, Double?>,
+        range: ClosedRange<Double>,
+        defaultValue: Double
+    ) -> some View {
+        let current = store.selectedAdjustments.raw[keyPath: keyPath]
+        let value = current ?? defaultValue
+        return VStack(spacing: 4) {
+            HStack {
+                Text(label).font(.caption)
+                Spacer()
+                if current != nil {
+                    Button {
+                        store.updateAdjustments { $0.raw[keyPath: keyPath] = nil }
+                    } label: {
+                        Image(systemName: "arrow.counterclockwise")
+                    }
+                    .buttonStyle(.borderless)
+                    .font(.caption2)
+                    .help("Back to the camera default")
+                }
+                Text(value, format: .number.precision(.fractionLength(2)))
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(current == nil ? .secondary : .primary)
+                    .frame(width: 44, alignment: .trailing)
+            }
+            Slider(
+                value: Binding(
+                    get: { store.selectedAdjustments.raw[keyPath: keyPath] ?? defaultValue },
+                    set: { newValue in store.updateAdjustments { $0.raw[keyPath: keyPath] = newValue } }
+                ),
+                in: range,
+                onEditingChanged: { editing in
+                    if editing { store.beginAdjustmentEdit() } else { store.endAdjustmentEdit() }
+                }
+            )
+            .tint(.orange)
+            .accessibilityLabel(label)
+        }
+    }
+
     private var straightenAdjustment: some View {
         let value = store.selectedAdjustments.straightenDegrees ?? 0
         return VStack(spacing: 4) {
@@ -385,47 +555,15 @@ struct PhotoWorkspace: View {
     }
 
     private var zoomControls: some View {
-        HStack(spacing: 4) {
-            Button {
-                zoomScale = max(0.5, zoomScale - 0.25)
-            } label: {
-                Image(systemName: "minus.magnifyingglass")
-            }
-            .buttonStyle(.borderless)
-            .help("Zoom out")
-            .disabled(store.selectedAsset == nil)
-
-            Menu {
-                ForEach([0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 4.0], id: \.self) { value in
-                    Button("\(Int(value * 100))%") {
-                        zoomScale = value
-                    }
-                }
-            } label: {
-                Text("\(Int(zoomScale * 100))%")
-                    .font(.system(size: 10, design: .monospaced))
-                    .frame(width: 42)
-            }
-            .menuStyle(.borderlessButton)
-            .help("Preview zoom")
-
-            Button {
-                zoomScale = min(4, zoomScale + 0.25)
-            } label: {
-                Image(systemName: "plus.magnifyingglass")
-            }
-            .buttonStyle(.borderless)
-            .help("Zoom in")
-            .disabled(store.selectedAsset == nil)
-
-            Button {
-                resetPreviewViewport()
-            } label: {
-                Image(systemName: "arrow.up.left.and.down.right.magnifyingglass")
-            }
-            .buttonStyle(.borderless)
-            .help("Reset zoom and pan")
+        Button {
+            store.toggleZoom100()
+        } label: {
+            Label("100%", systemImage: "plus.magnifyingglass")
         }
+        .buttonStyle(.bordered)
+        .tint(store.isZoom100 ? .orange : nil)
+        .disabled(store.selectedAsset == nil || isCropping)
+        .help("View at one image pixel per screen pixel to check focus (Z). Clicking the photo does the same.")
     }
 
     private func beginCrop() {
@@ -458,8 +596,6 @@ struct PhotoWorkspace: View {
         if isCropping {
             cancelCrop()
         }
-        zoomScale = 1
-        panOffset = .zero
         draftCropRect = nil
         isCropping = false
     }

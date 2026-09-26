@@ -26,6 +26,17 @@ struct RootView: View {
             ImportSheet()
                 .environmentObject(store)
         }
+        .sheet(isPresented: $store.isShowingSavePresetSheet) {
+            SavePresetSheet()
+                .environmentObject(store)
+        }
+        .sheet(item: Binding(
+            get: { store.copySheetMode.map(CopySheetItem.init) },
+            set: { store.copySheetMode = $0?.mode }
+        )) { item in
+            CopySettingsSheet(mode: item.mode)
+                .environmentObject(store)
+        }
     }
 
     private var topBar: some View {
@@ -119,4 +130,9 @@ struct RootView: View {
         .frame(height: 28)
         .background(Color(nsColor: .controlBackgroundColor))
     }
+}
+
+private struct CopySheetItem: Identifiable {
+    let mode: CopySheetMode
+    var id: String { mode == .copy ? "copy" : "sync" }
 }

@@ -5,12 +5,11 @@ struct PhotoComparisonView: View {
     let original: NSImage?
     let edited: NSImage?
     let mode: PreviewMode
-    @Binding var zoomScale: CGFloat
-    @Binding var panOffset: CGSize
     let isCropping: Bool
     @Binding var cropRect: CGRect?
     let cropAspect: CropAspect
-    @State private var panStart: CGSize?
+    /// Called with the clicked point (0–1 from the top-left of the photo) to open the 100% view.
+    var onZoomRequest: ((CGPoint) -> Void)?
 
     var body: some View {
         ZStack {
@@ -42,24 +41,35 @@ struct PhotoComparisonView: View {
         }
         .clipped()
         .contentShape(Rectangle())
-        .gesture(
-            DragGesture()
-                .onChanged { value in
-                    guard !isCropping else { return }
-                    if panStart == nil {
-                        panStart = panOffset
+        .overlay {
+            GeometryReader { geometry in
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture(coordinateSpace: .local) { location in
+                        guard !isCropping, mode == .edited, let edited,
+                              let point = Self.normalizedPoint(location, in: geometry.size, image: edited.size)
+                        else { return }
+                        onZoomRequest?(point)
                     }
-                    guard let panStart else { return }
-                    panOffset = CGSize(
-                        width: panStart.width + value.translation.width,
-                        height: panStart.height + value.translation.height
-                    )
-                }
-                .onEnded { _ in
-                    panStart = nil
-                }
-        )
-        .accessibilityHint("Drag to pan the preview when zoomed.")
+            }
+            .allowsHitTesting(!isCropping && mode == .edited && onZoomRequest != nil)
+        }
+        .accessibilityHint("Click the photo to view it at 100 percent.")
+    }
+
+    /// Where a click landed on the fitted photo, as 0–1 from its top-left; nil outside the photo.
+    nonisolated static func normalizedPoint(_ location: CGPoint, in viewSize: CGSize, image imageSize: CGSize) -> CGPoint? {
+        let padding: CGFloat = 28
+        let available = CGSize(width: viewSize.width - padding * 2, height: viewSize.height - padding * 2)
+        guard available.width > 0, available.height > 0, imageSize.width > 0, imageSize.height > 0 else { return nil }
+
+        let scale = min(available.width / imageSize.width, available.height / imageSize.height)
+        let fitted = CGSize(width: imageSize.width * scale, height: imageSize.height * scale)
+        let origin = CGPoint(x: (viewSize.width - fitted.width) / 2, y: (viewSize.height - fitted.height) / 2)
+        let x = (location.x - origin.x) / fitted.width
+        let y = (location.y - origin.y) / fitted.height
+        guard (0 ... 1).contains(x), (0 ... 1).contains(y) else { return nil }
+        return CGPoint(x: x, y: y)
     }
 
     private func fitted(_ image: NSImage) -> some View {
@@ -67,8 +77,6 @@ struct PhotoComparisonView: View {
             .resizable()
             .scaledToFit()
             .padding(28)
-            .scaleEffect(zoomScale)
-            .offset(panOffset)
     }
 
     private func split(original: NSImage, edited: NSImage) -> some View {

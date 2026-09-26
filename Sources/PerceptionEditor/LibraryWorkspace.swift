@@ -222,6 +222,17 @@ struct LibraryWorkspace: View {
                     Button(label.title) { store.setLabel(label, for: ids) }
                 }
             }
+            Menu("Apply Preset") {
+                ForEach(store.presetCategories, id: \.self) { category in
+                    Menu(category) {
+                        ForEach(store.presets(in: category)) { preset in
+                            Button(preset.name) { store.apply(preset, to: ids) }
+                        }
+                    }
+                }
+            }
+            Button("Paste Settings") { store.pasteSettings(to: ids) }
+                .disabled(store.copiedSettings == nil)
             Divider()
         }
         Button("Relink Media…") { store.relink(asset) }

@@ -265,6 +265,15 @@ struct CullWorkspace: View {
             .help("Move rejected originals to the Trash")
 
             Button {
+                store.toggleZoom100()
+            } label: {
+                Label("100%", systemImage: "plus.magnifyingglass")
+            }
+            .tint(store.isZoom100 ? .orange : nil)
+            .disabled(asset == nil || store.compareAssetID != nil)
+            .help("Check focus at 100% (Z). Uses the full RAW decode, so the first view takes about a second.")
+
+            Button {
                 store.perform(.toggleFullScreen)
             } label: {
                 Image(systemName: "arrow.up.left.and.arrow.down.right")
@@ -321,6 +330,8 @@ private struct CullPane: View {
                     description: Text("\(asset.filename) is not at its saved location. Use Relink from the Library.")
                 )
                 .foregroundStyle(.white, .white.opacity(0.62))
+            } else if title == nil, store.isZoom100 {
+                FocusLoupeView()
             } else if let image {
                 Image(nsImage: image)
                     .resizable()

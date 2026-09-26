@@ -44,10 +44,23 @@ struct PerceptionEditorApp: App {
                 // the key alone while a text field is being edited.
                 Button("Toggle Before/After  \\") { store.toggleBeforeAfter() }
                     .disabled(store.workspace != .photo || store.selectedAsset == nil)
+                Button("Zoom to 100%  Z") { store.toggleZoom100() }
+                    .disabled(store.selectedAsset == nil || (store.workspace != .photo && store.workspace != .cull))
                 Button("Show Original") { store.setShowingOriginal(true) }
                 Button("Show Edited") { store.setShowingOriginal(false) }
                 Divider()
                 Button("Reset Adjustments") { store.resetAdjustments() }
+                Divider()
+                Button("Save Preset…") { store.isShowingSavePresetSheet = true }
+                    .disabled(store.selectedAsset == nil)
+                Button("Copy Settings…") { store.copySheetMode = .copy }
+                    .keyboardShortcut("c", modifiers: [.command, .shift])
+                    .disabled(store.selectedAsset?.kind != .photo)
+                Button("Paste Settings") { store.pasteSettings() }
+                    .keyboardShortcut("v", modifiers: [.command, .shift])
+                    .disabled(!store.canPasteSettings)
+                Button("Sync Settings…") { store.copySheetMode = .sync }
+                    .disabled(store.selectedAssetIDs.count < 2 || store.selectedAsset?.kind != .photo)
             }
 
             CommandMenu("Cull") {

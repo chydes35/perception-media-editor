@@ -62,6 +62,8 @@ enum CullCommand: Equatable, Sendable {
     case toggleCompare
     case toggleFullScreen
     case openInDevelop
+    case toggleZoom
+    case exitZoom
 }
 
 /// Lightroom's culling keys: P/X/U flag, 0–5 stars, 6–9 color labels, arrows navigate.
@@ -83,6 +85,8 @@ enum CullKeyMap {
         case "c": return .toggleCompare
         case "f": return .toggleFullScreen
         case "d", "\r": return .openInDevelop
+        case "z": return .toggleZoom
+        case "\u{1B}": return .exitZoom
         default:
             if characters.count == 1, let digit = Int(characters), (0 ... 5).contains(digit) {
                 return .rating(digit)

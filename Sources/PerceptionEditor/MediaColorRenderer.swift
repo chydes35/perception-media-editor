@@ -10,7 +10,8 @@ enum MediaColorRenderer {
         includesGeometry: Bool
     ) -> CIImage {
         let sourceExtent = source.extent
-        var image = includesGeometry ? orient(source, adjustments) : source
+        let repaired = includesGeometry ? RetouchRenderer.apply(source, strokes: adjustments.retouches) : source
+        var image = includesGeometry ? orient(repaired, adjustments) : repaired
 
         let exposure = CIFilter.exposureAdjust()
         exposure.inputImage = image

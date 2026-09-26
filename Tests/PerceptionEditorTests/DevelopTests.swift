@@ -54,7 +54,7 @@ struct RawSettingsTests {
         let decoded = try document.project(from: document.data(for: project))
 
         #expect(decoded.adjustmentsByAssetID[asset.id] == adjustments)
-        #expect(decoded.schemaVersion == 6)
+        #expect(decoded.schemaVersion == EditorProject.currentSchemaVersion)
     }
 
     @Test func aLookCarriesDetailButLeavesWhiteBalanceToEachPhoto() {

@@ -24,6 +24,8 @@ final class EditorStore: ObservableObject {
     @Published var previewMode: PreviewMode = .edited
     @Published var histogram = HistogramData.empty
     @Published var userPresets: [PhotoPreset] = []
+    @Published var selectedAgentKind: AgentKind = .projectHealth
+    @Published var latestAgentReport: AgentReport?
     @Published var statusMessage = "Ready"
     @Published var lastError: String?
 
@@ -236,6 +238,50 @@ final class EditorStore: ObservableObject {
     func resetAdjustments() {
         selectedAdjustments = .neutral
         statusMessage = "Adjustments reset"
+    }
+
+    func runSelectedAgent() {
+        runAgent(selectedAgentKind)
+    }
+
+    func runAgent(_ kind: AgentKind) {
+        selectedAgentKind = kind
+        statusMessage = "Running \(kind.rawValue)…"
+        latestAgentReport = AgentEngine.run(
+            kind,
+            project: project,
+            selectedAssetID: selectedAssetID
+        )
+        statusMessage = "Completed \(kind.rawValue)"
+    }
+
+    func applyLatestAgentChanges() {
+        guard let report = latestAgentReport, !report.proposedChanges.isEmpty else { return }
+
+        var applied = 0
+        for change in report.proposedChanges where change.kind == .copyPhotoAdjustments {
+            guard let sourceAssetID = change.sourceAssetID,
+                  let targetAssetID = change.targetAssetID,
+                  let sourceAdjustments = project.adjustmentsByAssetID[sourceAssetID]
+            else { continue }
+
+            project.adjustmentsByAssetID[targetAssetID] = sourceAdjustments
+            thumbnailCache.invalidate(assetID: targetAssetID)
+            applied += 1
+        }
+
+        latestAgentReport = AgentReport(
+            id: report.id,
+            kind: report.kind,
+            startedAt: report.startedAt,
+            finishedAt: .now,
+            summary: "Applied \(applied) proposed project change\(applied == 1 ? "" : "s").",
+            findings: report.findings,
+            proposedChanges: [],
+            limitation: report.limitation
+        )
+        refreshPreview()
+        statusMessage = "Applied \(applied) agent change\(applied == 1 ? "" : "s")"
     }
 
     func updateSelectedVideoAdjustments(_ update: (inout PhotoAdjustments) -> Void) {

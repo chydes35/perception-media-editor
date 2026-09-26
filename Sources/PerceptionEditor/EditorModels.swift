@@ -5,6 +5,7 @@ enum Workspace: String, CaseIterable, Identifiable {
     case photo = "Photo"
     case video = "Video"
     case export = "Export"
+    case agents = "Agents"
 
     var id: String { rawValue }
 }

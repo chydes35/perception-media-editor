@@ -25,6 +25,8 @@ This repository currently contains **V0.3: Video Editor Foundation (in progress)
 - Skip missing or incompatible media with visible playback warnings
 - Apply the same non-destructive color model and Perception presets to individual timeline clips
 - View cached audio waveforms and set non-destructive per-clip volume, fade-in, and fade-out automation
+- Run local-first workflow agents for culling, look matching, batch editing, photo/video quality, delivery, metadata, relinking, and project health
+- Run deterministic developer reviewers from `scripts/agent-review.sh`
 
 ## Run for development
 

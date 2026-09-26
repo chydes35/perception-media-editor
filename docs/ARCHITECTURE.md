@@ -22,6 +22,8 @@ Original media is never modified. A `.pmedit` project stores references to the o
 - `AudioWaveformService.swift`: asynchronous PCM peak extraction with stable memory and Application Support disk caches.
 - `TimelineCompositionService.swift`: translates persistent V1/A1 clip metadata into a playable AVMutableComposition and reports recoverable media warnings.
 - `VideoWorkspace.swift`: source viewer, media bin, inspector, and persistent V1/A1 timeline controls.
+- `AgentModels.swift`, `AgentEngine.swift`, and `AgentWorkspace.swift`: local-first workflow agents with reviewable findings and reversible adjustment proposals.
+- `scripts/agent-review.sh`: deterministic developer reviewers for workflow, renderer, schema, compatibility, and release checks.
 
 ## Project format
 

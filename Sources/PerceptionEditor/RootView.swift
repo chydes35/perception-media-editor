@@ -80,6 +80,8 @@ struct RootView: View {
             VideoWorkspace()
         case .export:
             ExportWorkspace()
+        case .agents:
+            AgentWorkspace()
         }
     }
 

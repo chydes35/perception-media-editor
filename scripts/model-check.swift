@@ -62,6 +62,16 @@ struct ModelCheck {
             decoded.audioAdjustmentsByClipID[timelineClip.id] == audioAdjustments,
             "Audio adjustments did not round-trip"
         )
+
+        let agentReport = AgentEngine.run(
+            .photoCulling,
+            project: project,
+            selectedAssetID: assetID
+        )
+        try require(agentReport.kind == .photoCulling, "Photo culling agent returned the wrong report kind")
+        let encodedAgentReport = try JSONEncoder().encode(agentReport)
+        let decodedAgentReport = try JSONDecoder().decode(AgentReport.self, from: encodedAgentReport)
+        try require(decodedAgentReport == agentReport, "Agent report did not round-trip")
         try require(
             decoded.schemaVersion == EditorProject.currentSchemaVersion,
             "Project was not saved with the current schema"

@@ -18,6 +18,8 @@ swiftc \
     -parse-as-library \
     "$ROOT_DIR/Sources/PerceptionEditor/EditorModels.swift" \
     "$ROOT_DIR/Sources/PerceptionEditor/ProjectDocument.swift" \
+    "$ROOT_DIR/Sources/PerceptionEditor/AgentModels.swift" \
+    "$ROOT_DIR/Sources/PerceptionEditor/AgentEngine.swift" \
     "$ROOT_DIR/scripts/model-check.swift" \
     -o "$ROOT_DIR/.build/model-check"
 

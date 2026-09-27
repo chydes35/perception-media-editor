@@ -236,6 +236,10 @@ struct PhotoWorkspace: View {
                     MaskPanel()
                 }
 
+                adjustmentGroup("HEAL & CLONE") {
+                    RetouchPanel()
+                }
+
                 if store.selectedIsRAW {
                     adjustmentGroup("RAW DETAIL") { rawDetailControls }
                 }

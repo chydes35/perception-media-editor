@@ -196,7 +196,7 @@ extension EditorStore {
             return true
         }
 
-        if handleMaskKey(characters) { return true }
+        if handleRetouchKey(characters) || handleMaskKey(characters) { return true }
 
         guard let command = CullKeyMap.command(for: characters) else { return false }
         switch workspace {
@@ -236,7 +236,10 @@ extension EditorStore {
 
     func workspaceDidChange() {
         if isZoom100, workspace != .cull, workspace != .photo { exitZoom100() }
-        if workspace != .photo { endMaskEditing() }
+        if workspace != .photo {
+            endMaskEditing()
+            endRetouchEditing()
+        }
         switch workspace {
         case .cull:
             refreshLoupe()

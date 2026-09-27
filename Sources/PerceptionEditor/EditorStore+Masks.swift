@@ -41,6 +41,7 @@ extension EditorStore {
         guard selectedAsset?.kind == .photo else { return }
         let next: MaskTool = (maskTool == tool) ? .none : tool
         if next != .none {
+            endRetouchEditing()
             exitZoom100()
             cancelCropEditing()
             previewMode = .edited
@@ -60,6 +61,7 @@ extension EditorStore {
     }
 
     func selectMask(_ id: UUID?) {
+        if id != nil { endRetouchEditing() }
         selectedMaskID = id
         if id != nil {
             // Picking a brush mask while the brush is active keeps painting on it; anything else ends the tool.

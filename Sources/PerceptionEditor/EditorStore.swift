@@ -35,6 +35,12 @@ final class EditorStore: ObservableObject {
     /// True while a mask is being dragged or painted, so its area shows without the toggle.
     @Published var isMaskInteracting = false
     @Published var maskOverlay: NSImage?
+    @Published var isAnalyzingSubjects = false
+    @Published var isPickingSubject = false
+    @Published var subjectAnalysis: SubjectAnalysis?
+    @Published var subjectSelectionOverlay: NSImage?
+    var subjectRequestID = UUID()
+    let subjectAnalyzer = SubjectAnalysisService()
     @Published var brushSize = 0.06
     @Published var brushFeather = 0.5
     @Published var brushErasing = false
@@ -279,6 +285,7 @@ final class EditorStore: ObservableObject {
             endMaskEditing()
             endRetouchEditing()
             cancelWhiteBalancePicking()
+            cancelSubjectSelection()
         }
         selectedAssetID = asset.id
         selectedAssetIDs = [asset.id]
@@ -580,6 +587,7 @@ final class EditorStore: ObservableObject {
         endMaskEditing()
         endRetouchEditing()
         cancelWhiteBalancePicking()
+        cancelSubjectSelection()
         exitZoom100()
         beginAdjustmentEdit()
         isEditingCrop = true
@@ -844,6 +852,7 @@ final class EditorStore: ObservableObject {
         endMaskEditing()
         endRetouchEditing()
         cancelWhiteBalancePicking()
+        cancelSubjectSelection()
         needsAnotherPreviewRender = false
         originalPreviewAssetID = nil
         isEditingCrop = false

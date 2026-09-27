@@ -262,6 +262,12 @@ actor PhotoRenderer {
         return bitmap(tinted, maxDimension: Self.previewDimension)
     }
 
+    func subjectSelectionOverlay(url: URL, png: Data, adjustments: PhotoAdjustments) -> RenderedImage? {
+        guard let source = workingSource(for: url, raw: adjustments.raw) else { return nil }
+        let mask = LocalMask(shape: .subject(SubjectMask(png: png)))
+        return maskOverlay(for: mask, source: source, adjustments: adjustments)
+    }
+
     /// The photo as the RAW engine renders it with no edits, for before/after.
     func original(url: URL) -> RenderedImage? {
         guard let source = workingSource(for: url, raw: RawSettings()) else { return nil }
@@ -281,6 +287,7 @@ actor PhotoRenderer {
     func whiteBalance(at source: NormalizedPoint, url: URL) -> WhiteBalanceReading? {
         WhiteBalanceEyedropper.sampleRaw(at: source, url: url)
     }
+
 
     /// Thumbnails decode at thumbnail size and are never kept in the working cache.
     func thumbnail(url: URL, adjustments: PhotoAdjustments) -> RenderedImage? {

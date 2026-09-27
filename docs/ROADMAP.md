@@ -52,7 +52,9 @@ The goal is a full Lightroom replacement for a single photographer's workflow. P
 - [x] Masks stay on the same part of the picture through rotation, straighten, and crop
 - [x] Red mask overlay (O), shown automatically while dragging or painting
 - [x] Gradient masks sync, copy, and save into presets; brush strokes stay with their photo
-- [ ] Subject and sky selection (Vision)
+- [x] First subject-selection pass: Vision person and foreground instances, click or list selection, soft saved mask, brush correction, and local adjustments
+- [ ] Subject-selection quality pass: candidate previews, edge controls, and validation across hair, translucent details, groups, and mixed RAW cameras
+- [ ] Sky selection (Vision)
 - [ ] Color and luminance range masks
 - [x] Spot healing and clone: paint soft repairs, adjust source points, and retain edits through crop, rotation, save, and export
 
@@ -114,7 +116,6 @@ Video (V0.3 below) resumes after the photo phases. Lumix S5 10-bit 4:2:2 and V-L
 
 ## Later
 
-- Subject masking with Vision
 - Keyframes and tracking
 - Multicam synchronization and angle editor
 - Optical-flow speed changes

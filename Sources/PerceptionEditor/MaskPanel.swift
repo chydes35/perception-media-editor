@@ -37,6 +37,42 @@ struct MaskPanel: View {
                 toolButton(.radial, "Radial", "circle.dashed", "Drag from the center outward")
                 toolButton(.brush, "Brush", "paintbrush.pointed", "Paint the area to adjust. Hold ⌥ to erase, and use [ and ] to resize.")
             }
+            HStack(spacing: 6) {
+                Button {
+                    store.startSubjectSelection()
+                } label: {
+                    Label("Select Subject", systemImage: "person.crop.rectangle.stack")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(store.isAnalyzingSubjects || store.isEditingCrop)
+                .help("Detect foreground subjects and select one for local adjustments")
+                if store.isAnalyzingSubjects { ProgressView().controlSize(.small) }
+                if store.isPickingSubject {
+                    Button("Cancel") { store.cancelSubjectSelection() }
+                        .buttonStyle(.bordered)
+                }
+            }
+            if let analysis = store.subjectAnalysis, analysis.candidates.count > 1 {
+                HStack {
+                    Text("\(analysis.candidates.count) subjects found")
+                        .font(.caption2).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Done selecting") { store.cancelSubjectSelection() }
+                        .buttonStyle(.borderless).font(.caption2)
+                }
+                if store.isPickingSubject {
+                    Text("Click a subject in the photo, or add one below.")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Button("Add all subjects") { store.selectAllSubjects() }
+                    ForEach(analysis.candidates) { candidate in
+                        Button("Add \(candidate.name)") { store.selectSubjectCandidate(candidate.id) }
+                    }
+                }
+                .buttonStyle(.bordered)
+            }
             if store.maskTool != .none || store.selectedMask != nil {
                 HStack {
                     Toggle("Show mask", isOn: Binding(
@@ -144,6 +180,7 @@ struct MaskPanel: View {
         case .linear: "rectangle.tophalf.inset.filled"
         case .radial: "circle.dashed"
         case .brush: "paintbrush.pointed"
+        case .subject: "person.crop.rectangle"
         }
     }
 

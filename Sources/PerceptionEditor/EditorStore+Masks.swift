@@ -42,6 +42,7 @@ extension EditorStore {
         let next: MaskTool = (maskTool == tool) ? .none : tool
         if next != .none {
             cancelWhiteBalancePicking()
+            cancelSubjectSelection()
             endRetouchEditing()
             exitZoom100()
             cancelCropEditing()
@@ -62,6 +63,7 @@ extension EditorStore {
     }
 
     func selectMask(_ id: UUID?) {
+        if id != nil { cancelSubjectSelection() }
         if id != nil { endRetouchEditing() }
         selectedMaskID = id
         if id != nil {
@@ -203,11 +205,16 @@ extension EditorStore {
         nextHistoryLabel = erase ? "Erase" : "Brush"
         isMaskInteracting = true
 
-        if let mask = selectedMask, case .brush = mask.shape {
+        if let mask = selectedMask, !mask.shape.isGradient {
             updateMask(mask.id) { mask in
-                if case .brush(var strokes) = mask.shape {
+                switch mask.shape {
+                case .brush(var strokes):
                     strokes.append(stroke)
                     mask.shape = .brush(strokes: strokes)
+                case .subject(var subject):
+                    subject.strokes.append(stroke)
+                    mask.shape = .subject(subject)
+                default: break
                 }
             }
         } else if !erase {
@@ -220,7 +227,14 @@ extension EditorStore {
     }
 
     func extendBrushStroke(to point: NormalizedPoint) {
-        guard let mask = selectedMask, case .brush(let strokes) = mask.shape, let last = strokes.last?.points.last else { return }
+        guard let mask = selectedMask else { return }
+        let strokes: [BrushStroke]
+        switch mask.shape {
+        case .brush(let value): strokes = value
+        case .subject(let value): strokes = value.strokes
+        default: return
+        }
+        guard let last = strokes.last?.points.last else { return }
         // Points closer than a twentieth of the brush add nothing to the stroke.
         let spacing = (brushSize / 20)
         guard hypot(point.x - last.x, point.y - last.y) >= spacing * 0.5 else { return }
@@ -228,6 +242,9 @@ extension EditorStore {
             if case .brush(var strokes) = mask.shape, !strokes.isEmpty {
                 strokes[strokes.count - 1].points.append(point)
                 mask.shape = .brush(strokes: strokes)
+            } else if case .subject(var subject) = mask.shape, !subject.strokes.isEmpty {
+                subject.strokes[subject.strokes.count - 1].points.append(point)
+                mask.shape = .subject(subject)
             }
         }
     }

@@ -54,6 +54,14 @@ struct PhotoComparisonView: View {
             if !isCropping, mode == .edited, store.isPickingWhiteBalance, let edited {
                 WhiteBalancePickingLayer(imageSize: edited.size)
             }
+            if !isCropping, mode == .edited, store.isPickingSubject, let edited {
+                if let overlay = store.subjectSelectionOverlay {
+                    fitted(overlay)
+                        .opacity(0.5)
+                        .allowsHitTesting(false)
+                }
+                SubjectPickingLayer(imageSize: edited.size)
+            }
         }
         .clipped()
         .contentShape(Rectangle())
@@ -69,7 +77,8 @@ struct PhotoComparisonView: View {
                     }
             }
             .allowsHitTesting(!isCropping && mode == .edited && onZoomRequest != nil
-                && !store.isMaskEditing && !store.isRetouchEditing && !store.isPickingWhiteBalance)
+                && !store.isMaskEditing && !store.isRetouchEditing && !store.isPickingWhiteBalance
+                && !store.isPickingSubject && !store.isAnalyzingSubjects)
         }
         .accessibilityHint("Click the photo to view it at 100 percent.")
     }

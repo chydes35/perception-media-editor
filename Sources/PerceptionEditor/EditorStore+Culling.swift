@@ -201,6 +201,11 @@ extension EditorStore {
             statusMessage = "White balance picker canceled"
             return true
         }
+        if characters == "\u{1B}", isPickingSubject || isAnalyzingSubjects {
+            cancelSubjectSelection()
+            statusMessage = "Subject selection canceled"
+            return true
+        }
         if handleRetouchKey(characters) || handleMaskKey(characters) { return true }
 
         guard let command = CullKeyMap.command(for: characters) else { return false }
@@ -245,6 +250,7 @@ extension EditorStore {
             endMaskEditing()
             endRetouchEditing()
             cancelWhiteBalancePicking()
+            cancelSubjectSelection()
         }
         switch workspace {
         case .cull:

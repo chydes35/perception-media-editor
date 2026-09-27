@@ -59,6 +59,7 @@ extension EditorStore {
         }
         endMaskEditing()
         endRetouchEditing()
+        cancelSubjectSelection()
         exitZoom100()
         previewMode = .edited
         isPickingWhiteBalance = true

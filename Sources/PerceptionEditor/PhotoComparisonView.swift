@@ -51,6 +51,9 @@ struct PhotoComparisonView: View {
             if !isCropping, mode == .edited, store.isRetouchEditing, let edited {
                 RetouchEditingLayer(imageSize: edited.size)
             }
+            if !isCropping, mode == .edited, store.isPickingWhiteBalance, let edited {
+                WhiteBalancePickingLayer(imageSize: edited.size)
+            }
         }
         .clipped()
         .contentShape(Rectangle())
@@ -65,7 +68,8 @@ struct PhotoComparisonView: View {
                         onZoomRequest?(point)
                     }
             }
-            .allowsHitTesting(!isCropping && mode == .edited && onZoomRequest != nil && !store.isMaskEditing && !store.isRetouchEditing)
+            .allowsHitTesting(!isCropping && mode == .edited && onZoomRequest != nil
+                && !store.isMaskEditing && !store.isRetouchEditing && !store.isPickingWhiteBalance)
         }
         .accessibilityHint("Click the photo to view it at 100 percent.")
     }

@@ -277,6 +277,11 @@ actor PhotoRenderer {
         return info
     }
 
+    /// Uses the RAW decoder's native neutral-point calculation away from the UI thread.
+    func whiteBalance(at source: NormalizedPoint, url: URL) -> WhiteBalanceReading? {
+        WhiteBalanceEyedropper.sampleRaw(at: source, url: url)
+    }
+
     /// Thumbnails decode at thumbnail size and are never kept in the working cache.
     func thumbnail(url: URL, adjustments: PhotoAdjustments) -> RenderedImage? {
         guard let source = PhotoSourceLoader.loadThumbnail(

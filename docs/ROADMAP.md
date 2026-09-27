@@ -40,7 +40,7 @@ The goal is a full Lightroom replacement for a single photographer's workflow. P
 - [x] Apply a preset to the whole selection as one undo step
 - [x] Copy Settings (⇧⌘C), Paste Settings (⇧⌘V), Sync Settings
 - [x] History: named steps for the current photo; click one to go back
-- [ ] White balance eyedropper (click a neutral gray)
+- [x] White balance eyedropper for RAW photos (click a neutral gray to set Kelvin and tint)
 - [ ] Auto tone and auto white balance
 - [ ] Split `EditorStore` into photo, timeline, and project parts
 

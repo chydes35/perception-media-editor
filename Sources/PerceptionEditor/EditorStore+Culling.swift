@@ -196,6 +196,11 @@ extension EditorStore {
             return true
         }
 
+        if characters == "\u{1B}", isPickingWhiteBalance || isSamplingWhiteBalance {
+            cancelWhiteBalancePicking()
+            statusMessage = "White balance picker canceled"
+            return true
+        }
         if handleRetouchKey(characters) || handleMaskKey(characters) { return true }
 
         guard let command = CullKeyMap.command(for: characters) else { return false }
@@ -239,6 +244,7 @@ extension EditorStore {
         if workspace != .photo {
             endMaskEditing()
             endRetouchEditing()
+            cancelWhiteBalancePicking()
         }
         switch workspace {
         case .cull:

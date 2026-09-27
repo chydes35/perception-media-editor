@@ -41,6 +41,7 @@ extension EditorStore {
         guard selectedAsset?.kind == .photo else { return }
         let next: MaskTool = (maskTool == tool) ? .none : tool
         if next != .none {
+            cancelWhiteBalancePicking()
             endRetouchEditing()
             exitZoom100()
             cancelCropEditing()

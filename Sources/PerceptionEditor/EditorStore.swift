@@ -25,6 +25,9 @@ final class EditorStore: ObservableObject {
     @Published var ingest = IngestState.idle
     /// RAW engine defaults for the selected photo; nil when it is not a RAW file.
     @Published var rawInfo: RawInfo?
+    @Published var isPickingWhiteBalance = false
+    @Published var isSamplingWhiteBalance = false
+    var whiteBalanceRequestID = UUID()
     @Published var isRenderingPreview = false
     @Published var maskTool: MaskTool = .none
     @Published var selectedMaskID: UUID?
@@ -275,6 +278,7 @@ final class EditorStore: ObservableObject {
         if selectedAssetID != asset.id {
             endMaskEditing()
             endRetouchEditing()
+            cancelWhiteBalancePicking()
         }
         selectedAssetID = asset.id
         selectedAssetIDs = [asset.id]
@@ -575,6 +579,7 @@ final class EditorStore: ObservableObject {
         guard selectedAsset != nil, !isEditingCrop else { return }
         endMaskEditing()
         endRetouchEditing()
+        cancelWhiteBalancePicking()
         exitZoom100()
         beginAdjustmentEdit()
         isEditingCrop = true
@@ -838,6 +843,7 @@ final class EditorStore: ObservableObject {
     private func resetPhotoRenderState() {
         endMaskEditing()
         endRetouchEditing()
+        cancelWhiteBalancePicking()
         needsAnotherPreviewRender = false
         originalPreviewAssetID = nil
         isEditingCrop = false

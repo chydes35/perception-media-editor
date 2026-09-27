@@ -360,7 +360,18 @@ struct PhotoWorkspace: View {
 
                 Spacer()
 
-                if store.isRenderingPreview {
+                Button {
+                    store.toggleWhiteBalancePicker()
+                } label: {
+                    Label(store.isPickingWhiteBalance ? "Cancel" : "Pick neutral", systemImage: "eyedropper")
+                }
+                .buttonStyle(.bordered)
+                .tint(store.isPickingWhiteBalance ? .orange : .accentColor)
+                .font(.caption)
+                .disabled(store.isSamplingWhiteBalance || store.isEditingCrop)
+                .help("Click a neutral gray or white area in the photo to set RAW white balance")
+
+                if store.isSamplingWhiteBalance || store.isRenderingPreview {
                     ProgressView().controlSize(.small)
                 }
                 if raw.hasWhiteBalance {
@@ -373,6 +384,12 @@ struct PhotoWorkspace: View {
                     .font(.caption2)
                     .help("Back to the camera's white balance")
                 }
+            }
+
+            if store.isPickingWhiteBalance {
+                Text("Click a neutral gray or white area in the photo. Press Esc to cancel.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
 
             VStack(spacing: 4) {
@@ -446,6 +463,7 @@ struct PhotoWorkspace: View {
                 .accessibilityLabel("White balance tint")
             }
         }
+        .disabled(store.isSamplingWhiteBalance)
     }
 
     private var rawDetailControls: some View {

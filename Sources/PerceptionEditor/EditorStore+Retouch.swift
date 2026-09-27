@@ -14,6 +14,7 @@ extension EditorStore {
         guard selectedAsset?.kind == .photo else { return }
         let next = retouchTool == tool ? nil : tool
         if next != nil {
+            cancelWhiteBalancePicking()
             endMaskEditing()
             exitZoom100()
             cancelCropEditing()

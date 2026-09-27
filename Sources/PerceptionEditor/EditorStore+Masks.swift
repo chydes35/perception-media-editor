@@ -106,6 +106,24 @@ extension EditorStore {
         brushSize = min(0.5, max(0.005, brushSize * factor))
     }
 
+    /// Makes the add/remove correction mode explicit for a selected Vision subject mask.
+    func beginSubjectRefinement(erasing: Bool) {
+        guard let mask = selectedMask, case .subject = mask.shape else { return }
+        cancelSubjectSelection()
+        cancelWhiteBalancePicking()
+        endRetouchEditing()
+        cancelCropEditing()
+        exitZoom100()
+        previewMode = .edited
+        brushErasing = erasing
+        maskTool = .brush
+        showMaskOverlay = true
+        refreshPreview()
+        statusMessage = erasing
+            ? "Paint over the unwanted area to remove it from the subject"
+            : "Paint over missing areas to add them to the subject"
+    }
+
     // MARK: - Changing masks
 
     /// Adds a mask and selects it. Callers that drag it afterwards wrap the drag in

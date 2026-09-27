@@ -66,3 +66,41 @@ struct SubjectSelectionTests {
         #expect(weight(restored, 0.36, 0.52) > 150)
     }
 }
+
+@MainActor
+struct SubjectRefinementTests {
+    @Test func addAndRemoveModesPaintOnTheSelectedSubject() throws {
+        let defaults = UserDefaults(suiteName: "pme-subject-refine-\(UUID())")!
+        let store = EditorStore(presetRepository: UserPresetRepository(defaults: defaults))
+        let asset = MediaAsset(
+            url: URL(fileURLWithPath: "/tmp/refine-subject.jpg"),
+            pixelWidth: 600, pixelHeight: 400
+        )
+        store.project.media = [asset]
+        store.select(asset)
+        store.workspace = .photo
+        _ = store.addMask(.subject(SubjectMask(png: Data([1, 2, 3]))))
+
+        store.beginSubjectRefinement(erasing: true)
+        #expect(store.maskTool == .brush && store.brushErasing && store.showMaskOverlay)
+        store.beginBrushStroke(at: NormalizedPoint(x: 0.3, y: 0.4), erasing: false)
+        store.endBrushStroke()
+        let erased = try #require(store.selectedMask)
+        guard case .subject(let afterErase) = erased.shape else {
+            Issue.record("The correction should preserve the subject mask")
+            return
+        }
+        #expect(afterErase.strokes.last?.isErase == true)
+
+        store.beginSubjectRefinement(erasing: false)
+        store.beginBrushStroke(at: NormalizedPoint(x: 0.6, y: 0.7), erasing: false)
+        store.endBrushStroke()
+        let added = try #require(store.selectedMask)
+        guard case .subject(let afterAdd) = added.shape else {
+            Issue.record("The correction should preserve the subject mask")
+            return
+        }
+        #expect(afterAdd.strokes.count == 2)
+        #expect(afterAdd.strokes.last?.isErase == false)
+    }
+}

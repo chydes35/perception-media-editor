@@ -205,6 +205,35 @@ struct MaskPanel: View {
 
             maskSlider("Amount", mask, range: 0 ... 100, format: "%.0f") { $0.amount * 100 } set: { $0.amount = $1 / 100 }
 
+            if case .subject = mask.shape {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("REFINE SUBJECT")
+                        .font(.system(size: 9, weight: .bold))
+                        .tracking(0.8)
+                        .foregroundStyle(.secondary)
+                    HStack(spacing: 6) {
+                        Button {
+                            store.beginSubjectRefinement(erasing: false)
+                        } label: {
+                            Label("Add to subject", systemImage: "plus.circle")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .tint(store.maskTool == .brush && !store.brushErasing ? .orange : .accentColor)
+                        Button {
+                            store.beginSubjectRefinement(erasing: true)
+                        } label: {
+                            Label("Remove spill", systemImage: "minus.circle")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .tint(store.maskTool == .brush && store.brushErasing ? .orange : .accentColor)
+                    }
+                    .buttonStyle(.bordered)
+                    Text("Paint over areas to add or remove them. Adjust Size and Feather above; press Esc when done.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
             if case .radial(let center, let rx, let ry, let rotation, let feather) = mask.shape {
                 slider("Feather", value: Binding(
                     get: { feather * 100 },

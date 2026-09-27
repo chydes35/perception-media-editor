@@ -61,7 +61,7 @@ struct MaskEditingLayer: View {
     // MARK: Space conversion
 
     /// Where the fitted picture sits inside the view (matches the padded fit of the preview).
-    static func fittedFrame(in view: CGSize, image: CGSize, padding: CGFloat = 28) -> CGRect {
+    nonisolated static func fittedFrame(in view: CGSize, image: CGSize, padding: CGFloat = 28) -> CGRect {
         let available = CGSize(width: view.width - padding * 2, height: view.height - padding * 2)
         guard available.width > 0, available.height > 0, image.width > 0, image.height > 0 else { return .zero }
         let scale = min(available.width / image.width, available.height / image.height)

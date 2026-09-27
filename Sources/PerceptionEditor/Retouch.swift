@@ -63,11 +63,16 @@ struct RetouchStroke: Identifiable, Codable, Equatable, Sendable {
 /// Applies repairs before the photo's geometry and global adjustments. All images stay lazy
 /// Core Image graphs; no full-resolution pixel buffer is copied to the CPU.
 enum RetouchRenderer {
-    private static let matchKernel = CIColorKernel(source: """
-        kernel vec4 matchColor(__sample detail, __sample sourceLow, __sample targetLow) {
-            return vec4(detail.rgb + targetLow.rgb - sourceLow.rgb, detail.a);
-        }
-        """)
+    /// A compiled color kernel is immutable and Core Image can use it from concurrent render
+    /// queues. The wrapper states that guarantee explicitly for Swift 6's strict concurrency.
+    private final class ColorMatchKernel: @unchecked Sendable {
+        let value = CIColorKernel(source: """
+            kernel vec4 matchColor(__sample detail, __sample sourceLow, __sample targetLow) {
+                return vec4(detail.rgb + targetLow.rgb - sourceLow.rgb, detail.a);
+            }
+            """)
+    }
+    private static let colorMatchKernel = ColorMatchKernel()
 
     static func apply(_ source: CIImage, strokes: [RetouchStroke]) -> CIImage {
         let extent = source.extent
@@ -81,7 +86,7 @@ enum RetouchRenderer {
             let dx = target.x - sample.x, dy = target.y - sample.y
             let sourcePatch = image.clampedToExtent().transformed(by: CGAffineTransform(translationX: dx, y: dy))
             let patch: CIImage
-            if stroke.kind == .heal, let matchKernel {
+            if stroke.kind == .heal, let matchKernel = colorMatchKernel.value {
                 let radius = max(2, stroke.size * max(extent.width, extent.height) * 1.2)
                 let sourceLow = sourcePatch.applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: radius])
                 let targetLow = image.clampedToExtent().applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: radius])
@@ -129,8 +134,9 @@ enum RetouchRenderer {
         let height = max(1, Int((footprint.height * scale).rounded(.up)))
         let localPoints = stroke.points.map { point -> NormalizedPoint in
             let p = pixel(point, extent: extent)
-            return NormalizedPoint(x: (p.x - footprint.minX) / footprint.width,
-                                   y: 1 - (p.y - footprint.minY) / footprint.height)
+            let x = Double((p.x - footprint.minX) / footprint.width)
+            let y = Double((p.y - footprint.minY) / footprint.height)
+            return NormalizedPoint(x: x, y: 1.0 - y)
         }
         let diameter = stroke.size * long / max(footprint.width, footprint.height)
         let brush = BrushStroke(points: localPoints, size: diameter, feather: stroke.feather)

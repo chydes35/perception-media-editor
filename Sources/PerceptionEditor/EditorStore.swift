@@ -39,7 +39,13 @@ final class EditorStore: ObservableObject {
     @Published var isPickingSubject = false
     @Published var subjectAnalysis: SubjectAnalysis?
     @Published var subjectSelectionOverlay: NSImage?
+    @Published var highlightedSubjectID: Int?
     var subjectRequestID = UUID()
+    var subjectOverlayRequestID = UUID()
+    var subjectOverlayTask: Task<Void, Never>?
+    /// Zero is the all-subject overview. At most four preview-sized overlays are retained.
+    var subjectOverlayCache: [(id: Int, image: NSImage)] = []
+    var subjectOverlayAdjustments: PhotoAdjustments?
     let subjectAnalyzer = SubjectAnalysisService()
     @Published var brushSize = 0.06
     @Published var brushFeather = 0.5
@@ -492,6 +498,7 @@ final class EditorStore: ObservableObject {
     /// render is in flight, further requests collapse into one follow-up render with the
     /// latest adjustments, so slider drags never queue up stale work.
     func refreshPreview() {
+        if isPickingSubject { previewSubjectCandidate(highlightedSubjectID) }
         if isZoom100 { refreshFocus() }
         // Develop-quality renders (a full RAW decode) only run where they are shown.
         guard workspace == .photo || workspace == .export else { return }

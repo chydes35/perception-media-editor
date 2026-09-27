@@ -28,13 +28,20 @@ struct SubjectPickingLayer: View {
                     }
                     .onContinuousHover { phase in
                         switch phase {
-                        case .active(let location): hover = location
-                        case .ended: hover = nil
+                        case .active(let location):
+                            hover = location
+                            let point = PhotoComparisonView.normalizedPoint(
+                                location, in: view.size, image: imageSize
+                            )
+                            store.previewSubject(at: point.map { NormalizedPoint($0) })
+                        case .ended:
+                            hover = nil
+                            store.previewSubject(at: nil)
                         }
                     }
             }
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Subject picker. Click the subject to select it.")
+        .accessibilityLabel("Subject picker. Hover to preview a subject, then click to select it.")
     }
 }

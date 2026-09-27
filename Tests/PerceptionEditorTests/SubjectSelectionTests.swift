@@ -10,7 +10,7 @@ struct SubjectSelectionTests {
             strokes: [BrushStroke(
                 points: [NormalizedPoint(x: 0.2, y: 0.3)],
                 size: 0.04, feather: 0.5, isErase: true
-            )]
+            )], edgeShift: -0.002, edgeFeather: 0.001, edgeContrast: 0.4
         )
         let asset = MediaAsset(url: URL(fileURLWithPath: "/tmp/subject.jpg"))
         var project = EditorProject.starter
@@ -20,7 +20,7 @@ struct SubjectSelectionTests {
         project.adjustmentsByAssetID[asset.id] = adjustments
 
         let decoded = try ProjectDocument().project(from: ProjectDocument().data(for: project))
-        #expect(decoded.schemaVersion == 8)
+        #expect(decoded.schemaVersion == 9)
         #expect(decoded.adjustmentsByAssetID[asset.id]?.masks == adjustments.masks)
     }
 

@@ -61,6 +61,17 @@ struct PhotoComparisonView: View {
                         .allowsHitTesting(false)
                 }
                 SubjectPickingLayer(imageSize: edited.size)
+                if let id = store.highlightedSubjectID,
+                   let candidate = store.subjectAnalysis?.candidates.first(where: { $0.id == id }) {
+                    Text(candidate.name)
+                        .font(.caption.weight(.semibold))
+                        .padding(8)
+                        .background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 6))
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        .padding(16)
+                        .allowsHitTesting(false)
+                }
             }
         }
         .clipped()

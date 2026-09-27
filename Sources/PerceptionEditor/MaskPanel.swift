@@ -62,13 +62,17 @@ struct MaskPanel: View {
                         .buttonStyle(.borderless).font(.caption2)
                 }
                 if store.isPickingSubject {
-                    Text("Click a subject in the photo, or add one below.")
+                    Text("Hover over the photo or a name to preview. Click to select.")
                         .font(.caption2).foregroundStyle(.secondary)
                 }
                 VStack(alignment: .leading, spacing: 4) {
                     Button("Add all subjects") { store.selectAllSubjects() }
+                        .onHover { if $0 { store.previewSubjectCandidate(nil) } }
                     ForEach(analysis.candidates) { candidate in
                         Button("Add \(candidate.name)") { store.selectSubjectCandidate(candidate.id) }
+                            .tint(store.highlightedSubjectID == candidate.id ? .orange : .accentColor)
+                            .onHover { store.previewSubjectCandidate($0 ? candidate.id : nil) }
+                            .help("Preview \(candidate.name) in the photo before selecting it")
                     }
                 }
                 .buttonStyle(.bordered)
@@ -205,12 +209,33 @@ struct MaskPanel: View {
 
             maskSlider("Amount", mask, range: 0 ... 100, format: "%.0f") { $0.amount * 100 } set: { $0.amount = $1 / 100 }
 
-            if case .subject = mask.shape {
+            if case .subject(let subject) = mask.shape {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("REFINE SUBJECT")
-                        .font(.system(size: 9, weight: .bold))
-                        .tracking(0.8)
-                        .foregroundStyle(.secondary)
+                    HStack {
+                        Text("REFINE SUBJECT")
+                            .font(.system(size: 9, weight: .bold))
+                            .tracking(0.8)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Reset edges") {
+                            store.nextHistoryLabel = "Reset subject edges"
+                            store.updateMask(mask.id) {
+                                guard case .subject(var value) = $0.shape else { return }
+                                value.edgeShift = 0
+                                value.edgeFeather = 0
+                                value.edgeContrast = 0
+                                $0.shape = .subject(value)
+                            }
+                        }
+                        .buttonStyle(.borderless).font(.caption2)
+                        .disabled(subject.edgeShift == 0 && subject.edgeFeather == 0 && subject.edgeContrast == 0)
+                    }
+                    subjectEdgeSlider("Edge shift", mask, -0.5 ... 0.5, \.edgeShift, format: "%.2f%%")
+                        .help("Negative values pull the edge inward; positive values expand it. Percentage of the photo's longer side.")
+                    subjectEdgeSlider("Edge feather", mask, 0 ... 0.5, \.edgeFeather, format: "%.2f%%")
+                        .help("Soften the selection boundary. Keep low to preserve fine hair and translucent fabric.")
+                    subjectEdgeSlider("Edge contrast", mask, 0 ... 100, \.edgeContrast, format: "%.0f")
+                        .help("Make soft selection edges firmer. Higher values may remove translucent detail.")
                     HStack(spacing: 6) {
                         Button {
                             store.beginSubjectRefinement(erasing: false)
@@ -269,6 +294,20 @@ struct MaskPanel: View {
         _ label: String, _ mask: LocalMask, _ range: ClosedRange<Double>, _ keyPath: WritableKeyPath<MaskAdjustments, Double>
     ) -> some View {
         maskSlider(label, mask, range: range, format: "%.2f") { $0.adjustments[keyPath: keyPath] } set: { $0.adjustments[keyPath: keyPath] = $1 }
+    }
+
+    private func subjectEdgeSlider(
+        _ label: String, _ mask: LocalMask, _ range: ClosedRange<Double>,
+        _ keyPath: WritableKeyPath<SubjectMask, Double>, format: String
+    ) -> some View {
+        maskSlider(label, mask, range: range, format: format) {
+            guard case .subject(let subject) = $0.shape else { return 0 }
+            return subject[keyPath: keyPath] * 100
+        } set: {
+            guard case .subject(var subject) = $0.shape else { return }
+            subject[keyPath: keyPath] = $1 / 100
+            $0.shape = .subject(subject)
+        }
     }
 
     /// A slider that reads and writes one value of a mask, as one undo step per drag.

@@ -119,16 +119,9 @@ enum SubjectAnalyzer {
         }
         candidates.sort { $0.pixelCount > $1.pixelCount }
         guard !candidates.isEmpty else { throw SubjectSelectionError.noSubjects }
-        let allSubjectsPNG: Data
-        if let foreground, !foreground.allInstances.isEmpty {
-            allSubjectsPNG = try encodeMask(foreground.generateScaledMaskForImage(
-                forInstances: foreground.allInstances, from: handler
-            ))
-        } else if let people {
-            allSubjectsPNG = try encodeMask(people.generateScaledMaskForImage(
-                forInstances: people.allInstances, from: handler
-            ))
-        } else { throw SubjectSelectionError.noSubjects }
+        // The overview must contain exactly the candidates offered to the user, including
+        // people missed by the foreground model, without reintroducing suppressed groups.
+        let allSubjectsPNG = try unionPNG(candidates.map(\.png))
         return SubjectAnalysis(
             candidates: candidates, allSubjectsPNG: allSubjectsPNG,
             personLabels: personLabels, foregroundLabels: foregroundLabels
@@ -182,6 +175,28 @@ enum SubjectAnalyzer {
 
     private static func encodeMask(_ buffer: CVPixelBuffer) throws -> Data {
         let image = CIImage(cvPixelBuffer: buffer, options: [.colorSpace: NSNull()])
+        return try encodeMask(image)
+    }
+
+    /// Materialize each merge so memory stays bounded to the running union and next mask.
+    static func unionPNG(_ masks: [Data]) throws -> Data {
+        guard let first = masks.first,
+              var union = CIImage(data: first, options: [.colorSpace: NSNull()])
+        else { throw SubjectSelectionError.invalidMask }
+        let context = CIContext(options: [.workingColorSpace: NSNull(), .outputColorSpace: NSNull()])
+        for png in masks.dropFirst() {
+            guard let next = CIImage(data: png, options: [.colorSpace: NSNull()]),
+                  next.extent == union.extent else { throw SubjectSelectionError.invalidMask }
+            let merged = union.applyingFilter("CIMaximumCompositing", parameters: [kCIInputBackgroundImageKey: next])
+            guard let raster = context.createCGImage(
+                merged, from: union.extent, format: .L8, colorSpace: CGColorSpaceCreateDeviceGray()
+            ) else { throw SubjectSelectionError.invalidMask }
+            union = CIImage(cgImage: raster, options: [.colorSpace: NSNull()])
+        }
+        return try encodeMask(union)
+    }
+
+    private static func encodeMask(_ image: CIImage) throws -> Data {
         let context = CIContext(options: [.workingColorSpace: NSNull(), .outputColorSpace: NSNull()])
         guard let grayscale = context.createCGImage(
             image, from: image.extent, format: .L8, colorSpace: CGColorSpaceCreateDeviceGray()

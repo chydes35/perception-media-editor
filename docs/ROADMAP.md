@@ -53,7 +53,8 @@ The goal is a full Lightroom replacement for a single photographer's workflow. P
 - [x] Red mask overlay (O), shown automatically while dragging or painting
 - [x] Gradient masks sync, copy, and save into presets; brush strokes stay with their photo
 - [x] First subject-selection pass: Vision person and foreground instances, click or list selection, soft saved mask, brush correction, and local adjustments
-- [ ] Subject-selection quality pass: candidate previews, edge controls, and validation across hair, translucent details, groups, and mixed RAW cameras
+- [x] Subject refinement controls: candidate hover previews, edge shift, feather, contrast, reset, and a consistent all-subject union
+- [ ] Subject-selection quality validation across hair, translucent details, groups, and mixed RAW cameras (two-person JPEG and synthetic soft-edge checks covered; broader real-photo fixtures still needed)
 - [ ] Sky selection (Vision)
 - [ ] Color and luminance range masks
 - [x] Spot healing and clone: paint soft repairs, adjust source points, and retain edits through crop, rotation, save, and export

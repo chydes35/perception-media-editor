@@ -46,6 +46,33 @@ struct BrushStroke: Codable, Hashable, Sendable {
 struct SubjectMask: Codable, Hashable, Sendable {
     var png: Data
     var strokes: [BrushStroke] = []
+    /// Fractions of the oriented photo's longer side; consistent at preview/export sizes.
+    var edgeShift = 0.0
+    var edgeFeather = 0.0
+    /// 0 preserves Vision's soft detail; 1 increases contrast around the 50% boundary.
+    var edgeContrast = 0.0
+
+    init(png: Data, strokes: [BrushStroke] = [], edgeShift: Double = 0,
+         edgeFeather: Double = 0, edgeContrast: Double = 0) {
+        self.png = png
+        self.strokes = strokes
+        self.edgeShift = edgeShift
+        self.edgeFeather = edgeFeather
+        self.edgeContrast = edgeContrast
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case png, strokes, edgeShift, edgeFeather, edgeContrast
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        png = try values.decode(Data.self, forKey: .png)
+        strokes = try values.decodeIfPresent([BrushStroke].self, forKey: .strokes) ?? []
+        edgeShift = try values.decodeIfPresent(Double.self, forKey: .edgeShift) ?? 0
+        edgeFeather = try values.decodeIfPresent(Double.self, forKey: .edgeFeather) ?? 0
+        edgeContrast = try values.decodeIfPresent(Double.self, forKey: .edgeContrast) ?? 0
+    }
 }
 
 enum MaskShape: Codable, Hashable, Sendable {
@@ -293,13 +320,53 @@ enum SubjectMaskRenderer {
                 baseImage: base, baseKey: subject.png
             ) ?? base
         }
-        return CIImage(cgImage: raster, options: [.colorSpace: NSNull()])
+        let raw = CIImage(cgImage: raster, options: [.colorSpace: NSNull()])
+        // Work on the bounded mask, before scaling to the photo. Edge controls therefore
+        // never allocate another full-resolution RAW bitmap. Brush corrections are included.
+        let refined = refine(raw, subject: subject)
+        return refined
             .transformed(by: CGAffineTransform(
                 scaleX: extent.width / CGFloat(raster.width),
                 y: extent.height / CGFloat(raster.height)
             ))
             .transformed(by: CGAffineTransform(translationX: extent.minX, y: extent.minY))
             .cropped(to: extent)
+    }
+
+    private static func refine(_ raw: CIImage, subject: SubjectMask) -> CIImage {
+        func bounded(_ value: Double, _ range: ClosedRange<Double>) -> Double {
+            value.isFinite ? min(range.upperBound, max(range.lowerBound, value)) : 0
+        }
+        let longSide = max(raw.extent.width, raw.extent.height)
+        let shift = bounded(subject.edgeShift, -0.005 ... 0.005) * longSide
+        let feather = bounded(subject.edgeFeather, 0 ... 0.005) * longSide
+        let contrast = bounded(subject.edgeContrast, 0 ... 1)
+        var image = raw
+        if abs(shift) > 0.001 {
+            image = image.clampedToExtent().applyingFilter(
+                shift > 0 ? "CIMorphologyMaximum" : "CIMorphologyMinimum",
+                parameters: [kCIInputRadiusKey: abs(shift)]
+            ).cropped(to: raw.extent)
+        }
+        if feather > 0.001 {
+            image = image.clampedToExtent().applyingFilter(
+                "CIGaussianBlur", parameters: [kCIInputRadiusKey: feather]
+            ).cropped(to: raw.extent)
+        }
+        if contrast > 0 {
+            let gain = 1 + contrast * 3
+            let bias = (1 - gain) / 2
+            image = image.applyingFilter("CIColorMatrix", parameters: [
+                "inputRVector": CIVector(x: gain, y: 0, z: 0, w: 0),
+                "inputGVector": CIVector(x: 0, y: gain, z: 0, w: 0),
+                "inputBVector": CIVector(x: 0, y: 0, z: gain, w: 0),
+                "inputBiasVector": CIVector(x: bias, y: bias, z: bias, w: 0)
+            ]).applyingFilter("CIColorClamp", parameters: [
+                "inputMinComponents": CIVector(x: 0, y: 0, z: 0, w: 0),
+                "inputMaxComponents": CIVector(x: 1, y: 1, z: 1, w: 1)
+            ])
+        }
+        return image.cropped(to: raw.extent)
     }
 }
 

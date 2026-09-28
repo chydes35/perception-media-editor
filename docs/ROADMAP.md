@@ -118,6 +118,7 @@ Video (V0.3 below) resumes after the photo phases. Lumix S5 10-bit 4:2:2 and V-L
 
 ## Later
 
+- Local generative remove/fill: deferred until the core photo editor is complete. The initial M1/PyTorch inpainting trial hit its five-minute limit at step 5 of 20 and increased system swap substantially; see [local trial notes](LOCAL_GENERATIVE_REMOVE_TRIAL.md).
 - Keyframes and tracking
 - Multicam synchronization and angle editor
 - Optical-flow speed changes

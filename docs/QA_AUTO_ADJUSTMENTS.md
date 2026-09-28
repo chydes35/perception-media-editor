@@ -23,3 +23,11 @@ The first tone tests exposed exposure/shadow substitution and insufficient range
 The portrait comparison exposed excess saturation from tonal filters. The fit now penalizes changes in linear RGB chromaticity. A focused skin-like/blue color-ratio regression failed with insufficient color preservation and passed with the corrected weight, while brightness and range tests remained green.
 
 Real fixture comparisons use a local Lumix RW2 indoor birthday scene, an indoor portrait JPEG, and the outdoor Eiffel Tower fixture documented in [Sky QA](QA_SKY_SELECTION.md). Preview PNGs and chosen settings are saved outside the repository on the external SSD. Auto is a suggested starting point; broader camera, high/low-key, sunset, mixed-light, and intentionally stylized photo validation remains useful.
+
+## Installed app verification
+
+Build 15 replaced the closed build 14 on the external SSD; build 14 was retained as a backup. Both the staged and installed bundles passed strict code-signature verification.
+
+The native Open Project check exposed a packaging issue: `.pmedit` lacked a declared content type, so saved projects were disabled in the file picker. The bundle now exports `com.perceptionmedia.project`, conforming to JSON, for that extension. After registering the updated bundle, the system reported a declared JSON-compatible type and the picker successfully opened an existing 17-photo RAW project. The executable was unchanged by this metadata fix.
+
+In the installed app, the Photo workspace rendered the image and histogram, with Auto immediately below it. Clicking Auto on an indoor RAW portrait changed Exposure from 0 to +0.15 and Shadows from 0 to +0.44, and created one named Auto history step. Command-Z restored the prior settings and selected the Start history entry. The project remains open with those prior settings. Existing project autosave rewrote the project file during the edit/undo check, so its byte hash changed; the post-undo saved values for the tested photo were neutral again.

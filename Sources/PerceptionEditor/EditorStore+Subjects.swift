@@ -4,6 +4,7 @@ extension EditorStore {
     /// Analyze once, then let the user choose a single detected foreground instance or all.
     func startSubjectSelection() {
         guard selectedAsset?.kind == .photo, !isEditingCrop, !isAnalyzingSubjects else { return }
+        cancelSkySelection()
         cancelWhiteBalancePicking()
         endRetouchEditing()
         endMaskEditing()
@@ -45,6 +46,7 @@ extension EditorStore {
     }
 
     func cancelSubjectSelection() {
+        cancelSkySelection()
         subjectRequestID = UUID()
         isAnalyzingSubjects = false
         stopSubjectPreview()

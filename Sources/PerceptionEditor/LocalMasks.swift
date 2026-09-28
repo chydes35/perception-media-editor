@@ -41,7 +41,7 @@ struct BrushStroke: Codable, Hashable, Sendable {
     }
 }
 
-/// A Vision selection in the oriented source photo, with optional hand-painted corrections.
+/// A detected selection in the oriented source photo, with optional hand-painted corrections.
 /// The grayscale PNG is bounded to 3072 pixels on its longest side so projects stay portable.
 struct SubjectMask: Codable, Hashable, Sendable {
     var png: Data
@@ -83,11 +83,30 @@ enum MaskShape: Codable, Hashable, Sendable {
     case radial(center: NormalizedPoint, radiusX: Double, radiusY: Double, rotation: Double, feather: Double)
     case brush(strokes: [BrushStroke])
     case subject(SubjectMask)
+    case sky(SubjectMask)
+
+    /// Subject and sky selections share saved weights, edge controls, and brush corrections.
+    var rasterSelection: SubjectMask? {
+        get {
+            switch self {
+            case .subject(let value), .sky(let value): value
+            default: nil
+            }
+        }
+        set {
+            guard let newValue else { return }
+            switch self {
+            case .subject: self = .subject(newValue)
+            case .sky: self = .sky(newValue)
+            default: break
+            }
+        }
+    }
 
     var isGradient: Bool {
         switch self {
         case .linear, .radial: true
-        case .brush, .subject: false
+        case .brush, .subject, .sky: false
         }
     }
 
@@ -97,6 +116,7 @@ enum MaskShape: Codable, Hashable, Sendable {
         case .radial: "Radial Gradient"
         case .brush: "Brush"
         case .subject: "Subject"
+        case .sky: "Sky"
         }
     }
 }
@@ -221,7 +241,7 @@ enum MaskRenderer {
             return radial(center: center, radiusX: radiusX, radiusY: radiusY, rotation: rotation, feather: feather, extent: extent)
         case .brush(let strokes):
             return BrushRasterizer.image(strokes: strokes, extent: extent)
-        case .subject(let subject):
+        case .subject(let subject), .sky(let subject):
             return SubjectMaskRenderer.image(subject, extent: extent)
         }
     }

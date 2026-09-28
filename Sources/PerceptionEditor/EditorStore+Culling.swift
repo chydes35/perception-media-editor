@@ -201,6 +201,11 @@ extension EditorStore {
             statusMessage = "White balance picker canceled"
             return true
         }
+        if characters == "\u{1B}", isAnalyzingSky {
+            cancelSkySelection()
+            statusMessage = "Sky selection canceled"
+            return true
+        }
         if characters == "\u{1B}", isPickingSubject || isAnalyzingSubjects {
             cancelSubjectSelection()
             statusMessage = "Subject selection canceled"

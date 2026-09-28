@@ -47,6 +47,9 @@ final class EditorStore: ObservableObject {
     var subjectOverlayCache: [(id: Int, image: NSImage)] = []
     var subjectOverlayAdjustments: PhotoAdjustments?
     let subjectAnalyzer = SubjectAnalysisService()
+    @Published var isAnalyzingSky = false
+    var skyRequestID = UUID()
+    let skyAnalyzer = SkyAnalysisService()
     @Published var brushSize = 0.06
     @Published var brushFeather = 0.5
     @Published var brushErasing = false

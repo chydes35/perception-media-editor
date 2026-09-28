@@ -45,11 +45,25 @@ struct MaskPanel: View {
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(store.isAnalyzingSubjects || store.isEditingCrop)
+                .disabled(store.isAnalyzingSubjects || store.isAnalyzingSky || store.isEditingCrop)
                 .help("Detect foreground subjects and select one for local adjustments")
                 if store.isAnalyzingSubjects { ProgressView().controlSize(.small) }
                 if store.isPickingSubject {
                     Button("Cancel") { store.cancelSubjectSelection() }
+                        .buttonStyle(.bordered)
+                }
+            }
+            HStack(spacing: 6) {
+                Button { store.startSkySelection() } label: {
+                    Label("Select Sky", systemImage: "cloud.sun")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .disabled(store.isAnalyzingSubjects || store.isAnalyzingSky || store.isEditingCrop)
+                .help("Detect the sky for separate exposure and color adjustments")
+                if store.isAnalyzingSky {
+                    ProgressView().controlSize(.small)
+                    Button("Cancel") { store.cancelSkySelection() }
                         .buttonStyle(.bordered)
                 }
             }
@@ -185,6 +199,7 @@ struct MaskPanel: View {
         case .radial: "circle.dashed"
         case .brush: "paintbrush.pointed"
         case .subject: "person.crop.rectangle"
+        case .sky: "cloud.sun"
         }
     }
 
@@ -209,22 +224,23 @@ struct MaskPanel: View {
 
             maskSlider("Amount", mask, range: 0 ... 100, format: "%.0f") { $0.amount * 100 } set: { $0.amount = $1 / 100 }
 
-            if case .subject(let subject) = mask.shape {
+            if let subject = mask.shape.rasterSelection {
+                let kind = mask.shape.kindName
                 VStack(alignment: .leading, spacing: 5) {
                     HStack {
-                        Text("REFINE SUBJECT")
+                        Text("REFINE \(kind.uppercased())")
                             .font(.system(size: 9, weight: .bold))
                             .tracking(0.8)
                             .foregroundStyle(.secondary)
                         Spacer()
                         Button("Reset edges") {
-                            store.nextHistoryLabel = "Reset subject edges"
+                            store.nextHistoryLabel = "Reset \(kind.lowercased()) edges"
                             store.updateMask(mask.id) {
-                                guard case .subject(var value) = $0.shape else { return }
+                                guard var value = $0.shape.rasterSelection else { return }
                                 value.edgeShift = 0
                                 value.edgeFeather = 0
                                 value.edgeContrast = 0
-                                $0.shape = .subject(value)
+                                $0.shape.rasterSelection = value
                             }
                         }
                         .buttonStyle(.borderless).font(.caption2)
@@ -240,7 +256,7 @@ struct MaskPanel: View {
                         Button {
                             store.beginSubjectRefinement(erasing: false)
                         } label: {
-                            Label("Add to subject", systemImage: "plus.circle")
+                            Label("Add to \(kind.lowercased())", systemImage: "plus.circle")
                                 .frame(maxWidth: .infinity)
                         }
                         .tint(store.maskTool == .brush && !store.brushErasing ? .orange : .accentColor)
@@ -301,12 +317,12 @@ struct MaskPanel: View {
         _ keyPath: WritableKeyPath<SubjectMask, Double>, format: String
     ) -> some View {
         maskSlider(label, mask, range: range, format: format) {
-            guard case .subject(let subject) = $0.shape else { return 0 }
+            guard let subject = $0.shape.rasterSelection else { return 0 }
             return subject[keyPath: keyPath] * 100
         } set: {
-            guard case .subject(var subject) = $0.shape else { return }
+            guard var subject = $0.shape.rasterSelection else { return }
             subject[keyPath: keyPath] = $1 / 100
-            $0.shape = .subject(subject)
+            $0.shape.rasterSelection = subject
         }
     }
 

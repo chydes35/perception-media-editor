@@ -1,0 +1,13 @@
+Sky selection uses the DETR ResNet-50 semantic segmentation Core ML model
+published by Apple, derived from facebook/detr-resnet-50-panoptic.
+
+Model source: https://huggingface.co/apple/coreml-detr-semantic-segmentation
+Pinned revision: 7c771f8867a479d1441ac5fb0a8de31feea76bb6
+Variant: DETRResnet50SemanticSegmentationF16
+License: Apache License, Version 2.0 (included as LICENSE.txt).
+
+Original DETR implementation: https://github.com/facebookresearch/detr
+Core ML integration example: https://github.com/huggingface/coreml-examples
+
+The model weights are distributed without modification. Perception Media Editor
+extracts the sky class and refines its mask against the local photo's boundaries.

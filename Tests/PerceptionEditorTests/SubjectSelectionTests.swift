@@ -20,7 +20,7 @@ struct SubjectSelectionTests {
         project.adjustmentsByAssetID[asset.id] = adjustments
 
         let decoded = try ProjectDocument().project(from: ProjectDocument().data(for: project))
-        #expect(decoded.schemaVersion == 9)
+        #expect(decoded.schemaVersion == EditorProject.currentSchemaVersion)
         #expect(decoded.adjustmentsByAssetID[asset.id]?.masks == adjustments.masks)
     }
 

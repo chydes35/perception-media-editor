@@ -98,7 +98,7 @@ struct MaskEditingLayer: View {
                 drawLinear(&context, start, end, geometry, frame, accent)
             case .radial(let center, let rx, let ry, let rotation, let feather):
                 drawRadial(&context, center, rx, ry, rotation, feather, geometry, frame, accent)
-            case .brush, .subject:
+            case .brush, .subject, .sky:
                 break
             }
         }
@@ -364,7 +364,7 @@ struct MaskEditingLayer: View {
             }
             return nil
 
-        case .brush, .subject:
+        case .brush, .subject, .sky:
             return nil
         }
     }

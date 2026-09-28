@@ -89,7 +89,7 @@ struct PhotoComparisonView: View {
             }
             .allowsHitTesting(!isCropping && mode == .edited && onZoomRequest != nil
                 && !store.isMaskEditing && !store.isRetouchEditing && !store.isPickingWhiteBalance
-                && !store.isPickingSubject && !store.isAnalyzingSubjects)
+                && !store.isPickingSubject && !store.isAnalyzingSubjects && !store.isAnalyzingSky)
         }
         .accessibilityHint("Click the photo to view it at 100 percent.")
     }

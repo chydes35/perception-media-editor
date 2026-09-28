@@ -106,9 +106,9 @@ extension EditorStore {
         brushSize = min(0.5, max(0.005, brushSize * factor))
     }
 
-    /// Makes the add/remove correction mode explicit for a selected Vision subject mask.
+    /// Makes the add/remove correction mode explicit for a selected subject or sky mask.
     func beginSubjectRefinement(erasing: Bool) {
-        guard let mask = selectedMask, case .subject = mask.shape else { return }
+        guard selectedMask?.shape.rasterSelection != nil else { return }
         cancelSubjectSelection()
         cancelWhiteBalancePicking()
         endRetouchEditing()
@@ -119,9 +119,10 @@ extension EditorStore {
         maskTool = .brush
         showMaskOverlay = true
         refreshPreview()
+        let kind = selectedMask?.shape.kindName.lowercased() ?? "selection"
         statusMessage = erasing
-            ? "Paint over the unwanted area to remove it from the subject"
-            : "Paint over missing areas to add them to the subject"
+            ? "Paint over the unwanted area to remove it from the \(kind)"
+            : "Paint over missing areas to add them to the \(kind)"
     }
 
     // MARK: - Changing masks
@@ -232,6 +233,9 @@ extension EditorStore {
                 case .subject(var subject):
                     subject.strokes.append(stroke)
                     mask.shape = .subject(subject)
+                case .sky(var sky):
+                    sky.strokes.append(stroke)
+                    mask.shape = .sky(sky)
                 default: break
                 }
             }
@@ -249,7 +253,7 @@ extension EditorStore {
         let strokes: [BrushStroke]
         switch mask.shape {
         case .brush(let value): strokes = value
-        case .subject(let value): strokes = value.strokes
+        case .subject(let value), .sky(let value): strokes = value.strokes
         default: return
         }
         guard let last = strokes.last?.points.last else { return }
@@ -260,9 +264,9 @@ extension EditorStore {
             if case .brush(var strokes) = mask.shape, !strokes.isEmpty {
                 strokes[strokes.count - 1].points.append(point)
                 mask.shape = .brush(strokes: strokes)
-            } else if case .subject(var subject) = mask.shape, !subject.strokes.isEmpty {
+            } else if var subject = mask.shape.rasterSelection, !subject.strokes.isEmpty {
                 subject.strokes[subject.strokes.count - 1].points.append(point)
-                mask.shape = .subject(subject)
+                mask.shape.rasterSelection = subject
             }
         }
     }

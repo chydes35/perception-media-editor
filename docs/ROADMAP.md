@@ -41,7 +41,7 @@ The goal is a full Lightroom replacement for a single photographer's workflow. P
 - [x] Copy Settings (⇧⌘C), Paste Settings (⇧⌘V), Sync Settings
 - [x] History: named steps for the current photo; click one to go back
 - [x] White balance eyedropper for RAW photos (click a neutral gray to set Kelvin and tint)
-- [ ] Auto tone and auto white balance
+- [x] Auto tone and auto white balance: one button beneath the histogram; bounded on-device analysis, photo-specific basic slider values, conservative neutral-reference WB, one undo step
 - [ ] Split `EditorStore` into photo, timeline, and project parts
 
 ### Phase 3 — Masks and healing (in progress)

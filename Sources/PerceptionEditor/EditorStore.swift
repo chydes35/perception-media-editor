@@ -10,7 +10,9 @@ final class EditorStore: ObservableObject {
     @Published var workspace: Workspace = .library {
         didSet { workspaceDidChange() }
     }
-    @Published var selectedAssetID: UUID?
+    @Published var selectedAssetID: UUID? {
+        didSet { if oldValue != selectedAssetID { cancelAutoAdjustment() } }
+    }
     @Published var selectedAssetIDs: Set<UUID> = []
     @Published var filter = LibraryFilter() {
         didSet { filterDidChange() }
@@ -50,6 +52,9 @@ final class EditorStore: ObservableObject {
     @Published var isAnalyzingSky = false
     var skyRequestID = UUID()
     let skyAnalyzer = SkyAnalysisService()
+    @Published var isAnalyzingAuto = false
+    var autoRequestID = UUID()
+    let autoAnalyzer = AutoAdjustmentService()
     @Published var brushSize = 0.06
     @Published var brushFeather = 0.5
     @Published var brushErasing = false
@@ -313,6 +318,7 @@ final class EditorStore: ObservableObject {
 
     func updateAdjustments(_ update: (inout PhotoAdjustments) -> Void) {
         guard selectedAssetID != nil else { return }
+        cancelAutoAdjustment()
         let before = project.adjustmentsByAssetID
         var adjustments = selectedAdjustments
         update(&adjustments)
@@ -323,6 +329,7 @@ final class EditorStore: ObservableObject {
     }
 
     func beginAdjustmentEdit() {
+        cancelAutoAdjustment()
         guard activeAdjustmentSnapshot == nil else { return }
         activeAdjustmentSnapshot = project.adjustmentsByAssetID
     }
@@ -362,6 +369,7 @@ final class EditorStore: ObservableObject {
     }
 
     func undoPhotoEdit() {
+        cancelAutoAdjustment()
         guard let previous = adjustmentUndoStack.popLast() else { return }
         adjustmentRedoStack.append(project.adjustmentsByAssetID)
         project.adjustmentsByAssetID = previous
@@ -370,6 +378,7 @@ final class EditorStore: ObservableObject {
     }
 
     func redoPhotoEdit() {
+        cancelAutoAdjustment()
         guard let next = adjustmentRedoStack.popLast() else { return }
         adjustmentUndoStack.append(project.adjustmentsByAssetID)
         project.adjustmentsByAssetID = next
@@ -594,6 +603,7 @@ final class EditorStore: ObservableObject {
 
     func beginCropEditing() {
         guard selectedAsset != nil, !isEditingCrop else { return }
+        cancelAutoAdjustment()
         endMaskEditing()
         endRetouchEditing()
         cancelWhiteBalancePicking()
@@ -859,6 +869,7 @@ final class EditorStore: ObservableObject {
     }
 
     private func resetPhotoRenderState() {
+        cancelAutoAdjustment()
         endMaskEditing()
         endRetouchEditing()
         cancelWhiteBalancePicking()

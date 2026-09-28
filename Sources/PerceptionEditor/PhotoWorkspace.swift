@@ -199,6 +199,22 @@ struct PhotoWorkspace: View {
                 adjustmentGroup("HISTOGRAM") {
                     HistogramView(data: store.histogram)
                         .frame(height: 92)
+                    HStack {
+                        Button {
+                            if store.isAnalyzingAuto {
+                                store.cancelAutoAdjustment()
+                                store.statusMessage = "Auto adjustment canceled"
+                            } else {
+                                store.startAutoAdjustment()
+                            }
+                        } label: {
+                            Label(store.isAnalyzingAuto ? "Cancel Auto" : "Auto", systemImage: "wand.and.stars")
+                        }
+                        .disabled(store.selectedAsset == nil || store.isEditingCrop)
+                        .help("Suggest exposure, contrast, highlights, shadows and white balance for this photo.")
+                        if store.isAnalyzingAuto { ProgressView().controlSize(.small) }
+                        Spacer()
+                    }
                 }
 
                 if store.selectedIsRAW {

@@ -19,6 +19,7 @@ This repository currently contains **V0.3: Video Editor Foundation (in progress)
 - Apply four built-in Perception presets
 - Save and delete reusable user presets
 - Inspect a live RGB histogram
+- Click **Auto** beneath the histogram for photo-specific exposure, contrast, highlights, shadows, white balance, and tint suggestions. Fine-tune the sliders afterward; Auto is one undo step and runs entirely on this Mac
 - Compare original and edited photos in original, edited, split, and side-by-side modes
 - Cache thumbnails on disk and relink missing originals
 - Save and reopen non-destructive `.pmedit` project files

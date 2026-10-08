@@ -47,20 +47,22 @@ enum SkyAnalyzer {
     }
 
     static func analyze(url: URL, model: MLModel) throws -> Data {
+        try Task.checkCancellation()
         guard let source = PhotoSourceLoader.load(url, maxDimension: maximumMaskDimension) else {
             throw SkySelectionError.noPhoto
         }
         guard let input = model.modelDescription.inputDescriptionsByName["image"]?.imageConstraint,
               let fields = model.modelDescription.metadata[.creatorDefinedKey] as? [String: String],
               let params = fields["com.apple.coreml.model.preview.params"]?.data(using: .utf8),
-              let labels = try? JSONDecoder().decode(ClassList.self, from: params),
-              let skyID = labels.labels.firstIndex(of: "sky (other)") else { throw SkySelectionError.invalidModel }
+              let classes = try? JSONDecoder().decode(ClassList.self, from: params),
+              let skyID = classes.labels.firstIndex(of: "sky (other)") else { throw SkySelectionError.invalidModel }
 
         var buffer: CVPixelBuffer?
         let status = CVPixelBufferCreate(kCFAllocatorDefault, input.pixelsWide, input.pixelsHigh,
                                         input.pixelFormatType, [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &buffer)
         guard status == kCVReturnSuccess, let buffer else { throw SkySelectionError.invalidMask }
-        let context = CIContext(options: [.cacheIntermediates: false])
+        let context = CIContext(options: [.cacheIntermediates: false, .memoryTarget: 128])
+        defer { context.clearCaches() }
         // Resize the whole oriented photo; center-cropping would discard wide landscapes.
         let resized = source.transformed(by: CGAffineTransform(translationX: -source.extent.minX, y: -source.extent.minY))
             .transformed(by: CGAffineTransform(scaleX: CGFloat(input.pixelsWide) / source.extent.width,
@@ -68,7 +70,9 @@ enum SkyAnalyzer {
         context.render(resized, to: buffer, bounds: CGRect(x: 0, y: 0, width: input.pixelsWide, height: input.pixelsHigh),
                        colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
         let features = try MLDictionaryFeatureProvider(dictionary: ["image": buffer])
+        try Task.checkCancellation()
         let prediction = try model.prediction(from: features)
+        try Task.checkCancellation()
         guard let labels = prediction.featureValue(for: "semanticPredictions")?.multiArrayValue else {
             throw SkySelectionError.invalidModel
         }
@@ -88,12 +92,34 @@ enum SkyAnalyzer {
         var maskBytes = guideBytes
         context.render(guideImage, toBitmap: &guideBytes, rowBytes: width, bounds: extent,
                        format: .L8, colorSpace: CGColorSpaceCreateDeviceGray())
-        let rawContext = CIContext(options: [.workingColorSpace: NSNull(), .outputColorSpace: NSNull(), .cacheIntermediates: false])
+        let rawContext = CIContext(options: [.workingColorSpace: NSNull(), .outputColorSpace: NSNull(), .cacheIntermediates: false, .memoryTarget: 128])
+        defer { rawContext.clearCaches() }
         rawContext.render(upscaled, toBitmap: &maskBytes, rowBytes: width, bounds: extent, format: .L8, colorSpace: nil)
-        let refined = SkyEdgeRefiner.refine(
+        var refined = SkyEdgeRefiner.refine(
             mask: maskBytes.map { Float($0) / 255 }, guide: guideBytes.map { Float($0) / 255 },
             width: width, height: height, radius: max(2, Int(Double(max(width, height)) / 448 * 2)), epsilon: 0.001
         )
+        if let treeID = classes.labels.firstIndex(of: "tree"),
+           let trees = try? labelMask(labels, skyID: treeID) {
+            let scaledTrees = trees.transformed(by: CGAffineTransform(scaleX: CGFloat(width) / trees.extent.width,
+                                                                      y: CGFloat(height) / trees.extent.height))
+            var treeBytes = [UInt8](repeating: 0, count: width * height)
+            rawContext.render(scaledTrees, toBitmap: &treeBytes, rowBytes: width, bounds: extent, format: .L8, colorSpace: nil)
+            var rgba = [UInt8](repeating: 0, count: width * height * 4)
+            context.render(source, toBitmap: &rgba, rowBytes: width * 4, bounds: extent, format: .RGBA8,
+                           colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
+            let recovered = try SkyBranchRecovery.recover(mask: maskBytes, rgba: rgba, trees: treeBytes,
+                                                         width: width, height: height)
+            if recovered != maskBytes {
+                let added = SkyEdgeRefiner.refine(
+                    mask: recovered.map { Float($0) / 255 }, guide: guideBytes.map { Float($0) / 255 },
+                    width: width, height: height, radius: max(2, Int(Double(max(width, height)) / 448 * 2)), epsilon: 0.001
+                )
+                // Recovery cannot erase pixels from the previously offered guided mask.
+                for i in refined.indices { refined[i] = max(refined[i], added[i]) }
+            }
+        }
+        try Task.checkCancellation()
         let bytes = Data(refined.map { UInt8((min(1, max(0, $0)) * 255).rounded()) })
         let mask = CIImage(bitmapData: bytes, bytesPerRow: width, size: extent.size, format: .L8, colorSpace: nil)
         return try encode(mask, context: rawContext)

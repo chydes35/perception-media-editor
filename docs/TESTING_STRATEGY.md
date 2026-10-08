@@ -32,3 +32,7 @@ The opt-in `SelectionQualityTests` runner accepts `PME_SELECTION_MANIFEST`, `PME
 ## Small-person recovery and sky crop probes
 
 `GroupRecoveryTests` uses `PME_GROUP_PROBE_INPUT` for the copied, annotated group RAW. It checks picking, independent editable coverage, native child preservation and floor/ceiling controls. `PME_GROUP_QA_PROJECT_OUTPUT` optionally creates a disposable single-photo project for UI QA. `GroupSelectionProbeTests` additionally requires `PME_GROUP_PROBE_OUTPUT` and writes whole-frame/crop semantic masks. `SkyCropProbeTests` uses `PME_SKY_CROP_PROBE_INPUT`, `PME_SKY_CROP_PROBE_OUTPUT` and `PERCEPTION_SKY_MODEL_PATH` for a separate opt-in experiment. Successful artifact generation does not establish photographic quality. See the [group recovery report](GROUP_SELECTION_RECOVERY_2026-10-08.md).
+
+## Branch-gap sky recovery
+
+`SkyBranchRecoveryTests` accepts `PME_SKY_BRANCH_INPUT` (copied annotated RAW), `PME_SKY_NEGATIVE_MANIFEST` (JSON array of three or more no-sky fixture paths), `PERCEPTION_SKY_MODEL_PATH`, and optionally `PME_SKY_BASELINE_MASK` to verify previous pixel coverage. `PME_SKY_QA_PROJECT_OUTPUT` creates a disposable one-photo UI project. `SkyBranchProbeTests` additionally accepts `PME_SKY_BRANCH_OUTPUT` for local semantic/recovery artifacts. See the [branch recovery report](SKY_BRANCH_RECOVERY_2026-10-08.md) for annotations and unverified photographic cases.

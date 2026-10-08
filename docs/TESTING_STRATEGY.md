@@ -24,3 +24,7 @@ Each completion report labels every applicable gate **PASS**, **FAIL**, or **NOT
 ## Saved real-RAW workflow reproduction
 
 `RealWorkflowTests` is opt-in. Set `PME_WORKFLOW_PROJECT` to a disposable schema-10 project referencing copied RAW files, including a photo with both masks and a heal stroke. Set `PME_WORKFLOW_OUTPUT_DIR` to a disposable directory outside the referenced sources, then run `./scripts/test.sh --no-parallel --filter RealWorkflowTests` with the app closed. The test separates global/mask/healing/combined edits, compares bounded export against an unrestricted pixel reference, checks healed focus release, and asks native analysis for a portrait candidate. Inputs remain read-only; the test writes JPEG outputs. These local fixtures are not uploaded to CI. See the [target-Mac report](WORKFLOW_VALIDATION_2026-10-07.md) for the causal RAW failure and limitations; the portable PNG test alone does not reproduce that failure.
+
+## Selection quality artifacts
+
+The opt-in `SelectionQualityTests` runner accepts `PME_SELECTION_MANIFEST`, `PME_SELECTION_OUTPUT_DIR` and `PERCEPTION_SKY_MODEL_PATH`. It generates local native masks, overlays and production exports sequentially for inspection. Expected empty results are observations; structural failures fail QA. It does not assign a segmentation-quality pass from a nonempty mask. See [October 8 selection evidence](SELECTION_QUALITY_2026-10-08.md) for manifest format, sampled failures and remaining gates.

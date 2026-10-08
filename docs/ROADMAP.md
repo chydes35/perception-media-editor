@@ -87,6 +87,8 @@ The [integration plan](../plans/completed/photo-workflow-integration.md) combine
 - [ ] Color and luminance range masks
 - [x] Spot healing and clone: paint soft repairs, adjust source points, and retain edits through crop, rotation, save, and export
 
+The [October 8 real-RAW selection pass](SELECTION_QUALITY_2026-10-08.md) records missing group candidates and missed sky gaps through fine branches. These quality gates remain open despite structural mask/export checks passing.
+
 ### Phase 4 — Delivery (in progress)
 
 - [x] Sequential selected-photo JPEG export with quality, long-edge size, collision-safe naming, progress/cancel, and per-file results

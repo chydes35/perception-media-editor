@@ -36,3 +36,7 @@ The opt-in `SelectionQualityTests` runner accepts `PME_SELECTION_MANIFEST`, `PME
 ## Branch-gap sky recovery
 
 `SkyBranchRecoveryTests` accepts `PME_SKY_BRANCH_INPUT` (copied annotated RAW), `PME_SKY_NEGATIVE_MANIFEST` (JSON array of three or more no-sky fixture paths), `PERCEPTION_SKY_MODEL_PATH`, and optionally `PME_SKY_BASELINE_MASK` to verify previous pixel coverage. `PME_SKY_QA_PROJECT_OUTPUT` creates a disposable one-photo UI project. `SkyBranchProbeTests` additionally accepts `PME_SKY_BRANCH_OUTPUT` for local semantic/recovery artifacts. See the [branch recovery report](SKY_BRANCH_RECOVERY_2026-10-08.md) for annotations and unverified photographic cases.
+
+## Expanded blue-object sky controls
+
+`SkyQualityControlTests` accepts `PME_SKY_CONTROL_MANIFEST`, `PME_SKY_CONTROL_OUTPUT_DIR` and `PERCEPTION_SKY_MODEL_PATH`. The JSON array specifies fixture names/paths, `expectNoSky`, and annotated `points` (`name`, top-left normalized `x`/`y`, inclusive byte `minimum`/`maximum`). An optional `baselineMaskPath` records independent-run differences; it does not prove same-prediction monotonicity. Passing sampled blue-object/sky points does not close whole-mask or reflection acceptance. See the [expanded real-RAW report](SKY_QUALITY_CONTROLS_2026-10-08.md).

@@ -21,7 +21,7 @@ if [[ "$(xcode-select -p)" == "/Library/Developer/CommandLineTools" ]]; then
     export SWIFTPM_MODULECACHE_OVERRIDE="$ROOT_DIR/.build/ManifestCache"
 fi
 
-swift test "${SWIFT_FLAGS[@]}"
+swift test "${SWIFT_FLAGS[@]}" "$@"
 swift build "${SWIFT_FLAGS[@]}" --product PerceptionEditor
 
 echo "Tests and build passed"

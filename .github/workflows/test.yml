@@ -18,4 +18,4 @@ jobs:
       - name: Swift version
         run: swift --version
       - name: Test and build
-        run: ./scripts/test.sh
+        run: ./scripts/qa.sh

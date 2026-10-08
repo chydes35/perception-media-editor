@@ -23,6 +23,7 @@ This repository currently contains **V0.3: Video Editor Foundation (in progress)
 - Cache thumbnails on disk and relink missing originals
 - Save and reopen non-destructive `.pmedit` project files
 - Export edited full-resolution JPEG or PNG files in sRGB
+- Batch export selected photos as sRGB JPEGs with quality, long-edge size, safe naming, progress, cancellation, and per-file results
 - Import MOV/MP4 video with duration, frame-size metadata, and poster thumbnails
 - Preview source video through AVFoundation
 - Build a persistent V1/A1 sequence with trim, split, reorder, mute, play, and ripple-delete controls
@@ -51,6 +52,8 @@ chmod +x scripts/test.sh
 
 The script runs the Swift Testing suite in `Tests/PerceptionEditorTests` and then builds the app. It works with full Xcode or with only Command Line Tools; with Command Line Tools it adds the flags SwiftPM needs to find the Swift Testing framework.
 
+To run focused regressions, pass Swift Testing filters, for example `./scripts/test.sh --filter ReliabilityTests`. Brush timing benchmarks run separately with `./scripts/benchmark-masks.sh`; normal tests verify cache reuse and rendering correctness without wall-clock thresholds. Run `./scripts/profile-memory.sh` separately to measure real RAW memory, editing latency, and output equivalence; set `PME_RAW_SAMPLE_DIR` if your RW2 samples are elsewhere.
+
 ## Build a local app bundle
 
 ```sh
@@ -64,3 +67,7 @@ The script produces an ad-hoc signed `PerceptionEditor.app` for local use. Full 
 ## Project status
 
 See [docs/ROADMAP.md](docs/ROADMAP.md) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+## Agentic development workflow
+
+Start with [AGENTS.md](AGENTS.md) for the coding-agent instructions and document map. Use [.agent/PLANS.md](.agent/PLANS.md) for substantial features and [docs/CURRENT_STATUS.md](docs/CURRENT_STATUS.md) for open acceptance work. Run `./scripts/qa.sh` for the automated gate; real-media, hands-on UI, and target-hardware performance checks are described in [docs/TESTING_STRATEGY.md](docs/TESTING_STRATEGY.md).

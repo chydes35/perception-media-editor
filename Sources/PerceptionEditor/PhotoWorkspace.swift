@@ -194,7 +194,17 @@ struct PhotoWorkspace: View {
     private var adjustmentPanel: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                panelHeading("ADJUSTMENTS", symbol: "slider.horizontal.3")
+                HStack {
+                    panelHeading("ADJUSTMENTS", symbol: "slider.horizontal.3")
+                    Spacer()
+                    if store.isAutoAdjusting { ProgressView().controlSize(.small) }
+                    Button("Auto", systemImage: "wand.and.stars") { store.autoAdjustPhoto() }
+                        .buttonStyle(.bordered)
+                        .tint(.orange)
+                        .disabled(!store.canAutoAdjustPhoto)
+                        .accessibilityIdentifier("photo-auto-adjust")
+                        .help("Automatically balance exposure, contrast, highlights, and shadows")
+                }
 
                 adjustmentGroup("HISTOGRAM") {
                     HistogramView(data: store.histogram)

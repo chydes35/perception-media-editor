@@ -290,8 +290,9 @@ enum BrushRasterizer {
     /// The raster for `strokes`. It is reused when nothing changed and continued when strokes
     /// were only added, or points were only added to the last stroke, which is what painting
     /// does. Only the new dabs are drawn, so painting stays fast however many strokes exist.
-    static func raster(_ strokes: [BrushStroke], width: Int, height: Int) -> CGImage? {
-        let cache = BrushMaskCache.shared
+    static func raster(
+        _ strokes: [BrushStroke], width: Int, height: Int, cache: BrushMaskCache = .shared
+    ) -> CGImage? {
         if let exact = cache.exact(strokes, width: width, height: height) { return exact }
 
         let base = cache.continuation(for: strokes, width: width, height: height)
@@ -377,7 +378,7 @@ enum BrushRasterizer {
 
 /// Keeps the last few brush rasters, so re-rendering the photo for an unrelated slider does not
 /// paint every stroke again, and painting can continue from the previous raster.
-private final class BrushMaskCache: @unchecked Sendable {
+final class BrushMaskCache: @unchecked Sendable {
     static let shared = BrushMaskCache()
 
     private struct Entry {
@@ -390,6 +391,12 @@ private final class BrushMaskCache: @unchecked Sendable {
     private let lock = NSLock()
     private var entries: [Entry] = []
     private let limit = 6
+
+    func clear() {
+        lock.lock()
+        defer { lock.unlock() }
+        entries.removeAll()
+    }
 
     func exact(_ strokes: [BrushStroke], width: Int, height: Int) -> CGImage? {
         lock.lock()

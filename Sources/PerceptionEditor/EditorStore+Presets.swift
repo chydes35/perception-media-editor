@@ -102,6 +102,24 @@ extension EditorStore {
             }
             history[id] = entries
         }
+        pruneHistoryToBudget()
+    }
+
+    /// Per-photo counts alone are insufficient when hundreds of photos contain brush edits.
+    static let historyCostLimit = 16 * 1024 * 1024
+
+    private func pruneHistoryToBudget() {
+        let entries = history.flatMap { id, steps in
+            steps.map { (asset: id, entry: $0, cost: $0.adjustments.estimatedRetainedCost + 256) }
+        }
+        var retained = entries.reduce(0) { $0 + $1.cost }
+        guard retained > Self.historyCostLimit else { return }
+        for oldest in entries.sorted(by: { $0.entry.date < $1.entry.date }) {
+            history[oldest.asset]?.removeAll { $0.id == oldest.entry.id }
+            retained -= oldest.cost
+            if retained <= Self.historyCostLimit { break }
+        }
+        history = history.filter { !$0.value.isEmpty }
     }
 
     /// Returns the selected photo to the state after `entry`. The step is recorded like any

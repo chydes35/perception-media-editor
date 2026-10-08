@@ -1,16 +1,5 @@
 import AppKit
 
-/// A photo thumbnail together with what it was rendered from, so stale ones are never shown.
-struct PhotoThumbnail {
-    var image: NSImage
-    var url: URL
-    var adjustments: PhotoAdjustments
-
-    func matches(url: URL, adjustments: PhotoAdjustments) -> Bool {
-        self.url == url && self.adjustments == adjustments
-    }
-}
-
 extension EditorStore {
     // MARK: - Visible photos
 
@@ -268,15 +257,18 @@ extension EditorStore {
         }
         if let compareID = compareAssetID, let pinned = project.media.first(where: { $0.id == compareID }) {
             compareImage = cullCache.image(for: pinned) ?? compareImage
-            cullCache.prefetch([pinned])
+
         }
 
         // Current photo first, then a few ahead (culling mostly moves forward) and one behind.
         let photos = visiblePhotos
         var wanted = [asset]
+        if let compareID = compareAssetID, let pinned = project.media.first(where: { $0.id == compareID }) {
+            wanted.append(pinned)
+        }
         if let index = photos.firstIndex(where: { $0.id == asset.id }) {
-            wanted += photos[(index + 1)...].prefix(4)
-            wanted += photos[..<index].suffix(2).reversed()
+            wanted += photos[(index + 1)...].prefix(3)
+            wanted += photos[..<index].suffix(1).reversed()
         }
         cullCache.prefetch(wanted)
     }
@@ -396,12 +388,9 @@ extension EditorStore {
     // MARK: - Autosave
 
     func autosaveIfNeeded() {
-        guard let projectURL, hasUnsavedChanges else { return }
-        do {
-            try document.save(project, to: projectURL)
-            lastSavedProject = project
-        } catch {
-            statusMessage = "Autosave failed: \(error.localizedDescription)"
+        guard let projectURL, hasUnsavedChanges || projectSaveError != nil else { return }
+        if !saveProject(to: projectURL, announce: false) {
+            statusMessage = "Autosave failed: \(projectSaveError ?? "Unknown error")"
         }
     }
 }

@@ -17,6 +17,29 @@ The goal is a full Lightroom replacement for a single photographer's workflow. P
 - [x] GitHub Actions build
 - [ ] Split photo, timeline, and project responsibilities out of `EditorStore` (carried into Phase 2; culling and ingest live in `EditorStore+Culling.swift` and `EditorStore+Ingest.swift`)
 
+#### Reliability follow-up — 2026-09-28
+
+- [x] Protect all referenced originals during export and publish completed outputs atomically
+- [x] Bind import callbacks to an operation/project generation; cancel scanning and drain old copy workers safely
+- [x] Reconcile all verified imports before the final project save
+- [x] Persist save-failure status with Retry Save and Save As recovery
+- [x] Store undo changes for affected photos with shared undo/redo and shoot-wide history retention budgets
+- [x] Separate deterministic brush-cache checks from isolated timing benchmarks
+- [ ] Complete a real 100–200-distinct-photo UI workflow and combined process-memory profile
+
+See [Reliability Pass](RELIABILITY_PASS_2026-09-28.md) for verification evidence and remaining acceptance work.
+
+#### Memory follow-up — 2026-09-28
+
+- [x] Release autoreleased rendering intermediates and clear focus/export/project-replacement caches
+- [x] Tune editing, thumbnail, focus and export context allocation targets on the 8 GiB M1 Mac
+- [x] Share one bounded thumbnail cache and make disk keys deterministic
+- [x] Bound culling decodes, replace stale queued work and prevent late cache repopulation
+- [x] Reclaim expendable caches on macOS memory pressure
+- [x] Add isolated RAM/latency/output-equivalence profiling with real RAW samples
+
+See [Memory Optimization](MEMORY_OPTIMIZATION_2026-09-28.md) for measurements and remaining whole-app acceptance work.
+
 ### Phase 1 — Library and culling (complete, PR #2)
 
 - [x] One folder per shoot: `<Shoots>/<date> <Name>/{Name.pmedit, Originals/}`, saved automatically
@@ -56,9 +79,11 @@ The goal is a full Lightroom replacement for a single photographer's workflow. P
 - [ ] Color and luminance range masks
 - [ ] Spot healing and clone
 
-### Phase 4 — Delivery
+### Phase 4 — Delivery (in progress)
 
-- Batch export recipes: size, quality, output sharpening, sRGB/P3, naming, copyright/IPTC, watermark
+- [x] Sequential selected-photo JPEG export with quality, long-edge size, collision-safe naming, progress/cancel, and per-file results
+- [ ] Batch export recipes: persistent presets, output sharpening, P3, copyright/IPTC, watermark
+- [ ] Real 100–200-photo delivery pass and whole-app export memory profile
 
 ### Phase 5 — Smart culling
 

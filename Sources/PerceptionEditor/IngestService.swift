@@ -97,6 +97,7 @@ enum IngestService {
     /// Photos, video, and audio under `root`, in path order. Hidden files (including the
     /// `._name` companions macOS writes on non-Mac volumes) are skipped.
     static func scan(_ root: URL) -> [SourceFile] {
+        guard !Task.isCancelled else { return [] }
         let keys: [URLResourceKey] = [.isRegularFileKey, .fileSizeKey]
         guard let enumerator = FileManager.default.enumerator(
             at: root,
@@ -106,6 +107,7 @@ enum IngestService {
 
         var files: [SourceFile] = []
         for case let url as URL in enumerator {
+            if Task.isCancelled { return [] }
             guard
                 !url.lastPathComponent.hasPrefix("."),
                 let values = try? url.resourceValues(forKeys: Set(keys)),

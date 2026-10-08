@@ -343,41 +343,32 @@ struct MaskRenderingTests {
         #expect(pixels(both) != pixels(changed))
     }
 
-    @Test func addingAPointToAHugeMaskIsQuickBecausePaintingContinues() {
+    @Test func addingAPointContinuesFromThePreviousCachedRaster() throws {
         let strokes = (0 ..< 60).map { index in
             stroke([(0.1 + Double(index) * 0.01, 0.3), (0.2 + Double(index) * 0.01, 0.7), (0.3 + Double(index) * 0.01, 0.4)], size: 0.06, feather: 0.6)
         }
         let width = 2560, height = 1707
         var growing = BrushStroke(points: [NormalizedPoint(x: 0.3, y: 0.5)], size: 0.08, feather: 0.5)
-        _ = BrushRasterizer.raster(strokes + [growing], width: width, height: height)   // the slow first raster
-
-        var slowest = 0.0
-        for step in 1 ... 15 {
-            growing.points.append(NormalizedPoint(x: 0.3 + Double(step) * 0.01, y: 0.5))
-            let start = Date()
-            _ = BrushRasterizer.raster(strokes + [growing], width: width, height: height)
-            slowest = max(slowest, Date().timeIntervalSince(start))
-        }
-        #expect(slowest < 0.1, "adding a point took \(slowest) s")
+        let cache = BrushMaskCache()
+        let previous = try #require(BrushRasterizer.raster(strokes + [growing], width: width, height: height, cache: cache))
+        growing.points.append(NormalizedPoint(x: 0.4, y: 0.5))
+        let base = try #require(cache.continuation(for: strokes + [growing], width: width, height: height))
+        #expect(base.image === previous)
+        #expect(base.strokeIndex == strokes.count)
+        #expect(base.pointCount == 1)
+        let continued = try #require(BrushRasterizer.raster(strokes + [growing], width: width, height: height, cache: cache))
+        let fresh = try #require(BrushRasterizer.rasterize(strokes + [growing], width: width, height: height))
+        #expect(pixels(continued) == pixels(fresh))
     }
 
-    @Test func manyStrokesAreCachedSoUnrelatedRendersAreCheap() {
+    @Test func manyStrokesReuseTheExactCachedRaster() throws {
         let strokes = (0 ..< 40).map { index in
             stroke([(0.1 + Double(index) * 0.02, 0.3), (0.2 + Double(index) * 0.02, 0.7)], size: 0.05, feather: 0.6)
         }
-        let big = CGRect(x: 0, y: 0, width: 2560, height: 1707)
-        let mask = LocalMask(shape: .brush(strokes: strokes))
-
-        let start = Date()
-        _ = sampler.maskValue(MaskRenderer.image(for: mask, extent: big), x: 0.5, y: 0.5)
-        let first = Date().timeIntervalSince(start)
-
-        let second = Date()
-        _ = sampler.maskValue(MaskRenderer.image(for: mask, extent: big), x: 0.5, y: 0.5)
-        let cached = Date().timeIntervalSince(second)
-
-        #expect(first < 2, "rasterizing 40 strokes took \(first) s")
-        #expect(cached < first + 0.05)
+        let cache = BrushMaskCache()
+        let first = try #require(BrushRasterizer.raster(strokes, width: 2560, height: 1707, cache: cache))
+        let cached = try #require(BrushRasterizer.raster(strokes, width: 2560, height: 1707, cache: cache))
+        #expect(cached === first, "Unchanged strokes must reuse the existing bitmap")
     }
 }
 

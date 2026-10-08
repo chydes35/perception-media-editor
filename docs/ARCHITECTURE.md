@@ -10,6 +10,10 @@ Original media is never modified. A `.pmedit` project stores references to the o
 
 - `EditorModels.swift`: versioned project, media, adjustments, crop, and preset data.
 - `ProjectDocument.swift`: atomic JSON project persistence and schema guard.
+- `EditorStore+Project.swift`: explicit save state and shared manual/autosave persistence; failed saves preserve the last-saved snapshot and expose retry/Save As recovery.
+- `ExportFileSafety.swift`: original-file protection by canonical path and device/inode identity, plus temporary-sibling rendering and atomic final output publication.
+- `BatchExport.swift`, `EditorStore+Export.swift`, and `ExportWorkspace.swift`: validated batch JPEG settings, stable project-order selection, unique output planning, sequential export state, progress/cancel, and per-file results. Batch publication creates a completed file only if the destination is still unused, so a late collision cannot overwrite a deliverable.
+- `PhotoUndoHistory.swift`: changes for affected assets, with one 100-step / 32 MiB estimated retention budget shared by undo and redo. Session history also has a 16 MiB estimated shoot-wide budget; these budgets do not measure total resident memory.
 - `PhotoRenderer.swift`: an actor that renders previews (working copies in GPU-shared half-float pixel buffers, one edited RAW variant per photo, one full-resolution buffer for the 100% view), histograms, thumbnails, and exports off the main thread. Editing uses a working copy capped at 2560 px (RAW files decode through `CIRAWFilter` at reduced scale into a linear half-float buffer), and only four working copies stay in memory. Full-resolution decodes happen only for export. RAW thumbnails use the camera's embedded JPEG preview.
 - `MediaColorRenderer.swift`: shared Core Image adjustment graph used by photo rendering and timeline clip playback.
 - `EditorStore.swift`: main-actor application state and file-panel workflows. Preview requests collapse while a render is in flight, so slider drags render only the latest values. Unsaved changes are tracked against the last saved project and confirmed before New, Open, and Quit.
@@ -29,9 +33,9 @@ Original media is never modified. A `.pmedit` project stores references to the o
 - `EditorStore+Ingest.swift`: shoot folder layout, remembered locations, and the import flow that fills the project as files arrive.
 - `EditorStore+Culling.swift`: capture-ordered visible photos, filters, selection, rating/flag/label commands, key handling, remove, Delete Rejected, and autosave.
 - `CullingModels.swift`: flag, color label, filter, and the Lightroom key map.
-- `CullPreviewCache.swift`: ten screen-sized previews kept around the current photo. RAW files use the camera's embedded JPEG (about 15 ms each).
+- `CullPreviewCache.swift`: six screen-sized previews kept around the current photo; at most two decodes in flight, with stale queued work replaced on navigation. RAW files use the camera's embedded JPEG (about 15 ms each).
 - `CullWorkspace.swift` and `ImportSheet.swift`: the loupe, compare view, filmstrip, filter bar, and import dialog.
-- `ThumbnailCache.swift`: stable, adjustment-aware JPEG thumbnails in Application Support.
+- `ThumbnailCache.swift`: stable, adjustment-aware JPEG thumbnails in Application Support and one 32 MiB LRU memory budget shared by photo/video thumbnails. The store publishes completion revisions instead of retaining duplicate image dictionaries.
 - `UserPresetRepository.swift`: persistent user presets backed by app preferences.
 - `VideoMediaService.swift`: AVFoundation metadata and poster-frame extraction.
 - `AudioWaveformService.swift`: asynchronous PCM peak extraction with stable memory and Application Support disk caches.
@@ -46,6 +50,8 @@ Photo geometry is stored as optional normalized crop data for backward-compatibl
 
 A project that has a file on disk saves itself 1.5 seconds after each change, and immediately before New, Open, or Quit. Only a project that has never been saved asks whether to save.
 
+Save errors persist separately from general status messages until a successful retry, Save As, or project replacement. New/Open and Quit are gated while a card import is running. Each import owns an operation identity and project generation; replacement invalidates queued callbacks, and a subsequent import waits for a cancelled copy worker to finish cleanup. The final verified-file result is reconciled before autosave. Reference-file imports retain their originating generation too.
+
 ## Project format
 
 The first project format is readable JSON with the `.pmedit` extension. It stores absolute reference-file URLs. Missing originals can be relinked without changing asset identity or losing adjustments. Every format revision increments `schemaVersion`; newer unsupported versions fail explicitly.
@@ -59,3 +65,21 @@ V0.3 stores non-destructive `TimelineClip` records separately from source media.
 Per-clip entries in `audioAdjustmentsByClipID` persist volume, pan intent, fade-in, and fade-out without modifying source media. Timeline playback applies volume and fade ramps through `AVAudioMix`. Pan is reserved in the model but intentionally deferred until a custom audio-processing tap can implement it accurately. Waveform peaks are extracted at a reduced mono sample rate, normalized for display, and cached by source path, modification date, and sample count.
 
 The current sequence uses the first playable clip's preferred transform. The color render layer deliberately excludes photo crop and rotation metadata; per-clip mixed-orientation fitting remains future work.
+
+## Memory management
+
+Photo rendering uses half-float linear working sources to preserve RAW highlight headroom.
+Core Image allocation targets are 256 MB for editing, 128 MB for focus/export, and 32 MB for thumbnails. These are targets rather than process-wide caps. Synchronous
+render operations drain autoreleased intermediates before returning. Closing 100% focus,
+completing or failing an export, and replacing the project clear expendable context caches.
+A macOS memory-pressure observer drops thumbnail, culling, and brush caches, trims the working
+source cache, and clears renderer resources while preserving the visible image and project.
+
+Culling cancellation is cooperative: a RAW decode already inside a synchronous system call
+keeps its concurrency slot until it returns. Cancelled and removed requests cannot repopulate
+the cache. A failed decode is not automatically retried forever. Compare and neighborhood
+requests are submitted together so the comparison image is not cancelled by prefetching.
+
+Use `scripts/profile-memory.sh` for an isolated real-RAW footprint/latency/pixel comparison.
+Set `PME_RAW_SAMPLE_DIR` to a folder of at least four RW2 files. Measurements include compressed
+and graphics memory charged to the process; they are not a whole-app memory ceiling.

@@ -6,7 +6,7 @@ import UniformTypeIdentifiers
 @preconcurrency import Vision
 
 struct SubjectCandidate: Identifiable, Sendable {
-    enum Kind: Sendable { case person, object }
+    enum Kind: Sendable { case person, object, group }
     let id: Int
     let kind: Kind
     let png: Data
@@ -16,6 +16,7 @@ struct SubjectCandidate: Identifiable, Sendable {
         switch kind {
         case .person: "Person \(id)"
         case .object: "Object \(id - 256)"
+        case .group: "People in area \(id - 512)"
         }
     }
 }
@@ -41,14 +42,18 @@ struct SubjectAnalysis: Sendable {
     /// Vision's low-resolution labels, copied into tightly packed top-left rows.
     let personLabels: SubjectLabelMap?
     let foregroundLabels: SubjectLabelMap?
+    var supplementalLabels: SubjectLabelMap? = nil
 
     func candidate(at point: NormalizedPoint) -> SubjectCandidate? {
+        if let id = supplementalLabels?.label(at: point) {
+            return candidates.first { $0.id == id + 512 && $0.kind == .group }
+        }
         if let id = personLabels?.label(at: point),
            let person = candidates.first(where: { $0.id == id && $0.kind == .person }) {
             return person
         }
         if let id = foregroundLabels?.label(at: point) {
-            return candidates.first { $0.id == id + 256 && $0.kind == .object }
+            if let object = candidates.first(where: { $0.id == id + 256 && $0.kind == .object }) { return object }
         }
         return nil
     }
@@ -117,6 +122,9 @@ enum SubjectAnalyzer {
                 ))
             }
         }
+        let recovered = try SubjectGroupRecovery.analyze(image: image, candidates: candidates,
+                                                        labels: [personLabels, foregroundLabels])
+        candidates.append(contentsOf: recovered.candidates)
         candidates.sort { $0.pixelCount > $1.pixelCount }
         guard !candidates.isEmpty else { throw SubjectSelectionError.noSubjects }
         // The overview must contain exactly the candidates offered to the user, including
@@ -124,7 +132,8 @@ enum SubjectAnalyzer {
         let allSubjectsPNG = try unionPNG(candidates.map(\.png))
         return SubjectAnalysis(
             candidates: candidates, allSubjectsPNG: allSubjectsPNG,
-            personLabels: personLabels, foregroundLabels: foregroundLabels
+            personLabels: personLabels, foregroundLabels: foregroundLabels,
+            supplementalLabels: recovered.labels
         )
     }
 
@@ -196,7 +205,7 @@ enum SubjectAnalyzer {
         return try encodeMask(union)
     }
 
-    private static func encodeMask(_ image: CIImage) throws -> Data {
+    static func encodeMask(_ image: CIImage) throws -> Data {
         let context = CIContext(options: [.workingColorSpace: NSNull(), .outputColorSpace: NSNull()])
         guard let grayscale = context.createCGImage(
             image, from: image.extent, format: .L8, colorSpace: CGColorSpaceCreateDeviceGray()

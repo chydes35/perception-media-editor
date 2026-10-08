@@ -49,3 +49,5 @@ Progress: focused boundary tests pass after supplying fixture dimensions to avoi
 The initial Auto Tone failure was reproduced, fixed, made red again by temporarily reverting the contrast change, and made green after restoring it. The first 247-test parallel run timed out three ingest scenarios under heavy concurrent load; isolated ingest tests passed. Explicitly serializing the full suite passed twice, so `scripts/qa.sh` and CI now use that mode.
 
 The local app exported `P1107136.RW2` and `P1107137.RW2` to disposable 2,048-pixel JPEGs. A repeat export produced `-2` filenames without changing the first outputs' checksums. Stopping a third run during the first RAW render left no new file. Keep this plan active for representative 100–200-photo throughput, whole-app memory, and broader output-quality acceptance.
+
+Candidate CI setup: the first run failed before Swift tests because `rg` was unavailable on the macOS runner. Add an explicit ripgrep dependency installation before QA; validate the corrected workflow on the final PR head. This does not change app behavior.

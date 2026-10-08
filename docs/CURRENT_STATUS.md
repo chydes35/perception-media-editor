@@ -21,7 +21,7 @@ The in-app workflow agents are described in [AGENTS.md](AGENTS.md). Coding-agent
 - **NOT VERIFIED — opt-in checks:** three performance diagnostics, broad Auto photo preview comparison, native indoor/outdoor sky inference, and the real two-person subject fixture were not configured in this run. A skip is not a pass.
 - **NOT VERIFIED — combined candidate acceptance:** fresh hands-on UI/accessibility, broad photographic selection/output quality, release packaging/signing, and the full 100–200-distinct-RW2 displayed workflow/memory/throughput run.
 
-**NOT VERIFIED — candidate CI:** the macOS 15 Test workflow is running on draft PR #7. Local QA is complete; the final-head CI result will be recorded on the PR before handoff.
+**NOT VERIFIED — candidate CI:** the first macOS 15 Test run stopped before Swift tests because the runner lacked `rg`. The workflow now installs ripgrep before source review; the corrected Test workflow is running on draft PR #7. Local QA is complete; the final-head CI result will be recorded on the PR before handoff.
 
 Current QA log: `/private/tmp/perception-batch-boundaries-full-qa.log`; boundary mutation log: `/private/tmp/perception-batch-boundaries-causal-red.log`. Earlier integration log: `/private/tmp/perception-integration-full-qa.log`. Focused and causal logs use `/private/tmp/perception-integration-*.log`. See the [completed local integration plan](../plans/completed/photo-workflow-integration.md) and [Auto/schema integration decision](decisions/2026-10-07-photo-integration.md).
 

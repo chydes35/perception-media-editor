@@ -42,6 +42,13 @@ final class EditorStore: ObservableObject {
     @Published var brushSize = 0.06
     @Published var brushFeather = 0.5
     @Published var brushErasing = false
+    @Published var retouchTool: RetouchKind?
+    @Published var selectedRetouchID: UUID?
+    @Published var cloneSource: NormalizedPoint?
+    @Published var retouchPickingSource = false
+    @Published var retouchSize = 0.035
+    @Published var retouchFeather = 0.6
+    @Published var retouchOpacity = 1.0
     /// Each photo's edit steps for this session, oldest first. Not saved in the project.
     @Published var history: [UUID: [HistoryEntry]] = [:]
     @Published var copiedSettings: CopiedSettings?
@@ -297,7 +304,10 @@ final class EditorStore: ObservableObject {
             selectVideo(asset)
             return
         }
-        if selectedAssetID != asset.id { endMaskEditing() }
+        if selectedAssetID != asset.id {
+            endMaskEditing()
+            endRetouchEditing()
+        }
         selectedAssetID = asset.id
         selectedAssetIDs = [asset.id]
         refreshPreview()
@@ -600,6 +610,8 @@ final class EditorStore: ObservableObject {
 
     func beginCropEditing() {
         guard selectedAsset != nil, !isEditingCrop else { return }
+        endMaskEditing()
+        endRetouchEditing()
         exitZoom100()
         beginAdjustmentEdit()
         isEditingCrop = true
@@ -877,6 +889,8 @@ final class EditorStore: ObservableObject {
 
     private func resetPhotoRenderState() {
         cancelAutoAdjustment()
+        endMaskEditing()
+        endRetouchEditing()
         needsAnotherPreviewRender = false
         originalPreviewAssetID = nil
         isEditingCrop = false

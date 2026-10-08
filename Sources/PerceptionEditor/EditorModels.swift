@@ -210,6 +210,8 @@ struct PhotoAdjustments: Codable, Equatable, Sendable {
     var hsl: HSLAdjustments?
     /// Local adjustments, in order. Positions are in the original image's coordinates.
     var masks: [LocalMask] = []
+    /// Photo-specific repairs in original-image coordinates.
+    var retouches: [RetouchStroke] = []
 
     static let neutral = PhotoAdjustments()
 
@@ -237,7 +239,7 @@ struct PhotoAdjustments: Codable, Equatable, Sendable {
 extension PhotoAdjustments {
     enum CodingKeys: String, CodingKey {
         case exposure, contrast, highlights, shadows, temperature, tint, vibrance, saturation
-        case sharpness, vignette, rotationQuarterTurns, cropAspect, cropRect, straightenDegrees, raw, curves, hsl, masks
+        case sharpness, vignette, rotationQuarterTurns, cropAspect, cropRect, straightenDegrees, raw, curves, hsl, masks, retouches
     }
 
     /// Every field decodes with a default, so projects saved before a field existed still open.
@@ -261,6 +263,7 @@ extension PhotoAdjustments {
         curves = try container.decodeIfPresent(ToneCurves.self, forKey: .curves) ?? ToneCurves()
         hsl = try container.decodeIfPresent(HSLAdjustments.self, forKey: .hsl)
         masks = try container.decodeIfPresent([LocalMask].self, forKey: .masks) ?? []
+        retouches = try container.decodeIfPresent([RetouchStroke].self, forKey: .retouches) ?? []
     }
 }
 
@@ -346,7 +349,7 @@ struct PhotoPreset: Identifiable, Codable, Equatable, Sendable {
 }
 
 struct EditorProject: Codable, Equatable {
-    static let currentSchemaVersion = 6
+    static let currentSchemaVersion = 7
 
     var schemaVersion = currentSchemaVersion
     var id = UUID()

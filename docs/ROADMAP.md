@@ -77,7 +77,7 @@ See [Memory Optimization](MEMORY_OPTIMIZATION_2026-09-28.md) for measurements an
 - [x] Gradient masks sync, copy, and save into presets; brush strokes stay with their photo
 - [ ] Subject and sky selection (Vision)
 - [ ] Color and luminance range masks
-- [ ] Spot healing and clone
+- [x] Spot healing and clone: paint soft repairs, adjust source points, and retain edits through crop, rotation, save, and export
 
 ### Phase 4 — Delivery (in progress)
 

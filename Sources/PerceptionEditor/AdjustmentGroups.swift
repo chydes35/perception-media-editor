@@ -122,6 +122,7 @@ extension PhotoAdjustments {
         note("Tone Curve", curves != old.curves)
         note("HSL", hsl != old.hsl)
         note("Masks", masks != old.masks)
+        note("Retouch", retouches != old.retouches)
         note("Noise Reduction", raw.luminanceNoiseReduction != old.raw.luminanceNoiseReduction
             || raw.colorNoiseReduction != old.raw.colorNoiseReduction)
         note("RAW Sharpness", raw.sharpness != old.raw.sharpness)

@@ -1,6 +1,6 @@
 # Current development status
 
-Updated: 2026-10-07. This maps the local integration candidate, not a certified release. The branch is `codex/photo-workflow-integration`; snapshot commit `c0f10e5` preserves the formerly uncommitted reliability/memory/batch-delivery work. GitHub main at `0350a4c` and the advanced local photo branch at `5e574f9` are integrated. Their original branches and the second worktree remain available. The combined candidate is committed locally and ready for a draft PR; the installed app was not replaced. Automatic approval review blocked the GitHub push pending explicit user authorization to send this source and documentation to `chydes35/perception-media-editor`.
+Updated: 2026-10-07. This maps the local integration candidate, not a certified release. The branch is `codex/photo-workflow-integration`; snapshot commit `c0f10e5` preserves the formerly uncommitted reliability/memory/batch-delivery work. GitHub main at `0350a4c` and the advanced local photo branch at `5e574f9` are integrated. Their original branches and the second worktree remain available. The combined candidate is pushed to [draft PR #7](https://github.com/chydes35/perception-media-editor/pull/7) following explicit user authorization. The installed app was not replaced.
 
 ## Product position
 
@@ -21,7 +21,7 @@ The in-app workflow agents are described in [AGENTS.md](AGENTS.md). Coding-agent
 - **NOT VERIFIED — opt-in checks:** three performance diagnostics, broad Auto photo preview comparison, native indoor/outdoor sky inference, and the real two-person subject fixture were not configured in this run. A skip is not a pass.
 - **NOT VERIFIED — combined candidate acceptance:** fresh hands-on UI/accessibility, broad photographic selection/output quality, release packaging/signing, and the full 100–200-distinct-RW2 displayed workflow/memory/throughput run.
 
-**NOT VERIFIED — candidate CI:** automatic approval review blocked the remote push; draft submission and final-head macOS 15 CI await explicit authorization. Local QA is complete.
+**NOT VERIFIED — candidate CI:** the macOS 15 Test workflow is running on draft PR #7. Local QA is complete; the final-head CI result will be recorded on the PR before handoff.
 
 Current QA log: `/private/tmp/perception-batch-boundaries-full-qa.log`; boundary mutation log: `/private/tmp/perception-batch-boundaries-causal-red.log`. Earlier integration log: `/private/tmp/perception-integration-full-qa.log`. Focused and causal logs use `/private/tmp/perception-integration-*.log`. See the [completed local integration plan](../plans/completed/photo-workflow-integration.md) and [Auto/schema integration decision](decisions/2026-10-07-photo-integration.md).
 

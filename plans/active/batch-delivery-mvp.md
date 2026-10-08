@@ -14,7 +14,7 @@ Out of scope: PNG batch, metadata/IPTC, watermark, output sharpening, persistent
 
 ## Current state and affected contracts
 
-`ExportWorkspace.swift` exposes one-photo export. `EditorStore.exportSelectedPhoto()` uses a save panel. `PhotoRenderer.export()` renders a full-resolution source and `ExportFileSafety` prevents writes to referenced originals and publishes atomically. `selectedAssetIDs` is a set; use `project.media` order for a stable queue. No `.pmedit` schema change is required.
+`ExportWorkspace.swift` exposes single-photo and batch export. `EditorStore.exportSelectedPhoto()` uses a save panel; `EditorStore+Export.swift` captures a stable project-order queue and its originating project generation. `PhotoRenderer.export()` renders a full-resolution source and `ExportFileSafety` prevents writes to referenced originals and publishes atomically. `selectedAssetIDs` is a set, so selection is resolved through `project.media` order. The integrated candidate remains on `.pmedit` schema 10; this work changes no persisted representation.
 
 ## Implementation steps
 
@@ -32,13 +32,19 @@ Protect all project original URLs, including symlink/hard-link aliases. Allocate
 
 | Gate | Required check | Result |
 | --- | --- | --- |
-| Static/build | `git diff --check`, Swift build, signed app bundle | PASS — final QA and `codesign --verify --deep --strict` |
-| Unit/integration | Auto Tone repro, naming, collision, resize, cancellation, original protection; full Swift Testing | PASS — 247 tests in 43 suites via `./scripts/qa.sh`; six focused batch tests pass |
-| Runtime/UI | Select multiple photos, export and cancel, inspect results | PASS for two real RW2 files — UI showed 2/2 success, numbered repeat outputs, and 0/2 stopped after Stop |
-| Media quality | Representative RW2 output | PARTIAL — one JPEG inspected visually; both 2,048 × 1,366 outputs decoded; broader color/preview comparison not verified |
+| Static/build | `git diff --check`, Swift build, signed app bundle | PASS — local candidate debug build and diff/source checks via `./scripts/qa.sh`; release bundle/signature NOT VERIFIED for this candidate. September signature checks are historical. |
+| Unit/integration | Naming, collision, resize, publication cancellation, original protection, failure continuation, stale completion; full Swift Testing and CI | Focused batch tests PASS — 10 tests in three suites, including six new boundary scenarios. Full candidate QA PASS — 291 reported tests/56 suites, 284 executed, seven skipped, 38.450 seconds. Candidate CI NOT VERIFIED — automatic approval review blocked the GitHub push pending explicit destination authorization. |
+| Runtime/UI | Select multiple photos, export and cancel, inspect results | NOT VERIFIED for this candidate. Historical two-real-RW2 check showed 2/2 success, numbered repeat outputs, and 0/2 stopped after Stop. |
+| Media quality | Representative RW2 output | NOT VERIFIED for full acceptance. Historical check decoded both 2,048 × 1,366 outputs and visually inspected one JPEG. Broad current output comparison remains open. |
 | Performance | 100–200-file target-Mac export footprint and throughput | NOT VERIFIED — only two real RW2 files in the UI pass |
 
 ## Decisions and remaining work
+
+### October 7 — queue boundaries and candidate CI
+
+User authorized the next step after local integration `8a9d736`: deterministic mid-render cancellation, continuation after a failed file, and stale-completion checks across project replacement. Use an optional injected asynchronous file exporter to pause the queue at a real temporary-file publication boundary; the production default remains one sequential `PhotoRenderer`. Tests use disposable JPEG fixtures and the production atomic publisher, without writes to originals. Run focused tests and full serial QA, create a draft PR for the integrated candidate, and verify macOS 15/Swift CI at that PR's final commit. Do not merge remotely or close the full-shoot milestone. Update the candidate status and label current evidence separately from September checks.
+
+Progress: focused boundary tests pass after supplying fixture dimensions to avoid an unrelated asynchronous metadata backfill on reopen. Mid-publication Stop is checked both on the first file and after one completed file; the missing-source scenario uses the real renderer; late success/failure and replacement-queue state are controlled deterministically. The production renderer, cache target, and publication policy remain unchanged. Mutation verification produced 20 failed assertions without the publication cancellation and generation guards; restoration passes full candidate QA (291 reported tests, 284 executed, seven skipped). Candidate CI is NOT VERIFIED: automatic approval review blocked pushing source/documentation to `chydes35/perception-media-editor` until explicitly authorized. The local candidate is ready; no draft PR was created. No persisted schema change is planned.
 
 The initial Auto Tone failure was reproduced, fixed, made red again by temporarily reverting the contrast change, and made green after restoring it. The first 247-test parallel run timed out three ingest scenarios under heavy concurrent load; isolated ingest tests passed. Explicitly serializing the full suite passed twice, so `scripts/qa.sh` and CI now use that mode.
 

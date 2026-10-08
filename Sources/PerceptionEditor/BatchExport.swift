@@ -1,5 +1,9 @@
 import Foundation
 
+/// A file-level seam for deterministic queue and publication-boundary verification.
+/// The application default uses one sequential PhotoRenderer for the entire queue.
+typealias BatchPhotoExporter = @Sendable (BatchExportItem, URL, BatchExportRecipe, [URL]) async throws -> Void
+
 struct BatchExportRecipe: Sendable {
     var jpegQuality: Double = 0.92
     /// Nil preserves the finished photo's full pixel dimensions.

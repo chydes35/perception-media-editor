@@ -102,6 +102,7 @@ final class EditorStore: ObservableObject {
     @Published var isExporting = false
     @Published var batchExportState = BatchExportState()
     var batchExportTask: Task<Void, Never>?
+    let batchPhotoExporter: BatchPhotoExporter?
     @Published private(set) var thumbnailRevision = 0
 
     var projectURL: URL?
@@ -150,10 +151,12 @@ final class EditorStore: ObservableObject {
     init(
         presetRepository: UserPresetRepository = UserPresetRepository(),
         ingestScanner: @escaping @Sendable (URL) -> [SourceFile] = { IngestService.scan($0) },
-        autoAdjustmentAnalyzer: (@Sendable (URL, PhotoAdjustments) async throws -> AutoAdjustmentSuggestion)? = nil
+        autoAdjustmentAnalyzer: (@Sendable (URL, PhotoAdjustments) async throws -> AutoAdjustmentSuggestion)? = nil,
+        batchPhotoExporter: BatchPhotoExporter? = nil
     ) {
         self.ingestScanner = ingestScanner
         self.autoAdjustmentAnalyzer = autoAdjustmentAnalyzer
+        self.batchPhotoExporter = batchPhotoExporter
         userPresetRepository = presetRepository
         userPresets = presetRepository.load()
         cullCache.onLoaded = { [weak self] id in self?.cullPreviewLoaded(id) }

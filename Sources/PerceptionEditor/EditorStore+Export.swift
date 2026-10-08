@@ -45,6 +45,7 @@ extension EditorStore {
         }
         let originals = project.media.map(\.url)
         let generation = projectGeneration
+        let exportFile = batchPhotoExporter
         isExporting = true
         batchExportState = BatchExportState(total: items.count)
         statusMessage = "Exporting \(items.count) photo\(items.count == 1 ? "" : "s")…"
@@ -62,12 +63,16 @@ extension EditorStore {
                         for: item, in: folder, suffix: recipe.filenameSuffix,
                         reserved: &reserved, protecting: originals
                     )
-                    try await renderer.export(
-                        url: item.source, adjustments: item.adjustments, to: destination,
-                        type: .jpeg, quality: recipe.jpegQuality,
-                        protectedOriginals: originals, longEdgePixels: recipe.longEdgePixels,
-                        replaceExisting: false
-                    )
+                    if let exportFile {
+                        try await exportFile(item, destination, recipe, originals)
+                    } else {
+                        try await renderer.export(
+                            url: item.source, adjustments: item.adjustments, to: destination,
+                            type: .jpeg, quality: recipe.jpegQuality,
+                            protectedOriginals: originals, longEdgePixels: recipe.longEdgePixels,
+                            replaceExisting: false
+                        )
+                    }
                     guard generation == projectGeneration else { return }
                     batchExportState.results.append(BatchExportFileResult(
                         id: item.id, sourceName: item.filename, output: destination, error: nil

@@ -7,7 +7,8 @@ import UniformTypeIdentifiers
 
 private enum AutoFixture {
     static let space = CGColorSpace(name: CGColorSpace.sRGB)!
-    static let context = CIContext()
+    // Keep fixture contexts local to each call on SDKs where CIContext is not Sendable.
+    static var context: CIContext { CIContext() }
 
     static func gradient(low: Double, high: Double, cast: (Double, Double, Double) = (1, 1, 1)) -> CIImage {
         var buffer = [Float]()

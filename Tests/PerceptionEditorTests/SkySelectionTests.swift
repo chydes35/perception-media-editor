@@ -7,7 +7,10 @@ import UniformTypeIdentifiers
 @testable import PerceptionEditor
 
 private enum SkyFixture {
-    static let context = CIContext(options: [.workingColorSpace: NSNull(), .outputColorSpace: NSNull()])
+    // Keep fixture contexts local to each call on SDKs where CIContext is not Sendable.
+    static var context: CIContext {
+        CIContext(options: [.workingColorSpace: NSNull(), .outputColorSpace: NSNull()])
+    }
 
     static func topMask() throws -> CIImage {
         let labels = try MLMultiArray(shape: [24, 32], dataType: .int32)

@@ -25,7 +25,10 @@ private enum SubjectFixture {
         return data as Data
     }
 
-    static let context = CIContext(options: [.workingColorSpace: NSNull(), .outputColorSpace: NSNull()])
+    // Keep fixture contexts local to each call on SDKs where CIContext is not Sendable.
+    static var context: CIContext {
+        CIContext(options: [.workingColorSpace: NSNull(), .outputColorSpace: NSNull()])
+    }
 
     static func weight(_ image: CIImage, x: Double, y: Double = 0.5) -> Int {
         var pixel = [UInt8](repeating: 0, count: 4)

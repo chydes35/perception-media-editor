@@ -104,3 +104,22 @@ struct SubjectRefinementTests {
         #expect(afterAdd.strokes.last?.isErase == false)
     }
 }
+
+@MainActor
+struct SubjectFailureStatusTests {
+    @Test func unreadablePhotoEndsAnalysisWithAnErrorStatusAndNoEdit() async throws {
+        let files = try TempDirectory()
+        let missing = MediaAsset(url: files.url.appendingPathComponent("missing.jpg"), pixelWidth: 400, pixelHeight: 300)
+        let store = EditorStore()
+        store.project.media = [missing]
+        store.selectedAssetID = missing.id
+        let before = store.project
+        store.startSubjectSelection()
+        let deadline = Date().addingTimeInterval(5)
+        while store.isAnalyzingSubjects, Date() < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(!store.isAnalyzingSubjects)
+        #expect(store.lastError == SubjectSelectionError.noPhoto.localizedDescription)
+        #expect(store.statusMessage == "Subject selection could not be completed")
+        #expect(store.project == before && store.masks.isEmpty)
+    }
+}

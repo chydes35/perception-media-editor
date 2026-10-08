@@ -219,6 +219,8 @@ actor PhotoRenderer {
     }
 
     private let context: CIContext
+    private let memoryTargetMB: Int?
+    private var repairContext: CIContext?
     private let workingColorSpace = CGColorSpace(name: CGColorSpace.extendedLinearSRGB)!
     private let displayColorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
     private let workingCacheLimit: Int
@@ -230,9 +232,25 @@ actor PhotoRenderer {
     /// Half-float working precision is retained for RAW highlight recovery.
     init(workingCacheLimit: Int = 4, memoryTargetMB: Int? = 256) {
         self.workingCacheLimit = max(0, workingCacheLimit)
+        self.memoryTargetMB = memoryTargetMB
         var options: [CIContextOption: Any] = [.cacheIntermediates: false, .useSoftwareRenderer: false]
         if let memoryTargetMB { options[.memoryTarget] = max(1, memoryTargetMB) }
         context = CIContext(options: options)
+    }
+
+    /// Full-resolution healing needs more than 128 MiB for its color-matching blur.
+    /// Keep a bounded 256 MiB target, preserving the normal target for other edits.
+    private func fullResolutionContext(for adjustments: PhotoAdjustments) -> CIContext {
+        guard let memoryTargetMB, memoryTargetMB < 256,
+              adjustments.retouches.contains(where: {
+                  $0.kind == .heal && $0.isEnabled && $0.opacity > 0 && !$0.points.isEmpty
+              }) else { return context }
+        if let repairContext { return repairContext }
+        let newContext = CIContext(options: [
+            .cacheIntermediates: false, .useSoftwareRenderer: false, .memoryTarget: 256
+        ])
+        repairContext = newContext
+        return newContext
     }
 
     func preview(url: URL, adjustments: PhotoAdjustments, overlayMaskID: UUID? = nil) -> PhotoPreviewResult? {
@@ -321,8 +339,9 @@ actor PhotoRenderer {
         longEdgePixels: Int? = nil,
         replaceExisting: Bool = true
     ) throws {
-        defer { context.clearCaches() }
+        defer { clearRenderCaches() }
         try autoreleasepool {
+            let exportContext = fullResolutionContext(for: adjustments)
             let originals = protectedOriginals + [url]
             try ExportFileSafety.validate(destination, protecting: originals)
             guard let source = PhotoSourceLoader.load(url, maxDimension: nil, raw: adjustments.raw) else {
@@ -344,11 +363,11 @@ actor PhotoRenderer {
                 to: destination, protecting: originals, replaceExisting: replaceExisting
             ) { temporary in
                 if type == .png {
-                    try context.writePNGRepresentation(
+                    try exportContext.writePNGRepresentation(
                         of: image, to: temporary, format: .RGBA8, colorSpace: displayColorSpace
                     )
                 } else {
-                    try context.writeJPEGRepresentation(
+                    try exportContext.writeJPEGRepresentation(
                         of: image, to: temporary, colorSpace: displayColorSpace,
                         options: [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: quality]
                     )
@@ -385,7 +404,7 @@ actor PhotoRenderer {
             // Core Image measures from the bottom-left corner.
             let region = CGRect(x: extent.minX + left, y: extent.minY + extent.height - top - height, width: width, height: height)
 
-            guard let cgImage = context.createCGImage(
+            guard let cgImage = fullResolutionContext(for: adjustments).createCGImage(
                 finished.cropped(to: region),
                 from: region,
                 format: .RGBA8,
@@ -403,18 +422,20 @@ actor PhotoRenderer {
     /// Frees the full-resolution buffer once the 100% view is closed.
     func releaseFullResolution() {
         fullResolution = nil
-        context.clearCaches()
+        clearRenderCaches()
     }
 
     func clearRenderCaches() {
         context.clearCaches()
+        repairContext?.clearCaches()
+        repairContext = nil
     }
 
     func releaseMemoryUnderPressure() {
         // Preserve only the most recent source(s), so the visible photo stays responsive.
         if workingSources.count > 2 { workingSources.removeFirst(workingSources.count - 2) }
         rawInfoCache.removeAll()
-        context.clearCaches()
+        clearRenderCaches()
     }
 
     var hasFullResolution: Bool { fullResolution != nil }
@@ -450,7 +471,7 @@ actor PhotoRenderer {
         workingSources.removeAll()
         fullResolution = nil
         rawInfoCache.removeAll()
-        context.clearCaches()
+        clearRenderCaches()
     }
 
     var cachedWorkingSourceCount: Int { workingSources.count }

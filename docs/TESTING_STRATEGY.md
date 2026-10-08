@@ -20,3 +20,7 @@ The source reviewer reports patterns for human inspection and does not establish
 Small documentation-only changes need link and diff checks. A logic fix needs a focused reproduction and relevant tests. A substantial feature or milestone needs the automated gate plus the runtime, media, and performance checks named in its ExecPlan. A release needs the built app, signing verification, representative user flows, and outstanding limitation review.
 
 Each completion report labels every applicable gate **PASS**, **FAIL**, or **NOT VERIFIED**, with the command, hardware, fixture, or reason. A skipped test is not a pass. Keep a milestone active if its required acceptance evidence is missing.
+
+## Saved real-RAW workflow reproduction
+
+`RealWorkflowTests` is opt-in. Set `PME_WORKFLOW_PROJECT` to a disposable schema-10 project referencing copied RAW files, including a photo with both masks and a heal stroke. Set `PME_WORKFLOW_OUTPUT_DIR` to a disposable directory outside the referenced sources, then run `./scripts/test.sh --no-parallel --filter RealWorkflowTests` with the app closed. The test separates global/mask/healing/combined edits, compares bounded export against an unrestricted pixel reference, checks healed focus release, and asks native analysis for a portrait candidate. Inputs remain read-only; the test writes JPEG outputs. These local fixtures are not uploaded to CI. See the [target-Mac report](WORKFLOW_VALIDATION_2026-10-07.md) for the causal RAW failure and limitations; the portable PNG test alone does not reproduce that failure.

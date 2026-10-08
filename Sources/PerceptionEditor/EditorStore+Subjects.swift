@@ -42,6 +42,7 @@ extension EditorStore {
                 guard let self, subjectRequestID == requestID else { return }
                 isAnalyzingSubjects = false
                 lastError = error.localizedDescription
+                statusMessage = "Subject selection could not be completed"
             }
         }
     }

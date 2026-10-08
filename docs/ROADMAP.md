@@ -42,7 +42,7 @@ See [Memory Optimization](MEMORY_OPTIMIZATION_2026-09-28.md) for measurements an
 
 #### Local integration — 2026-10-07
 
-The [integration plan](../plans/completed/photo-workflow-integration.md) combines GitHub main, the advanced local photo tools, and the preserved reliability/memory/batch-delivery work on `codex/photo-workflow-integration`. The candidate retains project schema 10. Automated integration checks do not close the open UI, image-quality, or 100–200-photo performance gates.
+The [integration plan](../plans/completed/photo-workflow-integration.md) combines GitHub main, the advanced local photo tools, and the preserved reliability/memory/batch-delivery work on `codex/photo-workflow-integration`. The candidate retains project schema 10. Automated integration checks do not close the open UI, image-quality, or 100–200-photo performance gates. The [target-Mac validation](WORKFLOW_VALIDATION_2026-10-07.md) adds displayed evidence from 100 distinct S5 photos across dated library folders and records the healing allocation defect/correction; genuine single-shoot, broad visual, and threshold-based acceptance remain open.
 
 ### Phase 1 — Library and culling (complete, PR #2)
 

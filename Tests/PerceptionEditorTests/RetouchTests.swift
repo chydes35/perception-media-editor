@@ -114,6 +114,31 @@ struct RetouchTests {
         #expect(sampler.pixel(exported, x: 75, y: 50)[0] > 150)
         #expect(sampler.pixel(exported, x: 5, y: 5)[2] < 100)
     }
+
+    @Test func largeHealingExportPreservesReferencePixelsWithABoundedRenderer() async throws {
+        let files = try TempDirectory()
+        let original = files.url.appendingPathComponent("large.png")
+        let extent = CGRect(x: 0, y: 0, width: 6000, height: 4000)
+        let image = twoColorImage().transformed(by: CGAffineTransform(scaleX: 60, y: 40)).cropped(to: extent)
+        let space = CGColorSpace(name: CGColorSpace.sRGB)!
+        try CIContext().writePNGRepresentation(of: image, to: original, format: .RGBA8, colorSpace: space)
+        var edits = PhotoAdjustments()
+        edits.retouches = [RetouchStroke(kind: .heal, points: [NormalizedPoint(x: 0.64, y: 0.37)],
+                                        source: NormalizedPoint(x: 0.72, y: 0.32), size: 0.035, feather: 0.6)]
+        let renderer = PhotoRenderer(workingCacheLimit: 0, memoryTargetMB: 128)
+        let destination = files.url.appendingPathComponent("healed.png")
+        try await renderer.export(url: original, adjustments: edits, to: destination, type: .png, longEdgePixels: 2048)
+        #expect(PhotoSourceLoader.dimensions(of: destination).map { [$0.width, $0.height] } == [2048, 1366])
+        let referenceURL = files.url.appendingPathComponent("reference.png")
+        try await PhotoRenderer(workingCacheLimit: 0, memoryTargetMB: nil).export(
+            url: original, adjustments: edits, to: referenceURL, type: .png, longEdgePixels: 2048)
+        let actual = try #require(CIImage(contentsOf: destination))
+        let reference = try #require(CIImage(contentsOf: referenceURL))
+        let sampler = RepairSampler()
+        for point in [(100, 100), (1311, 860), (1474, 929)] {
+            #expect(sampler.pixel(actual, x: point.0, y: point.1) == sampler.pixel(reference, x: point.0, y: point.1))
+        }
+    }
 }
 
 @MainActor

@@ -3,45 +3,44 @@ import Foundation
 extension EditorStore {
     var canAutoAdjustPhoto: Bool {
         guard let asset = selectedAsset, asset.kind == .photo else { return false }
-        return workspace != .video && workspace != .agents && !isMissing(asset)
-            && !isAutoAdjusting && !isEditingCrop && activeAdjustmentSnapshot == nil
+        return workspace == .photo && !isMissing(asset) && !isAnalyzingAuto
+            && !isEditingCrop && activeAdjustmentSnapshot == nil
     }
 
     @discardableResult
-    func autoAdjustPhoto() -> Task<Void, Never>? {
+    func startAutoAdjustment() -> Task<Void, Never>? {
         guard canAutoAdjustPhoto, let asset = selectedAsset else { return nil }
-        if workspace != .photo { workspace = .photo }
+        cancelWhiteBalancePicking()
+        cancelSubjectSelection()
+        endMaskEditing()
+        endRetouchEditing()
+        let current = selectedAdjustments
+        let projectID = project.id
         let generation = projectGeneration
-        let before = selectedAdjustments
-        let operation = UUID()
-        autoAdjustmentID = operation
-        isAutoAdjusting = true
-        statusMessage = "Analyzing \(asset.filename)…"
-        let renderer = photoRenderer
-        let analyzer = autoToneAnalyzer
+        let requestID = UUID()
+        autoRequestID = requestID
+        isAnalyzingAuto = true
+        statusMessage = "Finding suggested basic adjustments…"
+        let analyzer = autoAnalyzer
+        let analyze = autoAdjustmentAnalyzer
         let task = Task { [weak self] in
-            let result: AutoToneAdjustments?
-            if let analyzer { result = await analyzer(asset.url, before) }
-            else { result = await renderer.autoTone(url: asset.url, adjustments: before) }
-            guard let self, autoAdjustmentID == operation else { return }
-            isAutoAdjusting = false
-            autoAdjustmentTask = nil
-            autoAdjustmentID = nil
-            guard !Task.isCancelled, projectGeneration == generation, selectedAssetID == asset.id,
-                  project.media.contains(where: { $0.id == asset.id && $0.url == asset.url }) else { return }
-            guard selectedAdjustments == before, activeAdjustmentSnapshot == nil, !isEditingCrop else {
-                statusMessage = "Photo changed while Auto was analyzing. Run Auto again."
-                return
+            do {
+                try Task.checkCancellation()
+                let suggestion: AutoAdjustmentSuggestion
+                if let analyze { suggestion = try await analyze(asset.url, current) }
+                else { suggestion = try await analyzer.analyze(url: asset.url, current: current) }
+                try Task.checkCancellation()
+                self?.finishAutoAdjustment(suggestion, assetID: asset.id, sourceURL: asset.url,
+                                           projectID: projectID, generation: generation,
+                                           requestID: requestID, original: current)
+            } catch {
+                guard let self, autoRequestID == requestID, projectGeneration == generation else { return }
+                isAnalyzingAuto = false
+                autoAdjustmentTask = nil
+                if error is CancellationError { return }
+                lastError = error.localizedDescription
+                statusMessage = "Auto adjustment could not be completed"
             }
-            guard let result else {
-                lastError = "This photo could not be analyzed. Check that the original is available."
-                statusMessage = "Auto adjustment failed"
-                return
-            }
-            let changed = applyToPhotos([asset.id], label: "Auto Adjust") { result.applying(to: $0) }
-            if previewMode == .original { previewMode = .edited }
-            if isZoom100 { refreshFocus() }
-            statusMessage = changed > 0 ? "Auto adjusted \(asset.filename)" : "Auto: no further changes needed"
         }
         autoAdjustmentTask = task
         return task
@@ -50,7 +49,21 @@ extension EditorStore {
     func cancelAutoAdjustment() {
         autoAdjustmentTask?.cancel()
         autoAdjustmentTask = nil
-        autoAdjustmentID = nil
-        isAutoAdjusting = false
+        autoRequestID = UUID()
+        isAnalyzingAuto = false
+    }
+
+    func finishAutoAdjustment(_ suggestion: AutoAdjustmentSuggestion, assetID: UUID, sourceURL: URL,
+                              projectID: UUID, generation: UUID, requestID: UUID, original: PhotoAdjustments) {
+        guard isAnalyzingAuto, autoRequestID == requestID else { return }
+        isAnalyzingAuto = false
+        autoAdjustmentTask = nil
+        guard projectGeneration == generation, selectedAssetID == assetID, selectedAsset?.url == sourceURL,
+              project.id == projectID, workspace == .photo,
+              !isEditingCrop, activeAdjustmentSnapshot == nil, selectedAdjustments == original else { return }
+        let changed = applyToPhotos([assetID], label: "Auto") { suggestion.applying(to: $0) }
+        previewMode = .edited
+        if isZoom100 { refreshFocus() }
+        statusMessage = changed > 0 ? "Auto applied. Fine-tune the basic sliders to taste." : "Auto: no further changes needed"
     }
 }

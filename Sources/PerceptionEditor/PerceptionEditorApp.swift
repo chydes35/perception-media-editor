@@ -51,7 +51,7 @@ struct PerceptionEditorApp: App {
                 Button("Show Original") { store.setShowingOriginal(true) }
                 Button("Show Edited") { store.setShowingOriginal(false) }
                 Divider()
-                Button("Auto Adjust") { store.autoAdjustPhoto() }
+                Button("Auto Adjust") { store.startAutoAdjustment() }
                     .keyboardShortcut("a", modifiers: [.command, .shift])
                     .disabled(!store.canAutoAdjustPhoto)
                 Button("Reset Adjustments") { store.resetAdjustments() }

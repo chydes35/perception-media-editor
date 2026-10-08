@@ -2,6 +2,7 @@ import CoreGraphics
 import CoreImage
 import CoreImage.CIFilterBuiltins
 import Foundation
+import ImageIO
 
 // MARK: - Model
 
@@ -40,6 +41,40 @@ struct BrushStroke: Codable, Hashable, Sendable {
     }
 }
 
+/// A detected selection in the oriented source photo, with optional hand-painted corrections.
+/// The grayscale PNG is bounded to 3072 pixels on its longest side so projects stay portable.
+struct SubjectMask: Codable, Hashable, Sendable {
+    var png: Data
+    var strokes: [BrushStroke] = []
+    /// Fractions of the oriented photo's longer side; consistent at preview/export sizes.
+    var edgeShift = 0.0
+    var edgeFeather = 0.0
+    /// 0 preserves Vision's soft detail; 1 increases contrast around the 50% boundary.
+    var edgeContrast = 0.0
+
+    init(png: Data, strokes: [BrushStroke] = [], edgeShift: Double = 0,
+         edgeFeather: Double = 0, edgeContrast: Double = 0) {
+        self.png = png
+        self.strokes = strokes
+        self.edgeShift = edgeShift
+        self.edgeFeather = edgeFeather
+        self.edgeContrast = edgeContrast
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case png, strokes, edgeShift, edgeFeather, edgeContrast
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        png = try values.decode(Data.self, forKey: .png)
+        strokes = try values.decodeIfPresent([BrushStroke].self, forKey: .strokes) ?? []
+        edgeShift = try values.decodeIfPresent(Double.self, forKey: .edgeShift) ?? 0
+        edgeFeather = try values.decodeIfPresent(Double.self, forKey: .edgeFeather) ?? 0
+        edgeContrast = try values.decodeIfPresent(Double.self, forKey: .edgeContrast) ?? 0
+    }
+}
+
 enum MaskShape: Codable, Hashable, Sendable {
     /// Full effect at `start`, fading to none at `end`, and extending past both.
     case linear(start: NormalizedPoint, end: NormalizedPoint)
@@ -47,11 +82,31 @@ enum MaskShape: Codable, Hashable, Sendable {
     /// clockwise, and `feather` is how much of the radius fades out at the edge (0–1).
     case radial(center: NormalizedPoint, radiusX: Double, radiusY: Double, rotation: Double, feather: Double)
     case brush(strokes: [BrushStroke])
+    case subject(SubjectMask)
+    case sky(SubjectMask)
+
+    /// Subject and sky selections share saved weights, edge controls, and brush corrections.
+    var rasterSelection: SubjectMask? {
+        get {
+            switch self {
+            case .subject(let value), .sky(let value): value
+            default: nil
+            }
+        }
+        set {
+            guard let newValue else { return }
+            switch self {
+            case .subject: self = .subject(newValue)
+            case .sky: self = .sky(newValue)
+            default: break
+            }
+        }
+    }
 
     var isGradient: Bool {
         switch self {
         case .linear, .radial: true
-        case .brush: false
+        case .brush, .subject, .sky: false
         }
     }
 
@@ -60,6 +115,8 @@ enum MaskShape: Codable, Hashable, Sendable {
         case .linear: "Linear Gradient"
         case .radial: "Radial Gradient"
         case .brush: "Brush"
+        case .subject: "Subject"
+        case .sky: "Sky"
         }
     }
 }
@@ -184,6 +241,8 @@ enum MaskRenderer {
             return radial(center: center, radiusX: radiusX, radiusY: radiusY, rotation: rotation, feather: feather, extent: extent)
         case .brush(let strokes):
             return BrushRasterizer.image(strokes: strokes, extent: extent)
+        case .subject(let subject), .sky(let subject):
+            return SubjectMaskRenderer.image(subject, extent: extent)
         }
     }
 
@@ -262,6 +321,112 @@ enum MaskRenderer {
     }
 }
 
+enum SubjectMaskRenderer {
+    static func clearCaches() {
+        SubjectBaseMaskCache.shared.clear()
+    }
+
+    static func image(_ subject: SubjectMask, extent: CGRect) -> CIImage {
+        guard let base = SubjectBaseMaskCache.shared.image(for: subject.png),
+              extent.width > 0, extent.height > 0
+        else { return CIImage(color: .black).cropped(to: extent) }
+
+        let longSide = max(extent.width, extent.height)
+        let scale = min(1, BrushRasterizer.maximumDimension / longSide)
+        let width = max(1, Int((extent.width * scale).rounded(.up)))
+        let height = max(1, Int((extent.height * scale).rounded(.up)))
+        let raster: CGImage
+        if subject.strokes.isEmpty {
+            raster = base
+        } else {
+            raster = BrushRasterizer.raster(
+                subject.strokes, width: width, height: height,
+                baseImage: base, baseKey: subject.png
+            ) ?? base
+        }
+        let raw = CIImage(cgImage: raster, options: [.colorSpace: NSNull()])
+        // Work on the bounded mask, before scaling to the photo. Edge controls therefore
+        // never allocate another full-resolution RAW bitmap. Brush corrections are included.
+        let refined = refine(raw, subject: subject)
+        return refined
+            .transformed(by: CGAffineTransform(
+                scaleX: extent.width / CGFloat(raster.width),
+                y: extent.height / CGFloat(raster.height)
+            ))
+            .transformed(by: CGAffineTransform(translationX: extent.minX, y: extent.minY))
+            .cropped(to: extent)
+    }
+
+    private static func refine(_ raw: CIImage, subject: SubjectMask) -> CIImage {
+        func bounded(_ value: Double, _ range: ClosedRange<Double>) -> Double {
+            value.isFinite ? min(range.upperBound, max(range.lowerBound, value)) : 0
+        }
+        let longSide = max(raw.extent.width, raw.extent.height)
+        let shift = bounded(subject.edgeShift, -0.005 ... 0.005) * longSide
+        let feather = bounded(subject.edgeFeather, 0 ... 0.005) * longSide
+        let contrast = bounded(subject.edgeContrast, 0 ... 1)
+        var image = raw
+        if abs(shift) > 0.001 {
+            image = image.clampedToExtent().applyingFilter(
+                shift > 0 ? "CIMorphologyMaximum" : "CIMorphologyMinimum",
+                parameters: [kCIInputRadiusKey: abs(shift)]
+            ).cropped(to: raw.extent)
+        }
+        if feather > 0.001 {
+            image = image.clampedToExtent().applyingFilter(
+                "CIGaussianBlur", parameters: [kCIInputRadiusKey: feather]
+            ).cropped(to: raw.extent)
+        }
+        if contrast > 0 {
+            let gain = 1 + contrast * 3
+            let bias = (1 - gain) / 2
+            image = image.applyingFilter("CIColorMatrix", parameters: [
+                "inputRVector": CIVector(x: gain, y: 0, z: 0, w: 0),
+                "inputGVector": CIVector(x: 0, y: gain, z: 0, w: 0),
+                "inputBVector": CIVector(x: 0, y: 0, z: gain, w: 0),
+                "inputBiasVector": CIVector(x: bias, y: bias, z: bias, w: 0)
+            ]).applyingFilter("CIColorClamp", parameters: [
+                "inputMinComponents": CIVector(x: 0, y: 0, z: 0, w: 0),
+                "inputMaxComponents": CIVector(x: 1, y: 1, z: 1, w: 1)
+            ])
+        }
+        return image.cropped(to: raw.extent)
+    }
+}
+
+/// Decodes each selected PNG once; slider drags reuse its CGImage while brush corrections use
+/// BrushMaskCache's incremental rasterization. Bounded to three photos/subjects on an 8 GB Mac.
+private final class SubjectBaseMaskCache: @unchecked Sendable {
+    static let shared = SubjectBaseMaskCache()
+    private let lock = NSLock()
+    private var entries: [(png: Data, image: CGImage)] = []
+
+    func clear() {
+        lock.lock()
+        defer { lock.unlock() }
+        entries.removeAll()
+    }
+
+    func image(for png: Data) -> CGImage? {
+        lock.lock()
+        if let index = entries.firstIndex(where: { $0.png == png }) {
+            let entry = entries.remove(at: index)
+            entries.append(entry)
+            lock.unlock()
+            return entry.image
+        }
+        lock.unlock()
+
+        guard let source = CGImageSourceCreateWithData(png as CFData, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
+        lock.lock()
+        entries.append((png, image))
+        if entries.count > 3 { entries.removeFirst(entries.count - 3) }
+        lock.unlock()
+        return image
+    }
+}
+
 /// Paints brush strokes into a grayscale bitmap.
 enum BrushRasterizer {
     /// Masks are drawn at up to this many pixels on the long side and scaled to fit the image,
@@ -291,13 +456,15 @@ enum BrushRasterizer {
     /// were only added, or points were only added to the last stroke, which is what painting
     /// does. Only the new dabs are drawn, so painting stays fast however many strokes exist.
     static func raster(
-        _ strokes: [BrushStroke], width: Int, height: Int, cache: BrushMaskCache = .shared
+        _ strokes: [BrushStroke], width: Int, height: Int,
+        baseImage: CGImage? = nil, baseKey: Data? = nil, cache: BrushMaskCache = .shared
     ) -> CGImage? {
-        if let exact = cache.exact(strokes, width: width, height: height) { return exact }
+        if let exact = cache.exact(strokes, width: width, height: height, baseKey: baseKey) { return exact }
 
-        let base = cache.continuation(for: strokes, width: width, height: height)
+        let base = cache.continuation(for: strokes, width: width, height: height, baseKey: baseKey)
+            ?? baseImage.map { Base(image: $0, strokeIndex: 0, pointCount: 0) }
         guard let image = rasterize(strokes, width: width, height: height, continuing: base) else { return nil }
-        cache.store(image, for: strokes, width: width, height: height)
+        cache.store(image, for: strokes, width: width, height: height, baseKey: baseKey)
         return image
     }
 
@@ -385,6 +552,7 @@ final class BrushMaskCache: @unchecked Sendable {
         var strokes: [BrushStroke]
         var width: Int
         var height: Int
+        var baseKey: Data?
         var image: CGImage
     }
 
@@ -398,10 +566,12 @@ final class BrushMaskCache: @unchecked Sendable {
         entries.removeAll()
     }
 
-    func exact(_ strokes: [BrushStroke], width: Int, height: Int) -> CGImage? {
+    func exact(_ strokes: [BrushStroke], width: Int, height: Int, baseKey: Data? = nil) -> CGImage? {
         lock.lock()
         defer { lock.unlock() }
-        guard let index = entries.firstIndex(where: { $0.width == width && $0.height == height && $0.strokes == strokes }) else {
+        guard let index = entries.firstIndex(where: {
+            $0.width == width && $0.height == height && $0.baseKey == baseKey && $0.strokes == strokes
+        }) else {
             return nil
         }
         let entry = entries.remove(at: index)
@@ -410,12 +580,12 @@ final class BrushMaskCache: @unchecked Sendable {
     }
 
     /// A cached raster that `strokes` extends, preferring the one that covers the most.
-    func continuation(for strokes: [BrushStroke], width: Int, height: Int) -> BrushRasterizer.Base? {
+    func continuation(for strokes: [BrushStroke], width: Int, height: Int, baseKey: Data? = nil) -> BrushRasterizer.Base? {
         lock.lock()
         defer { lock.unlock() }
 
         var best: (base: BrushRasterizer.Base, covered: Int)?
-        for entry in entries where entry.width == width && entry.height == height {
+        for entry in entries where entry.width == width && entry.height == height && entry.baseKey == baseKey {
             guard let stop = Self.extensionPoint(of: entry.strokes, in: strokes) else { continue }
             let covered = stop.strokeIndex * 1_000_000 + stop.pointCount
             if covered > (best?.covered ?? -1) {
@@ -440,10 +610,10 @@ final class BrushMaskCache: @unchecked Sendable {
         return (lastIndex, last.points.count)
     }
 
-    func store(_ image: CGImage, for strokes: [BrushStroke], width: Int, height: Int) {
+    func store(_ image: CGImage, for strokes: [BrushStroke], width: Int, height: Int, baseKey: Data? = nil) {
         lock.lock()
         defer { lock.unlock() }
-        entries.append(Entry(strokes: strokes, width: width, height: height, image: image))
+        entries.append(Entry(strokes: strokes, width: width, height: height, baseKey: baseKey, image: image))
         if entries.count > limit { entries.removeFirst(entries.count - limit) }
     }
 }

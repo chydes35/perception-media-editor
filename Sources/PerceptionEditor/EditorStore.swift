@@ -28,17 +28,36 @@ final class EditorStore: ObservableObject {
     @Published var ingest = IngestState.idle
     /// RAW engine defaults for the selected photo; nil when it is not a RAW file.
     @Published var rawInfo: RawInfo?
+    @Published var isPickingWhiteBalance = false
+    @Published var isSamplingWhiteBalance = false
+    var whiteBalanceRequestID = UUID()
     @Published var isRenderingPreview = false
-    @Published var isAutoAdjusting = false
     var autoAdjustmentTask: Task<Void, Never>?
-    var autoAdjustmentID: UUID?
-    let autoToneAnalyzer: (@Sendable (URL, PhotoAdjustments) async -> AutoToneAdjustments?)?
+    let autoAdjustmentAnalyzer: (@Sendable (URL, PhotoAdjustments) async throws -> AutoAdjustmentSuggestion)?
     @Published var maskTool: MaskTool = .none
     @Published var selectedMaskID: UUID?
     @Published var showMaskOverlay = false
     /// True while a mask is being dragged or painted, so its area shows without the toggle.
     @Published var isMaskInteracting = false
     @Published var maskOverlay: NSImage?
+    @Published var isAnalyzingSubjects = false
+    @Published var isPickingSubject = false
+    @Published var subjectAnalysis: SubjectAnalysis?
+    @Published var subjectSelectionOverlay: NSImage?
+    @Published var highlightedSubjectID: Int?
+    var subjectRequestID = UUID()
+    var subjectOverlayRequestID = UUID()
+    var subjectOverlayTask: Task<Void, Never>?
+    /// Zero is the all-subject overview. At most four preview-sized overlays are retained.
+    var subjectOverlayCache: [(id: Int, image: NSImage)] = []
+    var subjectOverlayAdjustments: PhotoAdjustments?
+    let subjectAnalyzer = SubjectAnalysisService()
+    @Published var isAnalyzingSky = false
+    var skyRequestID = UUID()
+    let skyAnalyzer = SkyAnalysisService()
+    @Published var isAnalyzingAuto = false
+    var autoRequestID = UUID()
+    let autoAnalyzer = AutoAdjustmentService()
     @Published var brushSize = 0.06
     @Published var brushFeather = 0.5
     @Published var brushErasing = false
@@ -131,10 +150,10 @@ final class EditorStore: ObservableObject {
     init(
         presetRepository: UserPresetRepository = UserPresetRepository(),
         ingestScanner: @escaping @Sendable (URL) -> [SourceFile] = { IngestService.scan($0) },
-        autoToneAnalyzer: (@Sendable (URL, PhotoAdjustments) async -> AutoToneAdjustments?)? = nil
+        autoAdjustmentAnalyzer: (@Sendable (URL, PhotoAdjustments) async throws -> AutoAdjustmentSuggestion)? = nil
     ) {
         self.ingestScanner = ingestScanner
-        self.autoToneAnalyzer = autoToneAnalyzer
+        self.autoAdjustmentAnalyzer = autoAdjustmentAnalyzer
         userPresetRepository = presetRepository
         userPresets = presetRepository.load()
         cullCache.onLoaded = { [weak self] id in self?.cullPreviewLoaded(id) }
@@ -307,6 +326,8 @@ final class EditorStore: ObservableObject {
         if selectedAssetID != asset.id {
             endMaskEditing()
             endRetouchEditing()
+            cancelWhiteBalancePicking()
+            cancelSubjectSelection()
         }
         selectedAssetID = asset.id
         selectedAssetIDs = [asset.id]
@@ -325,6 +346,7 @@ final class EditorStore: ObservableObject {
 
     func updateAdjustments(_ update: (inout PhotoAdjustments) -> Void) {
         guard selectedAssetID != nil else { return }
+        cancelAutoAdjustment()
         let before = project.adjustmentsByAssetID
         var adjustments = selectedAdjustments
         update(&adjustments)
@@ -335,6 +357,7 @@ final class EditorStore: ObservableObject {
     }
 
     func beginAdjustmentEdit() {
+        cancelAutoAdjustment()
         guard activeAdjustmentSnapshot == nil else { return }
         activeAdjustmentSnapshot = project.adjustmentsByAssetID
     }
@@ -374,6 +397,7 @@ final class EditorStore: ObservableObject {
     }
 
     func undoPhotoEdit() {
+        cancelAutoAdjustment()
         guard let step = photoUndoHistory.undoStep() else { return }
         applyUndoStep(step, restoringBefore: true)
         refreshPreview()
@@ -381,6 +405,7 @@ final class EditorStore: ObservableObject {
     }
 
     func redoPhotoEdit() {
+        cancelAutoAdjustment()
         guard let step = photoUndoHistory.redoStep() else { return }
         applyUndoStep(step, restoringBefore: false)
         refreshPreview()
@@ -518,6 +543,7 @@ final class EditorStore: ObservableObject {
     /// render is in flight, further requests collapse into one follow-up render with the
     /// latest adjustments, so slider drags never queue up stale work.
     func refreshPreview() {
+        if isPickingSubject { previewSubjectCandidate(highlightedSubjectID) }
         if isZoom100 { refreshFocus() }
         // Develop-quality renders (a full RAW decode) only run where they are shown.
         guard workspace == .photo || workspace == .export else { return }
@@ -610,8 +636,11 @@ final class EditorStore: ObservableObject {
 
     func beginCropEditing() {
         guard selectedAsset != nil, !isEditingCrop else { return }
+        cancelAutoAdjustment()
         endMaskEditing()
         endRetouchEditing()
+        cancelWhiteBalancePicking()
+        cancelSubjectSelection()
         exitZoom100()
         beginAdjustmentEdit()
         isEditingCrop = true
@@ -877,6 +906,8 @@ final class EditorStore: ObservableObject {
         thumbnailCache.clearMemory()
         cullCache.clear()
         BrushMaskCache.shared.clear()
+        SubjectMaskRenderer.clearCaches()
+        cancelSubjectSelection()
         let renderer = photoRenderer
         let thumbnails = thumbnailRenderer
         let focus = focusRenderer
@@ -891,6 +922,9 @@ final class EditorStore: ObservableObject {
         cancelAutoAdjustment()
         endMaskEditing()
         endRetouchEditing()
+        cancelWhiteBalancePicking()
+        cancelSubjectSelection()
+        SubjectMaskRenderer.clearCaches()
         needsAnotherPreviewRender = false
         originalPreviewAssetID = nil
         isEditingCrop = false

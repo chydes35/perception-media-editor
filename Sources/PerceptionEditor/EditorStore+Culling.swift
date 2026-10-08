@@ -179,12 +179,32 @@ extension EditorStore {
 
     /// Single-key shortcuts from the app's key monitor. Returns true when the key was used.
     func handleKey(_ characters: String) -> Bool {
+        if characters == "\u{1B}", isAnalyzingAuto {
+            cancelAutoAdjustment()
+            statusMessage = "Auto adjustment canceled"
+            return true
+        }
         if characters == "\\" {
             guard workspace == .photo, selectedAsset != nil else { return false }
             toggleBeforeAfter()
             return true
         }
 
+        if characters == "\u{1B}", isPickingWhiteBalance || isSamplingWhiteBalance {
+            cancelWhiteBalancePicking()
+            statusMessage = "White balance picker canceled"
+            return true
+        }
+        if characters == "\u{1B}", isAnalyzingSky {
+            cancelSkySelection()
+            statusMessage = "Sky selection canceled"
+            return true
+        }
+        if characters == "\u{1B}", isPickingSubject || isAnalyzingSubjects {
+            cancelSubjectSelection()
+            statusMessage = "Subject selection canceled"
+            return true
+        }
         if handleRetouchKey(characters) || handleMaskKey(characters) { return true }
 
         guard let command = CullKeyMap.command(for: characters) else { return false }
@@ -226,8 +246,11 @@ extension EditorStore {
     func workspaceDidChange() {
         if isZoom100, workspace != .cull, workspace != .photo { exitZoom100() }
         if workspace != .photo {
+            cancelAutoAdjustment()
             endMaskEditing()
             endRetouchEditing()
+            cancelWhiteBalancePicking()
+            cancelSubjectSelection()
         }
         switch workspace {
         case .cull:

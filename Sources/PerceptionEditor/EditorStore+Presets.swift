@@ -28,6 +28,7 @@ extension EditorStore {
     ) -> Int {
         let photoIDs = Set(ids).intersection(project.media.filter { $0.kind == .photo }.map(\.id))
         guard !photoIDs.isEmpty else { return 0 }
+        cancelAutoAdjustment()
 
         let before = project.adjustmentsByAssetID
         for id in photoIDs {

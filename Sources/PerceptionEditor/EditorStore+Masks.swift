@@ -39,8 +39,11 @@ extension EditorStore {
 
     func chooseMaskTool(_ tool: MaskTool) {
         guard selectedAsset?.kind == .photo else { return }
+        cancelAutoAdjustment()
         let next: MaskTool = (maskTool == tool) ? .none : tool
         if next != .none {
+            cancelWhiteBalancePicking()
+            cancelSubjectSelection()
             endRetouchEditing()
             exitZoom100()
             cancelCropEditing()
@@ -61,6 +64,8 @@ extension EditorStore {
     }
 
     func selectMask(_ id: UUID?) {
+        cancelAutoAdjustment()
+        if id != nil { cancelSubjectSelection() }
         if id != nil { endRetouchEditing() }
         selectedMaskID = id
         if id != nil {
@@ -101,6 +106,25 @@ extension EditorStore {
 
     func resizeBrush(by factor: Double) {
         brushSize = min(0.5, max(0.005, brushSize * factor))
+    }
+
+    /// Makes the add/remove correction mode explicit for a selected subject or sky mask.
+    func beginSubjectRefinement(erasing: Bool) {
+        guard selectedMask?.shape.rasterSelection != nil else { return }
+        cancelSubjectSelection()
+        cancelWhiteBalancePicking()
+        endRetouchEditing()
+        cancelCropEditing()
+        exitZoom100()
+        previewMode = .edited
+        brushErasing = erasing
+        maskTool = .brush
+        showMaskOverlay = true
+        refreshPreview()
+        let kind = selectedMask?.shape.kindName.lowercased() ?? "selection"
+        statusMessage = erasing
+            ? "Paint over the unwanted area to remove it from the \(kind)"
+            : "Paint over missing areas to add them to the \(kind)"
     }
 
     // MARK: - Changing masks
@@ -202,11 +226,19 @@ extension EditorStore {
         nextHistoryLabel = erase ? "Erase" : "Brush"
         isMaskInteracting = true
 
-        if let mask = selectedMask, case .brush = mask.shape {
+        if let mask = selectedMask, !mask.shape.isGradient {
             updateMask(mask.id) { mask in
-                if case .brush(var strokes) = mask.shape {
+                switch mask.shape {
+                case .brush(var strokes):
                     strokes.append(stroke)
                     mask.shape = .brush(strokes: strokes)
+                case .subject(var subject):
+                    subject.strokes.append(stroke)
+                    mask.shape = .subject(subject)
+                case .sky(var sky):
+                    sky.strokes.append(stroke)
+                    mask.shape = .sky(sky)
+                default: break
                 }
             }
         } else if !erase {
@@ -219,7 +251,14 @@ extension EditorStore {
     }
 
     func extendBrushStroke(to point: NormalizedPoint) {
-        guard let mask = selectedMask, case .brush(let strokes) = mask.shape, let last = strokes.last?.points.last else { return }
+        guard let mask = selectedMask else { return }
+        let strokes: [BrushStroke]
+        switch mask.shape {
+        case .brush(let value): strokes = value
+        case .subject(let value), .sky(let value): strokes = value.strokes
+        default: return
+        }
+        guard let last = strokes.last?.points.last else { return }
         // Points closer than a twentieth of the brush add nothing to the stroke.
         let spacing = (brushSize / 20)
         guard hypot(point.x - last.x, point.y - last.y) >= spacing * 0.5 else { return }
@@ -227,6 +266,9 @@ extension EditorStore {
             if case .brush(var strokes) = mask.shape, !strokes.isEmpty {
                 strokes[strokes.count - 1].points.append(point)
                 mask.shape = .brush(strokes: strokes)
+            } else if var subject = mask.shape.rasterSelection, !subject.strokes.isEmpty {
+                subject.strokes[subject.strokes.count - 1].points.append(point)
+                mask.shape.rasterSelection = subject
             }
         }
     }

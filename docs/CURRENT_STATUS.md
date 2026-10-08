@@ -1,18 +1,29 @@
 # Current development status
 
-Updated: 2026-09-29. This is a worktree status map, not a release certification. The checkout contains uncommitted application and test changes from the reliability/memory work; preserve them when starting a new task.
+Updated: 2026-10-07. This maps the local integration candidate, not a certified release. The branch is `codex/photo-workflow-integration`; snapshot commit `c0f10e5` preserves the formerly uncommitted reliability/memory/batch-delivery work. GitHub main at `0350a4c` and the advanced local photo branch at `5e574f9` are integrated. Their original branches and the second worktree remain available. The combined candidate has not been pushed or installed.
 
 ## Product position
 
-The photo-first roadmap is authoritative. Phase 0 foundation and Phase 1 library/culling are marked complete. Phase 2 RAW Develop/presets and Phase 3 masks/healing remain in progress. Delivery, smart culling, and resumed video work remain later phases. The legacy V0.x checklists in [ROADMAP.md](ROADMAP.md) contain some stale unchecked items; verify in code before using them to select work.
+The photo-first roadmap is authoritative. Phases 0 and 1 are marked complete with their listed follow-ups. RAW Develop/presets, masks/healing, and delivery remain active until their written acceptance gates pass. Smart culling is later; video development remains deferred.
 
-The app has verified card import, culling, RAW Develop controls, presets, non-destructive masks, single-photo JPEG/PNG export, a new batch JPEG queue, and an initial video timeline. The in-app local workflow agents are described in [AGENTS.md](AGENTS.md). The agentic **coding** workflow starts in the repository root [AGENTS.md](../AGENTS.md).
+The candidate includes verified card import, culling, RAW Develop, white-balance sampling, presets/sync/history, gradient/brush/subject/sky masks, healing/clone, advanced Auto tone/WB, single-photo JPEG/PNG export, and sequential batch JPEG delivery. It retains original-file export protection, operation-bound ingest, persistent save recovery, bounded undo/cache ownership, memory-pressure cleanup, and the `.pmedit` content-type declaration. Auto has one control beneath the histogram and the existing menu shortcut; pending results are canceled by navigation, manual edits, and tool changes.
 
-## Current evidence and open acceptance
+Project schema remains **10**. Schema 6–9 data loads and resaves as 10; tests preserve repairs, raster masks/refinements/corrections, RAW settings, and geometry. Older applications cannot open newly saved schema-10 projects. Bundle metadata identifies candidate build **16**, but the installed app was not replaced.
 
-- The September 28 [reliability pass](RELIABILITY_PASS_2026-09-28.md) recorded a 224-test execution pass and a local release build at that worktree state. It also records original protection, import ownership, save recovery, and bounded undo changes.
-- The [memory optimization report](MEMORY_OPTIMIZATION_2026-09-28.md) and [memory profile](MEMORY_PROFILE_2026-09-28.md) cover an isolated real-RAW renderer workload on an 8 GB M1 MacBook Air. They do not establish whole-app peak memory for a 100–200-photo job.
-- A real 100–200-distinct-photo UI workflow, combined process-memory profile, current hands-on photo UI acceptance, and macOS 15/Swift 6.1 floor validation remain open.
-- The batch-delivery MVP is implemented in the current worktree. Its [active ExecPlan](../plans/active/batch-delivery-mvp.md) tracks automated and real-shoot acceptance. Persistent recipes, metadata/IPTC, watermark, sharpening, P3, and video export remain later work.
+The in-app workflow agents are described in [AGENTS.md](AGENTS.md). Coding-agent instructions start at the repository root [AGENTS.md](../AGENTS.md).
 
-The coding workflow bootstrap is complete; its [completed plan](../plans/completed/agentic-bootstrap.md) records the Auto Tone baseline repair. The batch JPEG queue has a passing automated gate (247 tests), a signed local build, and a two-photo real-RAW UI check with collision and Stop behavior. See [batch verification](BATCH_DELIVERY_2026-09-29.md) and the [active batch-delivery plan](../plans/active/batch-delivery-mvp.md). A 100–200-distinct-photo export and whole-app memory/throughput profile are still required before the delivery milestone can close.
+## Current verification
+
+- **PASS — automated QA:** `./scripts/qa.sh` reports 287 cases in 55 suites: **280 executed, seven skipped**, with a 59.885-second serial test run and successful debug app build. Diff/source checks and staged diff hygiene passed.
+- **PASS — integration boundaries:** seven new tests cover schemas 6–10, photo-specific sync boundaries, raster/repair undo cost, async Auto preservation/cancellation, same-project reopen/generation identity, and switching into mask/repair tools. Two causal checks failed under old behavior (nine assertions) and passed after restoration/fix. Existing original protection, import/save recovery, cache/undo, batch, RAW, and synthetic mask/healing preview/export regressions also pass in this combined candidate.
+- **PASS — packaging source checks:** `plutil -lint Resources/Info.plist`; schema-10 file type and hash-pinned sky model packaging/license scripts retained. This is not a release bundle/signature verification.
+- **NOT VERIFIED — opt-in checks:** three performance diagnostics, broad Auto photo preview comparison, native indoor/outdoor sky inference, and the real two-person subject fixture were not configured in this run. A skip is not a pass.
+- **NOT VERIFIED — combined candidate acceptance:** fresh hands-on UI/accessibility, broad photographic selection/output quality, release packaging/signing, GitHub macOS 15/Swift 6.1 CI, and the full 100–200-distinct-RW2 displayed workflow/memory/throughput run.
+
+Integration log: `/private/tmp/perception-integration-full-qa.log`. Focused and causal logs use `/private/tmp/perception-integration-*.log`. See the [completed local integration plan](../plans/completed/photo-workflow-integration.md) and [Auto/schema integration decision](decisions/2026-10-07-photo-integration.md).
+
+## Historical evidence and next work
+
+The [October 7 review](PROJECT_REVIEW_2026-10-07.md) describes the versions before integration. September [reliability](RELIABILITY_PASS_2026-09-28.md), [memory optimization](MEMORY_OPTIMIZATION_2026-09-28.md), [memory profile](MEMORY_PROFILE_2026-09-28.md), [batch delivery](BATCH_DELIVERY_2026-09-29.md), and [advanced Auto/installed-app QA](QA_AUTO_ADJUSTMENTS.md) remain evidence for their recorded revisions. Their UI/signing/performance passes do not automatically apply to this candidate.
+
+Next: finish queue-level mid-render cancellation, failure continuation, and project-switch coverage; validate the candidate in CI, then run the representative photographer workflow. The [batch delivery plan](../plans/active/batch-delivery-mvp.md) stays active for full-shoot and quality/performance acceptance. Persistent delivery recipes, output sharpening, P3, copyright/IPTC, and watermark remain later delivery work. Subject/sky quality still needs fine-detail and varied real-shoot validation.

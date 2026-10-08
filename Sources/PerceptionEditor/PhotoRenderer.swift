@@ -235,19 +235,6 @@ actor PhotoRenderer {
         context = CIContext(options: options)
     }
 
-    /// Analyze a small version of the current composition with only the Light controls
-    /// neutralized. Re-running Auto therefore does not accumulate earlier Auto corrections.
-    func autoTone(url: URL, adjustments: PhotoAdjustments) -> AutoToneAdjustments? {
-        autoreleasepool {
-            guard let source = workingSource(for: url, raw: adjustments.raw) else { return nil }
-            let base = AutoToneAdjustments.neutral.analysisBase(from: adjustments)
-            let composed = MediaColorRenderer.render(source, adjustments: base, includesGeometry: true)
-            guard let small = bitmap(composed, maxDimension: 256) else { return nil }
-            return PhotoAutoTone.analyze(small.cgImage)
-        }
-    }
-
-    /// The edited preview and its histogram for the selected photo.
     func preview(url: URL, adjustments: PhotoAdjustments, overlayMaskID: UUID? = nil) -> PhotoPreviewResult? {
         return autoreleasepool {
             guard let source = workingSource(for: url, raw: adjustments.raw) else { return nil }
@@ -278,6 +265,12 @@ actor PhotoRenderer {
         return bitmap(tinted, maxDimension: Self.previewDimension)
     }
 
+    func subjectSelectionOverlay(url: URL, png: Data, adjustments: PhotoAdjustments) -> RenderedImage? {
+        guard let source = workingSource(for: url, raw: adjustments.raw) else { return nil }
+        let mask = LocalMask(shape: .subject(SubjectMask(png: png)))
+        return maskOverlay(for: mask, source: source, adjustments: adjustments)
+    }
+
     /// The photo as the RAW engine renders it with no edits, for before/after.
     func original(url: URL) -> RenderedImage? {
         return autoreleasepool {
@@ -296,6 +289,12 @@ actor PhotoRenderer {
             return info
         }
     }
+
+    /// Uses the RAW decoder's native neutral-point calculation away from the UI thread.
+    func whiteBalance(at source: NormalizedPoint, url: URL) -> WhiteBalanceReading? {
+        WhiteBalanceEyedropper.sampleRaw(at: source, url: url)
+    }
+
 
     /// Thumbnails decode at thumbnail size and are never kept in the working cache.
     func thumbnail(url: URL, adjustments: PhotoAdjustments) -> RenderedImage? {

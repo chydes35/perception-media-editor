@@ -40,6 +40,10 @@ See [Reliability Pass](RELIABILITY_PASS_2026-09-28.md) for verification evidence
 
 See [Memory Optimization](MEMORY_OPTIMIZATION_2026-09-28.md) for measurements and remaining whole-app acceptance work.
 
+#### Local integration — 2026-10-07
+
+The [integration plan](../plans/completed/photo-workflow-integration.md) combines GitHub main, the advanced local photo tools, and the preserved reliability/memory/batch-delivery work on `codex/photo-workflow-integration`. The candidate retains project schema 10. Automated integration checks do not close the open UI, image-quality, or 100–200-photo performance gates.
+
 ### Phase 1 — Library and culling (complete, PR #2)
 
 - [x] One folder per shoot: `<Shoots>/<date> <Name>/{Name.pmedit, Originals/}`, saved automatically
@@ -49,7 +53,7 @@ See [Memory Optimization](MEMORY_OPTIMIZATION_2026-09-28.md) for measurements an
 - [x] Cull view: instant next/previous from a preview cache, compare (C), full screen (F), auto-advance, Develop (D)
 - [x] Delete Rejected moves originals inside the shoot's Originals folder to the Trash (recoverable) after confirmation
 - [ ] RAW+JPEG pairs treated as one photo
-- [ ] Zoom to 100% for focus checks (needs the full RAW decode; Phase 2)
+- [x] Zoom to 100% for focus checks (delivered in Phase 2)
 - [ ] Undo for rating, flag, and label changes
 
 ### Phase 2 — RAW develop and presets (in progress)
@@ -63,8 +67,8 @@ See [Memory Optimization](MEMORY_OPTIMIZATION_2026-09-28.md) for measurements an
 - [x] Apply a preset to the whole selection as one undo step
 - [x] Copy Settings (⇧⌘C), Paste Settings (⇧⌘V), Sync Settings
 - [x] History: named steps for the current photo; click one to go back
-- [ ] White balance eyedropper (click a neutral gray)
-- [ ] Auto tone and auto white balance
+- [x] White balance eyedropper for RAW photos (click a neutral gray to set Kelvin and tint)
+- [x] Auto tone and auto white balance: one button beneath the histogram; bounded on-device analysis, photo-specific basic slider values, conservative neutral-reference WB, one undo step
 - [ ] Split `EditorStore` into photo, timeline, and project parts
 
 ### Phase 3 — Masks and healing (in progress)
@@ -75,7 +79,11 @@ See [Memory Optimization](MEMORY_OPTIMIZATION_2026-09-28.md) for measurements an
 - [x] Masks stay on the same part of the picture through rotation, straighten, and crop
 - [x] Red mask overlay (O), shown automatically while dragging or painting
 - [x] Gradient masks sync, copy, and save into presets; brush strokes stay with their photo
-- [ ] Subject and sky selection (Vision)
+- [x] First subject-selection pass: Vision person and foreground instances, click or list selection, soft saved mask, brush correction, and local adjustments
+- [x] Subject refinement controls: candidate hover previews, edge shift, feather, contrast, reset, and a consistent all-subject union
+- [ ] Subject-selection quality validation across hair, translucent details, groups, and mixed RAW cameras (two-person JPEG and synthetic soft-edge checks covered; broader real-photo fixtures still needed)
+- [x] First sky-selection pass: bundled Core ML semantic segmentation, guided edge refinement, saved mask, Add/Remove spill brushes, and local adjustments
+- [ ] Sky-selection quality validation across sunsets, overcast scenes, foliage, fine structures, reflections, and mixed RAW cameras
 - [ ] Color and luminance range masks
 - [x] Spot healing and clone: paint soft repairs, adjust source points, and retain edits through crop, rotation, save, and export
 
@@ -117,7 +125,7 @@ Video (V0.3 below) resumes after the photo phases. Lumix S5 10-bit 4:2:2 and V-L
 - [x] Grouped photo edit undo and redo with direct adjustment values
 - [ ] Export presets, resize, watermark, and metadata controls
 
-## V0.3 — Video Editor (current)
+## V0.3 — Video Editor (existing baseline; development deferred)
 
 - [x] AVFoundation video import, thumbnails, metadata, and playback
 - [x] Persistent V1/A1 timeline model and interface
@@ -139,7 +147,7 @@ Video (V0.3 below) resumes after the photo phases. Lumix S5 10-bit 4:2:2 and V-L
 
 ## Later
 
-- Subject masking with Vision
+- Local generative remove/fill: deferred until the core photo editor is complete. The initial M1/PyTorch inpainting trial hit its five-minute limit at step 5 of 20 and increased system swap substantially; see [local trial notes](LOCAL_GENERATIVE_REMOVE_TRIAL.md).
 - Keyframes and tracking
 - Multicam synchronization and angle editor
 - Optical-flow speed changes

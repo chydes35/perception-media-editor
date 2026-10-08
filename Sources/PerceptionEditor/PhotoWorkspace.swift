@@ -194,21 +194,28 @@ struct PhotoWorkspace: View {
     private var adjustmentPanel: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                HStack {
-                    panelHeading("ADJUSTMENTS", symbol: "slider.horizontal.3")
-                    Spacer()
-                    if store.isAutoAdjusting { ProgressView().controlSize(.small) }
-                    Button("Auto", systemImage: "wand.and.stars") { store.autoAdjustPhoto() }
-                        .buttonStyle(.bordered)
-                        .tint(.orange)
-                        .disabled(!store.canAutoAdjustPhoto)
-                        .accessibilityIdentifier("photo-auto-adjust")
-                        .help("Automatically balance exposure, contrast, highlights, and shadows")
-                }
+                panelHeading("ADJUSTMENTS", symbol: "slider.horizontal.3")
 
                 adjustmentGroup("HISTOGRAM") {
                     HistogramView(data: store.histogram)
                         .frame(height: 92)
+                    HStack {
+                        Button {
+                            if store.isAnalyzingAuto {
+                                store.cancelAutoAdjustment()
+                                store.statusMessage = "Auto adjustment canceled"
+                            } else {
+                                store.startAutoAdjustment()
+                            }
+                        } label: {
+                            Label(store.isAnalyzingAuto ? "Cancel Auto" : "Auto", systemImage: "wand.and.stars")
+                        }
+                        .disabled(!store.isAnalyzingAuto && !store.canAutoAdjustPhoto)
+                        .accessibilityIdentifier("photo-auto-adjust")
+                        .help("Suggest exposure, contrast, highlights, shadows and white balance for this photo.")
+                        if store.isAnalyzingAuto { ProgressView().controlSize(.small) }
+                        Spacer()
+                    }
                 }
 
                 if store.selectedIsRAW {
@@ -370,7 +377,18 @@ struct PhotoWorkspace: View {
 
                 Spacer()
 
-                if store.isRenderingPreview {
+                Button {
+                    store.toggleWhiteBalancePicker()
+                } label: {
+                    Label(store.isPickingWhiteBalance ? "Cancel" : "Pick neutral", systemImage: "eyedropper")
+                }
+                .buttonStyle(.bordered)
+                .tint(store.isPickingWhiteBalance ? .orange : .accentColor)
+                .font(.caption)
+                .disabled(store.isSamplingWhiteBalance || store.isEditingCrop)
+                .help("Click a neutral gray or white area in the photo to set RAW white balance")
+
+                if store.isSamplingWhiteBalance || store.isRenderingPreview {
                     ProgressView().controlSize(.small)
                 }
                 if raw.hasWhiteBalance {
@@ -383,6 +401,12 @@ struct PhotoWorkspace: View {
                     .font(.caption2)
                     .help("Back to the camera's white balance")
                 }
+            }
+
+            if store.isPickingWhiteBalance {
+                Text("Click a neutral gray or white area in the photo. Press Esc to cancel.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
 
             VStack(spacing: 4) {
@@ -456,6 +480,7 @@ struct PhotoWorkspace: View {
                 .accessibilityLabel("White balance tint")
             }
         }
+        .disabled(store.isSamplingWhiteBalance)
     }
 
     private var rawDetailControls: some View {

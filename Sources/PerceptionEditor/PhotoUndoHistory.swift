@@ -76,19 +76,27 @@ struct PhotoUndoHistory {
 }
 
 extension PhotoAdjustments {
-    /// Conservative accounting for variable-size brush/curve data, with capacity/overhead
+    /// Conservative accounting for variable-size brush/raster/retouch/curve data, with capacity/overhead
     /// allowance. This is a retention budget, not a measurement of process resident memory.
     var estimatedRetainedCost: Int {
         let curvePoints = [curves.rgb, curves.red, curves.green, curves.blue]
             .compactMap { $0 }.reduce(0) { $0 + $1.points.count }
-        return 1024 + curvePoints * 32 + masks.reduce(0) { cost, mask in
-            let pointsCost: Int
+        let repairsCost = retouches.reduce(0) { $0 + 256 + $1.points.count * 32 }
+        return 1024 + curvePoints * 32 + repairsCost + masks.reduce(0) { cost, mask in
+            let strokes: [BrushStroke]
+            let rasterCost: Int
             if case .brush(let strokes) = mask.shape {
-                pointsCost = strokes.reduce(0) { $0 + 128 + $1.points.count * 32 }
+                return cost + 512 + (mask.name?.utf8.count ?? 0) * 2
+                    + strokes.reduce(0) { $0 + 128 + $1.points.count * 32 }
+            } else if let selection = mask.shape.rasterSelection {
+                strokes = selection.strokes
+                rasterCost = selection.png.count * 2
             } else {
-                pointsCost = 0
+                strokes = []
+                rasterCost = 0
             }
-            return cost + 512 + (mask.name?.utf8.count ?? 0) * 2 + pointsCost
+            let pointsCost = strokes.reduce(0) { $0 + 128 + $1.points.count * 32 }
+            return cost + 512 + (mask.name?.utf8.count ?? 0) * 2 + pointsCost + rasterCost
         }
     }
 }

@@ -1,7 +1,7 @@
 # Integrate the local photo workflow
 
-Status: active  
-Roadmap item: [Photo-first phases 2–4](../../docs/ROADMAP.md)  
+Status: complete for local integration; photo/delivery milestone acceptance remains open
+Roadmap item: [Photo-first phases 2–4](../../docs/ROADMAP.md)
 Owner: Codex
 
 ## User outcome and acceptance
@@ -18,10 +18,10 @@ Affected contracts: `EditorStore` lifecycle/undo/save/ingest; renderer/cache all
 
 ## Implementation steps
 
-1. Create `codex/photo-workflow-integration` and commit the existing local work as a recoverable baseline. Fetch GitHub main without modifying either original branch.
-2. Merge GitHub main and `codex/auto-basic-edit`; resolve conflicts by retaining advanced edit semantics and current reliability/cache/export ownership. Record resolution decisions.
-3. Reconcile Auto, `.pmedit` packaging, photo-specific preset/sync boundaries, undo accounting for raster/retouch data, and old/new schema tests.
-4. Run focused compatibility/safety/Auto tests and full serial QA. Correct integration regressions before committing the candidate. Update current status, architecture, roadmap, and this plan with exact evidence.
+1. DONE — created `codex/photo-workflow-integration`, preserved local work in `c0f10e5`, fetched main at `0350a4c`. Original branches and the advanced worktree remain unchanged.
+2. DONE — main merged in `958a773`; advanced branch `5e574f9` merged with reliability/cache/export ownership preserved. [Decision record](../../docs/decisions/2026-10-07-photo-integration.md).
+3. DONE — retained advanced Auto tone/WB with cancellable task, generation/source/snapshot guards, one UI control and menu shortcut; retained schema 10 and project content type; extended undo accounting and selection cache cleanup. Seven integration regressions pass.
+4. DONE — focused and full QA pass; current status, architecture, roadmap, data model, README, and decision record reconciled. Candidate recorded as a local merge commit; no push or installed-app replacement.
 
 ## Safety and performance
 
@@ -31,14 +31,17 @@ No writes to original media. Tests use disposable fixtures. Preserve snapshot co
 
 | Gate | Required check | Result and evidence |
 | --- | --- | --- |
-| Static/build | Merge/diff hygiene, source reviewer, Swift build | PENDING |
-| Unit/integration | Old/new schemas, edit preservation, Auto, safety/cache/undo, full serial QA | PENDING |
+| Static/build | Merge/diff hygiene, source reviewer, Swift build | PASS — resolved all conflicts; `git diff --check`, `git diff --cached --check`, source review, debug build via `./scripts/qa.sh` |
+| Unit/integration | Old/new schemas, edit preservation, Auto, safety/cache/undo, full serial QA | PASS — 280 executed/7 skipped (287 reported), 55 suites, 59.885 s; seven new integration tests green; old undo/tool-switch behavior reproduced nine failed assertions in two causal tests |
 | Runtime/UI | Combined candidate walkthrough | NOT VERIFIED — retain as downstream acceptance unless exercised here |
-| Media quality | Real-RAW regression tests and raster/retouch preview/export checks | PENDING automated checks; broad visual acceptance remains open |
-| Performance | Existing bounded-owner regressions | PENDING; full 100–200-photo displayed workload remains downstream NOT VERIFIED |
-| Packaging | Model resources and declared project type retained | PENDING source/resource checks; installed bundle not replaced |
+| Media quality | Real-RAW regression tests and raster/retouch preview/export checks | PASS for available RAW and synthetic mask/retouch preview/export regressions; broad visual acceptance and opt-in native segmentation fixtures NOT VERIFIED |
+| Performance | Existing bounded-owner regressions | PASS — existing cache/undo correctness tests and raster/retouch budget regression; full 100–200-photo displayed workload remains downstream NOT VERIFIED |
+| Packaging | Model resources and declared project type retained | PASS source checks — `plutil -lint Resources/Info.plist`, pinned hash/model bundling/license retained; release bundle/signature NOT VERIFIED and installed bundle not replaced |
 
 ## Decisions, discoveries, and remaining work
 
 - October 7: User authorized starting review recommendation 1. Preserve and integrate local progress; do not push/merge remotely or replace installed app as part of this step.
 - Baseline QA from the review: external checkout 244 executed/3 skipped; advanced worktree 243 executed/4 skipped; GitHub main 209 executed/5 RAW skipped on Swift 6.1.2/macOS 15. These are separate baselines, not an integrated pass.
+
+- Final QA log: `/private/tmp/perception-integration-full-qa.log`. Causal red/green logs: `/private/tmp/perception-integration-causal-red.log` and `/private/tmp/perception-integration-causal-green.log`. Initial new-test compile hit a Swift Testing mutating-call macro limitation; assigning the result before asserting fixed the test harness.
+- Remaining downstream work: queue boundary coverage/CI, fresh combined UI and photographic quality checks, release signing/packaging, and representative full-shoot physical-footprint/latency/throughput acceptance. Native selection inference and three diagnostics were skipped. Keep the batch-delivery and photo phases active.

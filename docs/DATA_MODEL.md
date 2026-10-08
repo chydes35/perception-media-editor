@@ -9,7 +9,9 @@
 - Timeline clips refer to source media and carry their own trim, ordering, color, and audio adjustment records. Photo and clip color share `PhotoAdjustments` where intended.
 - Preset files and user preferences have their own persistence boundaries; they are not original media.
 
-The current schema version is defined in code. Check it before changing fields; do not assume an app bundle version and project schema version advance together. For a schema change, specify defaults, old-file loading, round-trip behavior, unsupported newer-file handling, and relink behavior in the ExecPlan.
+The integrated candidate uses schema **10**, preserving the advanced branch's representation. Healing/clone strokes, subject/sky grayscale PNGs, edge refinement, and brush corrections remain photo-specific edit metadata. Preset/copy/sync groups transfer gradients while retaining each target photo's raster selections, repairs, and geometry. Older schema 6–9 files remain readable; a save advances them to 10. Applications supporting earlier schemas reject schema-10 projects.
+
+The schema version is defined in code. Check it before changing fields; do not assume an app bundle version and project schema version advance together. For a schema change, specify defaults, old-file loading, round-trip behavior, unsupported newer-file handling, and relink behavior in the ExecPlan.
 
 Thumbnails, waveforms, preview rasters, and brush rasters are disposable caches. Cache eviction must never remove edits or user source files. Undo/history is session state unless a feature explicitly changes that contract.
 

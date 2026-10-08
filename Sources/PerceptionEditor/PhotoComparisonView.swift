@@ -51,6 +51,28 @@ struct PhotoComparisonView: View {
             if !isCropping, mode == .edited, store.isRetouchEditing, let edited {
                 RetouchEditingLayer(imageSize: edited.size)
             }
+            if !isCropping, mode == .edited, store.isPickingWhiteBalance, let edited {
+                WhiteBalancePickingLayer(imageSize: edited.size)
+            }
+            if !isCropping, mode == .edited, store.isPickingSubject, let edited {
+                if let overlay = store.subjectSelectionOverlay {
+                    fitted(overlay)
+                        .opacity(0.5)
+                        .allowsHitTesting(false)
+                }
+                SubjectPickingLayer(imageSize: edited.size)
+                if let id = store.highlightedSubjectID,
+                   let candidate = store.subjectAnalysis?.candidates.first(where: { $0.id == id }) {
+                    Text(candidate.name)
+                        .font(.caption.weight(.semibold))
+                        .padding(8)
+                        .background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 6))
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        .padding(16)
+                        .allowsHitTesting(false)
+                }
+            }
         }
         .clipped()
         .contentShape(Rectangle())
@@ -65,7 +87,9 @@ struct PhotoComparisonView: View {
                         onZoomRequest?(point)
                     }
             }
-            .allowsHitTesting(!isCropping && mode == .edited && onZoomRequest != nil && !store.isMaskEditing && !store.isRetouchEditing)
+            .allowsHitTesting(!isCropping && mode == .edited && onZoomRequest != nil
+                && !store.isMaskEditing && !store.isRetouchEditing && !store.isPickingWhiteBalance
+                && !store.isPickingSubject && !store.isAnalyzingSubjects && !store.isAnalyzingSky)
         }
         .accessibilityHint("Click the photo to view it at 100 percent.")
     }

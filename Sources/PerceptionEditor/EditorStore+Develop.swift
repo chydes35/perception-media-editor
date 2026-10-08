@@ -33,6 +33,7 @@ extension EditorStore {
     }
 
     func applyWhiteBalance(_ preset: WhiteBalancePreset) {
+        cancelWhiteBalancePicking()
         updateAdjustments {
             $0.raw.temperature = preset.temperature
             $0.raw.tint = preset.tint
@@ -41,11 +42,71 @@ extension EditorStore {
     }
 
     func resetWhiteBalance() {
+        cancelWhiteBalancePicking()
         updateAdjustments {
             $0.raw.temperature = nil
             $0.raw.tint = nil
         }
         statusMessage = "White balance: As Shot"
+    }
+
+    func toggleWhiteBalancePicker() {
+        guard selectedAsset?.kind == .photo, selectedIsRAW, !isEditingCrop,
+              !isSamplingWhiteBalance else { return }
+        cancelAutoAdjustment()
+        if isPickingWhiteBalance {
+            cancelWhiteBalancePicking()
+            return
+        }
+        endMaskEditing()
+        endRetouchEditing()
+        cancelSubjectSelection()
+        exitZoom100()
+        previewMode = .edited
+        isPickingWhiteBalance = true
+        statusMessage = "Click a neutral gray or white area in the photo"
+    }
+
+    func cancelWhiteBalancePicking() {
+        whiteBalanceRequestID = UUID()
+        isPickingWhiteBalance = false
+        isSamplingWhiteBalance = false
+    }
+
+    /// `point` is in the finished photo, including crop and rotation, from its top-left.
+    func pickWhiteBalance(at point: NormalizedPoint) {
+        guard isPickingWhiteBalance, let asset = selectedAsset,
+              let geometry = currentGeometry else { return }
+        let source = geometry.source(fromFinished: point)
+        guard (0 ... 1).contains(source.x), (0 ... 1).contains(source.y) else { return }
+
+        isPickingWhiteBalance = false
+        isSamplingWhiteBalance = true
+        let requestID = UUID()
+        whiteBalanceRequestID = requestID
+        let assetID = asset.id
+        let renderer = photoRenderer
+        Task { [weak self] in
+            let reading = await renderer.whiteBalance(at: source, url: asset.url)
+            guard let self, whiteBalanceRequestID == requestID,
+                  selectedAssetID == assetID else { return }
+            isSamplingWhiteBalance = false
+            guard let reading else {
+                lastError = "Couldn't sample white balance there. Try another neutral gray or white area."
+                return
+            }
+            applyWhiteBalanceReading(reading)
+        }
+    }
+
+    /// Kept separate so a sampled RAW value becomes one named, undoable adjustment.
+    func applyWhiteBalanceReading(_ reading: WhiteBalanceReading) {
+        nextHistoryLabel = "White Balance Eyedropper"
+        updateAdjustments {
+            $0.raw.temperature = reading.temperature
+            $0.raw.tint = reading.tint
+        }
+        statusMessage = "White balance: \(Int(reading.temperature.rounded())) K, tint \(Int(reading.tint.rounded()))"
     }
 
     // MARK: - 100% view

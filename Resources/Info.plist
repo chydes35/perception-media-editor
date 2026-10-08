@@ -19,12 +19,32 @@
     <key>CFBundleShortVersionString</key>
     <string>0.3.5</string>
     <key>CFBundleVersion</key>
-    <string>10</string>
+    <string>16</string>
     <key>LSMinimumSystemVersion</key>
     <string>15.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSSupportsAutomaticGraphicsSwitching</key>
     <true/>
+    <key>UTExportedTypeDeclarations</key>
+    <array>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>com.perceptionmedia.project</string>
+            <key>UTTypeDescription</key>
+            <string>Perception Media Project</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.json</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>pmedit</string>
+                </array>
+            </dict>
+        </dict>
+    </array>
 </dict>
 </plist>

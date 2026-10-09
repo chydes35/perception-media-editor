@@ -49,5 +49,5 @@ Started with a clean checkout at `12440f4`. Add opt-in local metadata tracing ac
 - [x] Run required full QA (298 executed / 18 skipped), isolated traced release/signature/plist and displayed workflow. UI reliability **FAILS** on one persistent black canvas; media/integrity checks pass.
 - [x] Record reproduction, source integrity and footprint in [trace evidence](../../docs/PREVIEW_TRACE_2026-10-09.md). Peak 1.096 GiB with fresh native analysis; matched performance acceptance remains NOT VERIFIED.
 - [x] Remove the speculative image-view identity change: it and the reverted baseline both pass on retry, so causality is unproven.
-- [ ] Push tracing/stress coverage and verify CI.
+- [x] Push `ec68fed` and verify [GitHub QA](https://github.com/chydes35/perception-media-editor/actions/runs/37919286297): 316 reported, 288 executed / 28 skipped, 38.016 seconds; build/source checks pass. Final documentation-head CI is recorded on draft PR #7.
 - [ ] Isolate native image/display invalidation and prove a causal correction; keep this plan active.

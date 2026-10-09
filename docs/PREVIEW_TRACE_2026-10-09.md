@@ -23,6 +23,7 @@ The disposable project preserves schema 10, media and complete adjustments after
 | Focused integration | **PASS** — lifecycle regressions, cold RAW replacement/cache cleanup, retained native model and existing export/reopen checks |
 | Trace privacy/availability | **PASS** — captured renderer and store events; no source paths/file URLs/RAW filenames in the selected-category trace |
 | Full QA/build | **PASS** — `./scripts/qa.sh`: 316 reported tests in 68 suites, **298 executed / 18 skipped**, 169.875 seconds; source/diff review and debug app build pass. Tracing is disabled; copied RAW/model stress and export/reopen inputs are enabled |
+| GitHub QA | **PASS** — [code-head run](https://github.com/chydes35/perception-media-editor/actions/runs/37919286297) at `ec68fed`: 316 reported, 288 executed / 28 skipped, 38.016 seconds; build/source checks pass. Private RAW/model workflow inputs absent |
 | Isolated release build/package | **PASS** — `swift build --disable-sandbox --scratch-path .build -c release --product PerceptionEditor` (58.04 seconds), candidate `codesign --verify --deep --strict` and `plutil -lint`; installed app unchanged |
 | Traced release UI/media/integrity | **FAIL / PASS** — persistent edited black canvas reproduced; save/decoded export and source integrity pass |
 | Whole-app performance | Observed above; matched thresholds and genuine full-shoot acceptance **NOT VERIFIED** |

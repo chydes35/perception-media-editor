@@ -23,6 +23,8 @@ Each completion report labels every applicable gate **PASS**, **FAIL**, or **NOT
 
 ## Saved real-RAW workflow reproduction
 
+`PreviewReopenTests` includes deterministic paused-worker checks for same-project reopening, source relinking and reset cancellation. Its opt-in `PME_PREVIEW_REOPEN_PROJECT` points to a disposable schema-10 project referencing copied RAW files with a saved mask. It exports and fully decodes eight JPEGs, compares each reopened edited preview byte-for-byte with the initial preview, checks saved adjustments and verifies the referenced source SHA-256. Optional `PERCEPTION_SKY_MODEL_PATH` runs fresh sky analysis before the cycles. Run `./scripts/test.sh --no-parallel --filter PreviewReopenTests` with the app closed. This establishes rendering/persistence and lifecycle boundaries; a passing run alone cannot close an intermittent UI black-canvas defect.
+
 `RealWorkflowTests` is opt-in. Set `PME_WORKFLOW_PROJECT` to a disposable schema-10 project referencing copied RAW files, including a photo with both masks and a heal stroke. Set `PME_WORKFLOW_OUTPUT_DIR` to a disposable directory outside the referenced sources, then run `./scripts/test.sh --no-parallel --filter RealWorkflowTests` with the app closed. The test separates global/mask/healing/combined edits, compares bounded export against an unrestricted pixel reference, checks healed focus release, and asks native analysis for a portrait candidate. Inputs remain read-only; the test writes JPEG outputs. These local fixtures are not uploaded to CI. See the [target-Mac report](WORKFLOW_VALIDATION_2026-10-07.md) for the causal RAW failure and limitations; the portable PNG test alone does not reproduce that failure.
 
 ## Selection quality artifacts

@@ -111,6 +111,9 @@ final class EditorStore: ObservableObject {
     var lastSavedProject = EditorProject.starter
 
     let photoRenderer = PhotoRenderer()
+    /// Optional boundary-test operation; production previews use the render actor below.
+    private let previewRenderOperation: (@Sendable (URL, PhotoAdjustments, UUID?, Bool) async
+        -> (RenderedImage?, PhotoPreviewResult?))?
     private let thumbnailRenderer = PhotoRenderer(workingCacheLimit: 0, memoryTargetMB: 32)
     let cullCache = CullPreviewCache()
     /// Full-resolution decodes for the 100% view get their own renderer, so a one-second decode
@@ -130,7 +133,7 @@ final class EditorStore: ObservableObject {
     var ingestScanTask: Task<[SourceFile], Never>?
     var ingestOperationID: UUID?
     let ingestScanner: @Sendable (URL) -> [SourceFile]
-    private var previewTask: Task<Void, Never>?
+    private(set) var previewTask: Task<Void, Never>?
     private var needsAnotherPreviewRender = false
     private var originalPreviewAssetID: UUID?
     private var pendingPhotoThumbnails: Set<UUID> = []
@@ -152,11 +155,14 @@ final class EditorStore: ObservableObject {
         presetRepository: UserPresetRepository = UserPresetRepository(),
         ingestScanner: @escaping @Sendable (URL) -> [SourceFile] = { IngestService.scan($0) },
         autoAdjustmentAnalyzer: (@Sendable (URL, PhotoAdjustments) async throws -> AutoAdjustmentSuggestion)? = nil,
-        batchPhotoExporter: BatchPhotoExporter? = nil
+        batchPhotoExporter: BatchPhotoExporter? = nil,
+        previewRenderOperation: (@Sendable (URL, PhotoAdjustments, UUID?, Bool) async
+            -> (RenderedImage?, PhotoPreviewResult?))? = nil
     ) {
         self.ingestScanner = ingestScanner
         self.autoAdjustmentAnalyzer = autoAdjustmentAnalyzer
         self.batchPhotoExporter = batchPhotoExporter
+        self.previewRenderOperation = previewRenderOperation
         userPresetRepository = presetRepository
         userPresets = presetRepository.load()
         cullCache.onLoaded = { [weak self] id in self?.cullPreviewLoaded(id) }
@@ -569,6 +575,7 @@ final class EditorStore: ObservableObject {
 
         guard previewTask == nil else {
             needsAnotherPreviewRender = true
+            isRenderingPreview = true
             return
         }
         startPreviewRender(for: asset)
@@ -577,17 +584,28 @@ final class EditorStore: ObservableObject {
     private func startPreviewRender(for asset: MediaAsset) {
         let url = asset.url
         let assetID = asset.id
+        let generation = projectGeneration
         let adjustments = isEditingCrop ? selectedAdjustments.withoutCrop : selectedAdjustments
         let needsOriginal = originalPreviewAssetID != assetID
         let renderer = photoRenderer
         let overlayID = (showMaskOverlay || isMaskInteracting) ? selectedMaskID : nil
+        let operation = previewRenderOperation
         isRenderingPreview = true
 
         previewTask = Task { [weak self] in
-            let original = needsOriginal ? await renderer.original(url: url) : nil
-            let result = await renderer.preview(url: url, adjustments: adjustments, overlayMaskID: overlayID)
+            let original: RenderedImage?
+            let result: PhotoPreviewResult?
+            if let operation {
+                (original, result) = await operation(url, adjustments, overlayID, needsOriginal)
+            } else {
+                original = needsOriginal && !Task.isCancelled ? await renderer.original(url: url) : nil
+                result = !Task.isCancelled
+                    ? await renderer.preview(url: url, adjustments: adjustments, overlayMaskID: overlayID) : nil
+            }
             self?.finishPreviewRender(
                 assetID: assetID,
+                sourceURL: url,
+                generation: generation,
                 needsOriginal: needsOriginal,
                 original: original,
                 result: result
@@ -597,6 +615,8 @@ final class EditorStore: ObservableObject {
 
     private func finishPreviewRender(
         assetID: UUID,
+        sourceURL: URL,
+        generation: UUID,
         needsOriginal: Bool,
         original: RenderedImage?,
         result: PhotoPreviewResult?
@@ -604,7 +624,8 @@ final class EditorStore: ObservableObject {
         previewTask = nil
         isRenderingPreview = false
 
-        if selectedAssetID == assetID {
+        if !Task.isCancelled, projectGeneration == generation,
+           selectedAssetID == assetID, selectedAsset?.url == sourceURL {
             if needsOriginal {
                 originalPreview = original.map(Self.nsImage)
                 originalPreviewAssetID = assetID
@@ -922,6 +943,10 @@ final class EditorStore: ObservableObject {
     }
 
     private func resetPhotoRenderState() {
+        // Keep the worker slot until its completion drains. Starting a new render while
+        // the old actor call finishes would queue unbounded work during repeated opens.
+        previewTask?.cancel()
+        isRenderingPreview = false
         cancelAutoAdjustment()
         endMaskEditing()
         endRetouchEditing()

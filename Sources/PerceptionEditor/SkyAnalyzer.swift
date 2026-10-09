@@ -119,6 +119,13 @@ enum SkyAnalyzer {
                 for i in refined.indices { refined[i] = max(refined[i], added[i]) }
             }
         }
+        if let personID = classes.labels.firstIndex(of: "person"),
+           let people = try? labelMask(labels, skyID: personID) {
+            refined = try autoreleasepool {
+                try SkyForegroundExclusion.refine(sky: refined, source: source, semanticPeople: people,
+                                                  width: width, height: height, context: rawContext)
+            }
+        }
         try Task.checkCancellation()
         let bytes = Data(refined.map { UInt8((min(1, max(0, $0)) * 255).rounded()) })
         let mask = CIImage(bitmapData: bytes, bytesPerRow: width, size: extent.size, format: .L8, colorSpace: nil)

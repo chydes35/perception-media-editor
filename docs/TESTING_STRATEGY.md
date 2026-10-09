@@ -40,3 +40,7 @@ The opt-in `SelectionQualityTests` runner accepts `PME_SELECTION_MANIFEST`, `PME
 ## Expanded blue-object sky controls
 
 `SkyQualityControlTests` accepts `PME_SKY_CONTROL_MANIFEST`, `PME_SKY_CONTROL_OUTPUT_DIR` and `PERCEPTION_SKY_MODEL_PATH`. The JSON array specifies fixture names/paths, `expectNoSky`, and annotated `points` (`name`, top-left normalized `x`/`y`, inclusive byte `minimum`/`maximum`). An optional `baselineMaskPath` records independent-run differences; it does not prove same-prediction monotonicity. Passing sampled blue-object/sky points does not close whole-mask or reflection acceptance. See the [expanded real-RAW report](SKY_QUALITY_CONTROLS_2026-10-08.md).
+
+## Bright-foreground sky exclusion
+
+`SkyForegroundExclusionTests` adds portable person-instance qualification, uncertain-edge preservation, auxiliary-failure fallback and cancellation boundaries. Its opt-in RAW check uses `PME_SKY_FOREGROUND_INPUT` plus `PERCEPTION_SKY_MODEL_PATH` for the copied white-bow portrait; `PME_SKY_FOREGROUND_OUTPUT` optionally writes the corrected PNG and a metadata-correct disposable UI project. `SkyForegroundProbeTests` uses that input/output pair to compare native segmentation methods; generated artifacts are diagnostic evidence, not automatic photographic acceptance. See the [October 9 correction](SKY_FOREGROUND_RECOVERY_2026-10-09.md).

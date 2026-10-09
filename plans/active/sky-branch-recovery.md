@@ -28,8 +28,8 @@ Use read-only disposable RAW copies; all artifacts/caches stay on external SSD. 
 | --- | --- | --- |
 | Static/build | Diff/source review; Swift debug/release builds | PASS — see report below |
 | Unit/integration | Annotated real RAW, negative controls, causal revert, full QA | PASS — see report below |
-| Runtime/UI | Isolated release selection, save/reopen, export | PASS — see report below |
-| Media quality | Inspected gaps/branches and blue-object/indoor controls | PASS — sampled clear gaps and blue-object points; FAIL — white bow/fine gaps; NOT VERIFIED — reflected sky |
+| Runtime/UI | Isolated release selection, save/reopen, export | PASS — selection/persistence/export; FAIL — October 9 initial edited preview after reopening |
+| Media quality | Inspected gaps/branches and blue-object/indoor controls | PASS — sampled clear gaps and blue-object points; FAIL — remaining fine gaps; NOT VERIFIED — reflected sky |
 | Performance | M1/8 GB operation timing and process footprint | Observations PASS; thresholds / matched baseline NOT VERIFIED |
 
 ## Progress and discoveries
@@ -49,3 +49,11 @@ Inspect contact sheets of the 100 existing disposable RAW copies. Add outdoor bl
 Expanded controls pass six RAWs and sixteen annotated points (four sky / twelve foreground), including outdoor blue clothing and overcast sky. Two no-sky outdoor controls are rejected. A white hair bow measures 222/255 in both old/current initial masks and remains a pre-existing foreground-selection failure. Complete fine gaps and actual reflected-sky controls remain open. Production code is unchanged; see [expanded evidence](../../docs/SKY_QUALITY_CONTROLS_2026-10-08.md).
 
 Expanded full gate: `./scripts/qa.sh` PASS, 306 reported / 300 executed / six skipped in 65 suites, 231.823 seconds. Focused controls PASS, 63.372 seconds. All changed-document links and diff checks pass. No fresh UI or footprint check for unchanged production code; those broader acceptance gates remain open.
+
+### Bright-foreground correction — October 9, starting at 4d2b696
+
+Reproduce the white-bow false sky at (.46, .15) before changing analysis. Probe independent bounded native person/foreground evidence on the same oriented 1536-pixel source. Integrate exclusion only where high-confidence foreground corroborates the error, preserve soft boundaries and genuine bright sky, and avoid an extra request for images without semantic person evidence. A failed/absent auxiliary request must retain usable sky analysis; cancellation must still propagate. Keep old saved raster masks unchanged, schema 10 compatible, and original media read-only. Add causal red/green RAW verification and regress branch gaps plus six expanded blue/overcast controls. Run full QA, isolated release UI/save/export, target-Mac observations and hash checks. Keep broader fine-edge, reflection and full-shoot gates open.
+
+Native probes support general-foreground coverage at both bow points; qualify instances with at least 60% semantic person overlap before subtracting confident interiors. Both bow weights improve to zero and all prior blue/overcast points pass. Temporarily reverting the analyzer restores 222/139 and fails two assertions; restored full QA passes 312 reported / 306 executed / six skipped in 67 suites, 421.374 seconds, including 14 production selection/export fixtures. Eleven originals and eleven copies match inventory hashes. Release build/signature/plist pass. Runtime checks and measured observations are documented in the [October 9 report](../../docs/SKY_FOREGROUND_RECOVERY_2026-10-09.md); keep broader quality/performance gates active.
+
+October 9 release: selection, exact saved PNG/reference equality and 4000 × 6000 decoded JPEG PASS; initial edited canvas after Export → New → Open → Photo FAIL (black until overlay refresh), with persistence intact. Root cause/pre-change repro NOT VERIFIED. Physical peak 1.121 GiB, after replacement 250.4 MiB are observations only. Next prioritize the initial-reopen preview failure before further fine-edge work. This plan remains active.

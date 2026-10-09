@@ -21,7 +21,7 @@ The worktree started clean at `15d85d5`. `EditorStore` coalesces previews but do
 - [ ] Establish whether this lifecycle defect caused the original persistent black canvas. Current baseline runs do not reproduce it.
 - [x] Full QA: 315 reported, 297 executed / 18 skipped, 99.929 seconds. Isolated release build/signature/plist and target-Mac save/export/new/open/photo/mask pass without overlay refresh.
 - [x] Update status and evidence.
-- [ ] Push the authorized branch and verify CI.
+- [x] Push `a0a717e` and verify [GitHub CI](https://github.com/chydes35/perception-media-editor/actions/runs/37914664441): 315 reported, 288 executed / 27 skipped, 42.434 seconds, successful debug build. Final documentation-head CI is recorded on draft PR #7.
 
 ## Safety and performance
 

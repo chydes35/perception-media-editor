@@ -255,15 +255,23 @@ actor PhotoRenderer {
 
     func preview(url: URL, adjustments: PhotoAdjustments, overlayMaskID: UUID? = nil) -> PhotoPreviewResult? {
         return autoreleasepool {
-            guard let source = workingSource(for: url, raw: adjustments.raw) else { return nil }
+            guard let source = workingSource(for: url, raw: adjustments.raw) else {
+                PhotoPreviewDiagnostics.record("renderer preview source unavailable")
+                return nil
+            }
             let edited = MediaColorRenderer.render(source, adjustments: adjustments, includesGeometry: true)
-            guard let image = bitmap(edited, maxDimension: Self.previewDimension) else { return nil }
+            guard let image = bitmap(edited, maxDimension: Self.previewDimension) else {
+                PhotoPreviewDiagnostics.record("renderer preview bitmap unavailable")
+                return nil
+            }
 
             var overlay: RenderedImage?
             if let overlayMaskID, let mask = adjustments.masks.first(where: { $0.id == overlayMaskID }) {
                 overlay = maskOverlay(for: mask, source: source, adjustments: adjustments)
             }
-            return PhotoPreviewResult(edited: image, histogram: histogram(of: image.cgImage), maskOverlay: overlay)
+            let data = histogram(of: image.cgImage)
+            PhotoPreviewDiagnostics.record("renderer preview width=\(image.cgImage.width) height=\(image.cgImage.height) histogram=\(data.hasValues) nonzeroBins=\(data.red.filter { $0 > 0 }.count),\(data.green.filter { $0 > 0 }.count),\(data.blue.filter { $0 > 0 }.count) overlay=\(overlay != nil)")
+            return PhotoPreviewResult(edited: image, histogram: data, maskOverlay: overlay)
         }
     }
 

@@ -574,6 +574,7 @@ final class EditorStore: ObservableObject {
         refreshRawInfo(for: asset)
 
         guard previewTask == nil else {
+            PhotoPreviewDiagnostics.record("store coalesced workspace=\(workspace.rawValue)")
             needsAnotherPreviewRender = true
             isRenderingPreview = true
             return
@@ -590,7 +591,9 @@ final class EditorStore: ObservableObject {
         let renderer = photoRenderer
         let overlayID = (showMaskOverlay || isMaskInteracting) ? selectedMaskID : nil
         let operation = previewRenderOperation
+        let requestID = UUID()
         isRenderingPreview = true
+        PhotoPreviewDiagnostics.record("store start request=\(requestID) generation=\(generation) originalNeeded=\(needsOriginal) overlayRequested=\(overlayID != nil)")
 
         previewTask = Task { [weak self] in
             let original: RenderedImage?
@@ -606,6 +609,7 @@ final class EditorStore: ObservableObject {
                 assetID: assetID,
                 sourceURL: url,
                 generation: generation,
+                requestID: requestID,
                 needsOriginal: needsOriginal,
                 original: original,
                 result: result
@@ -617,6 +621,7 @@ final class EditorStore: ObservableObject {
         assetID: UUID,
         sourceURL: URL,
         generation: UUID,
+        requestID: UUID,
         needsOriginal: Bool,
         original: RenderedImage?,
         result: PhotoPreviewResult?
@@ -626,6 +631,7 @@ final class EditorStore: ObservableObject {
 
         if !Task.isCancelled, projectGeneration == generation,
            selectedAssetID == assetID, selectedAsset?.url == sourceURL {
+            PhotoPreviewDiagnostics.record("store publish request=\(requestID) original=\(original != nil) edited=\(result != nil) overlay=\(result?.maskOverlay != nil) histogram=\(result?.histogram.hasValues == true)")
             if needsOriginal {
                 originalPreview = original.map(Self.nsImage)
                 originalPreviewAssetID = assetID
@@ -633,6 +639,8 @@ final class EditorStore: ObservableObject {
             renderedPreview = result.map { Self.nsImage($0.edited) }
             maskOverlay = result?.maskOverlay.map(Self.nsImage)
             histogram = result?.histogram ?? .empty
+        } else {
+            PhotoPreviewDiagnostics.record("store discard request=\(requestID) canceled=\(Task.isCancelled) generationMatches=\(projectGeneration == generation) assetMatches=\(selectedAssetID == assetID) sourceMatches=\(selectedAsset?.url == sourceURL)")
         }
 
         if needsAnotherPreviewRender {
@@ -943,6 +951,7 @@ final class EditorStore: ObservableObject {
     }
 
     private func resetPhotoRenderState() {
+        PhotoPreviewDiagnostics.record("store reset pending=\(previewTask != nil)")
         // Keep the worker slot until its completion drains. Starting a new render while
         // the old actor call finishes would queue unbounded work during repeated opens.
         previewTask?.cancel()

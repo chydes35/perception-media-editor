@@ -92,6 +92,14 @@ struct PhotoComparisonView: View {
                 && !store.isPickingSubject && !store.isAnalyzingSubjects && !store.isAnalyzingSky)
         }
         .accessibilityHint("Click the photo to view it at 100 percent.")
+        .onAppear { traceCanvas() }
+        .onChange(of: edited.map(ObjectIdentifier.init)) { _, _ in traceCanvas() }
+        .onChange(of: mode) { _, _ in traceCanvas() }
+        .onChange(of: store.maskOverlay.map(ObjectIdentifier.init)) { _, _ in traceCanvas() }
+    }
+
+    private func traceCanvas() {
+        PhotoPreviewDiagnostics.record("canvas mode=\(mode.rawValue) original=\(original != nil) edited=\(edited != nil) width=\(edited?.size.width ?? 0) height=\(edited?.size.height ?? 0) overlay=\(store.maskOverlay != nil) maskEditing=\(store.isMaskEditing) busy=\(store.isRenderingPreview)")
     }
 
     /// Where a click landed on the fitted photo, as 0–1 from its top-left; nil outside the photo.

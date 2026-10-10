@@ -59,6 +59,7 @@ Start clean at `eaae645`. Structured native fault logs from the captured black f
 - [x] Implement deferred picker transition and project-bound cancellation; direct model/menu navigation supersedes queued work.
 - [x] Focused causal regression: four checks pass, immediate-publication mutation fails five assertions. Full QA passes: 302 executed / 18 skipped.
 - [x] Traced release: zero publication faults, first picker-only run still black; later baseline retry displays correctly. Decoded JPEG, schema/edit persistence and source hashes pass.
-- [ ] Record remaining black-frame causality, push and verify CI.
+- [x] Record remaining black-frame causality, push `5d19f60` and verify [GitHub QA](https://github.com/chydes35/perception-media-editor/actions/runs/38062170590): 292 executed / 28 skipped.
+- [ ] Isolate and causally correct the original intermittent canvas failure; keep this plan active.
 
 The picker-only candidate removes publication faults but reproduces the persistent black frame after mask selection. A positive fitted-frame experiment and its reverted baseline both display correctly on retry, so remove that unproven edit. AppKit negative geometry frames symbolicate to the native selective-sharing titlebar indicator, not the photo canvas. Record this distinction in [workspace evidence](../../docs/WORKSPACE_TRANSITION_2026-10-10.md). Continue native image/compositor invalidation and captured-window isolation; the original causal correction remains open.

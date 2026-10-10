@@ -96,3 +96,5 @@ requests are submitted together so the comparison image is not cancelled by pref
 Use `scripts/profile-memory.sh` for an isolated real-RAW footprint/latency/pixel comparison.
 Set `PME_RAW_SAMPLE_DIR` to a folder of at least four RW2 files. Measurements include compressed
 and graphics memory charged to the process; they are not a whole-app memory ceiling.
+
+Workspace picker writes use a coalesced main-actor transition after SwiftUI finishes its native view update. Direct model/menu navigation stays synchronous and cancels queued picker work. Project replacement also cancels it, preventing old UI navigation from changing a newly opened project.

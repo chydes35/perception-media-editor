@@ -54,7 +54,10 @@ struct RootView: View {
 
             Spacer()
 
-            Picker("Workspace", selection: $store.workspace) {
+            Picker("Workspace", selection: Binding(
+                get: { store.workspace },
+                set: { store.requestWorkspaceChange(to: $0) }
+            )) {
                 ForEach(Workspace.allCases) { workspace in
                     Text(workspace.rawValue.uppercased()).tag(workspace)
                 }

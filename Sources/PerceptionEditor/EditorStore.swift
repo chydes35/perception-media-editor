@@ -9,8 +9,13 @@ import UniformTypeIdentifiers
 final class EditorStore: ObservableObject {
     @Published var project = EditorProject.starter
     @Published var workspace: Workspace = .library {
-        didSet { workspaceDidChange() }
+        didSet {
+            workspaceChangeTask?.cancel()
+            workspaceChangeTask = nil
+            workspaceDidChange()
+        }
     }
+    private(set) var workspaceChangeTask: Task<Void, Never>?
     @Published var selectedAssetID: UUID? {
         didSet { if oldValue != selectedAssetID { cancelAutoAdjustment() } }
     }
@@ -548,6 +553,20 @@ final class EditorStore: ObservableObject {
         }
     }
 
+    /// Segmented-picker bindings can be written while SwiftUI updates its native view.
+    /// Publish navigation and its dependent state only after that update returns.
+    func requestWorkspaceChange(to requested: Workspace) {
+        workspaceChangeTask?.cancel()
+        workspaceChangeTask = nil
+        guard requested != workspace else { return }
+        let generation = projectGeneration
+        workspaceChangeTask = Task { [weak self] in
+            guard !Task.isCancelled, let self, generation == self.projectGeneration else { return }
+            self.workspaceChangeTask = nil
+            self.workspace = requested
+        }
+    }
+
     /// Requests a preview of the selected photo. Rendering runs on `PhotoRenderer`; while a
     /// render is in flight, further requests collapse into one follow-up render with the
     /// latest adjustments, so slider drags never queue up stale work.
@@ -951,6 +970,8 @@ final class EditorStore: ObservableObject {
     }
 
     private func resetPhotoRenderState() {
+        workspaceChangeTask?.cancel()
+        workspaceChangeTask = nil
         PhotoPreviewDiagnostics.record("store reset pending=\(previewTask != nil)")
         // Keep the worker slot until its completion drains. Starting a new render while
         // the old actor call finishes would queue unbounded work during repeated opens.

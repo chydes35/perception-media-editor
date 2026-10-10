@@ -51,3 +51,14 @@ Started with a clean checkout at `12440f4`. Add opt-in local metadata tracing ac
 - [x] Remove the speculative image-view identity change: it and the reverted baseline both pass on retry, so causality is unproven.
 - [x] Push `ec68fed` and verify [GitHub QA](https://github.com/chydes35/perception-media-editor/actions/runs/37919286297): 316 reported, 288 executed / 28 skipped, 38.016 seconds; build/source checks pass. Final documentation-head CI is recorded on draft PR #7.
 - [ ] Isolate native image/display invalidation and prove a causal correction; keep this plan active.
+
+## October 10 continuation
+
+Start clean at `eaae645`. Structured native fault logs from the captured black frame identify the workspace picker key-path setter → `workspaceDidChange()` → `refreshPreview()` publishing within SwiftUI updates. Defer the entire picker-triggered store transition to a main-actor task; coalesce rapid navigation and cancel on project replacement. Preserve synchronous model/API workspace assignments. Verify the reentrant publication contract with focused regression and causal removal, full QA, and traced release export/reopen. Fault elimination alone does not prove the intermittent black frame fully corrected.
+
+- [x] Implement deferred picker transition and project-bound cancellation; direct model/menu navigation supersedes queued work.
+- [x] Focused causal regression: four checks pass, immediate-publication mutation fails five assertions. Full QA passes: 302 executed / 18 skipped.
+- [x] Traced release: zero publication faults, first picker-only run still black; later baseline retry displays correctly. Decoded JPEG, schema/edit persistence and source hashes pass.
+- [ ] Record remaining black-frame causality, push and verify CI.
+
+The picker-only candidate removes publication faults but reproduces the persistent black frame after mask selection. A positive fitted-frame experiment and its reverted baseline both display correctly on retry, so remove that unproven edit. AppKit negative geometry frames symbolicate to the native selective-sharing titlebar indicator, not the photo canvas. Record this distinction in [workspace evidence](../../docs/WORKSPACE_TRANSITION_2026-10-10.md). Continue native image/compositor invalidation and captured-window isolation; the original causal correction remains open.

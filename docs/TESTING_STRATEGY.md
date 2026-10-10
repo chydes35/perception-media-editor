@@ -48,3 +48,7 @@ The opt-in `SelectionQualityTests` runner accepts `PME_SELECTION_MANIFEST`, `PME
 ## Bright-foreground sky exclusion
 
 `SkyForegroundExclusionTests` adds portable person-instance qualification, uncertain-edge preservation, auxiliary-failure fallback and cancellation boundaries. Its opt-in RAW check uses `PME_SKY_FOREGROUND_INPUT` plus `PERCEPTION_SKY_MODEL_PATH` for the copied white-bow portrait; `PME_SKY_FOREGROUND_OUTPUT` optionally writes the corrected PNG and a metadata-correct disposable UI project. `SkyForegroundProbeTests` uses that input/output pair to compare native segmentation methods; generated artifacts are diagnostic evidence, not automatic photographic acceptance. See the [October 9 correction](SKY_FOREGROUND_RECOVERY_2026-10-09.md).
+
+## Workspace picker publication
+
+`WorkspaceTransitionTests` verifies no synchronous observable publication from the picker request, newest-request coalescing, direct-navigation priority and project replacement cancellation. Temporarily restoring immediate publication must fail the focused checks. Native `com.apple.runtime-issues` SwiftUI fault logs supplement target-Mac preview tracing; disappearance of those faults does not alone establish correction of an intermittent black canvas.

@@ -117,11 +117,18 @@ struct PhotoComparisonView: View {
         return CGPoint(x: x, y: y)
     }
 
+    @ViewBuilder
     private func fitted(_ image: NSImage) -> some View {
-        Image(nsImage: image)
-            .resizable()
-            .scaledToFit()
-            .padding(28)
+        if PhotoCanvasSetting.usesMetal, let bitmap = image.backingCGImage {
+            MetalPhotoCanvas(image: bitmap)
+                .padding(28)
+                .allowsHitTesting(false)
+        } else {
+            Image(nsImage: image)
+                .resizable()
+                .scaledToFit()
+                .padding(28)
+        }
     }
 
     private func split(original: NSImage, edited: NSImage) -> some View {

@@ -1,5 +1,6 @@
 import CoreGraphics
 import Darwin
+import CoreImage
 import Foundation
 import Testing
 @testable import PerceptionEditor
@@ -60,6 +61,48 @@ struct HeldRawFilterTests {
         let back = try #require(await held.preview(url: url, adjustments: at(temperatures[0])))
         let fresh = try #require(await PhotoRenderer().preview(url: url, adjustments: at(temperatures[0])))
         #expect(maxDiff(back.edited.cgImage, fresh.edited.cgImage) <= 1)
+    }
+
+    /// The held filter, mutated through as-shot, a temperature edit, a tint edit and a return to as-shot,
+    /// must render like a filter built from scratch with the same settings.
+    @Test(.enabled(if: HeldRawFilterTests.path != nil)) func mutatedFilterMatchesAFilterBuiltFromScratch() async throws {
+        let url = URL(fileURLWithPath: try #require(Self.path))
+        let renderer = PhotoRenderer()
+        let info = try #require(await renderer.rawInfo(url: url))
+        let context = CIContext()
+        func render(_ image: CIImage) throws -> CGImage {
+            let scaled = image.transformed(by: CGAffineTransform(scaleX: 200 / image.extent.width, y: 200 / image.extent.width))
+            return try #require(context.createCGImage(scaled, from: scaled.extent, format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)))
+        }
+        var cool = RawSettings(); cool.temperature = info.asShotTemperature - 900
+        var tinted = cool; tinted.tint = 35
+        var warmOnly = RawSettings(); warmOnly.temperature = info.asShotTemperature + 700
+        let steps: [RawSettings] = [RawSettings(), cool, tinted, cool, RawSettings(), warmOnly]
+        for settings in steps {
+            let held = try #require(await renderer.decode(url, key: url.path, raw: settings))
+            let scratch = try #require(PhotoSourceLoader.load(url, maxDimension: PhotoRenderer.workingDimension, raw: settings))
+            #expect(maxDiff(try render(held), try render(scratch)) <= 1, "settings \(settings.cacheKey)")
+        }
+    }
+
+    /// Time from opening a photo (as-shot preview) to the first white balance tick, then later ticks.
+    @Test(.enabled(if: HeldRawFilterTests.path != nil)) func firstTickAfterOpeningIsFast() async throws {
+        let url = URL(fileURLWithPath: try #require(Self.path))
+        func ms(_ d: Duration) -> Double { Double(d.components.seconds) * 1000 + Double(d.components.attoseconds) / 1e15 }
+        var first: [Double] = [], later: [Double] = []
+        for _ in 0 ..< 5 {
+            let renderer = PhotoRenderer()
+            let info = try #require(await renderer.rawInfo(url: url))
+            _ = try #require(await renderer.preview(url: url, adjustments: .neutral))
+            for i in 0 ..< 4 {
+                let start = ContinuousClock.now
+                _ = try #require(await renderer.preview(url: url, adjustments: at(info.asShotTemperature - 600 + Double(i) * 120)))
+                let elapsed = ms(ContinuousClock.now - start)
+                if i == 0 { first.append(elapsed) } else { later.append(elapsed) }
+            }
+        }
+        func line(_ t: [Double]) -> String { t.sorted().map { String(format: "%.0f", $0) }.joined(separator: " ") }
+        print("First tick after opening (ms): \(line(first)) | later ticks (ms): \(line(later))")
     }
 
     private func footprintMB() -> Double {

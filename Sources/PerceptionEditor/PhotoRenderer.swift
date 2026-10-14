@@ -240,6 +240,9 @@ actor PhotoRenderer {
         /// Every RAW setting except white balance; the filter is only reused while these match.
         var otherSettingsKey: String
         var filter: CIRAWFilter
+        /// The camera's white balance, restored when an edit clears temperature or tint.
+        var asShotTemperature: Float
+        var asShotTint: Float
     }
     private var heldRawFilter: HeldRawFilter?
 
@@ -513,23 +516,36 @@ actor PhotoRenderer {
         PhotoSourceLoader.isRAW(url) ? raw.cacheKey : RawSettings().cacheKey
     }
 
-    /// Decodes `url` at working size. A RAW photo with a white balance edit keeps its filter, so the
-    /// next temperature or tint change only mutates it; any other RAW change starts a new filter.
-    private func decode(_ url: URL, key: String, raw: RawSettings) -> CIImage? {
-        guard PhotoSourceLoader.isRAW(url), raw.hasWhiteBalance else {
+    /// Decodes `url` at working size. A RAW photo keeps its filter from its first decode, so the
+    /// first white balance edit and each one after it only mutate that filter; any other RAW change
+    /// starts a new filter.
+    func decode(_ url: URL, key: String, raw: RawSettings) -> CIImage? {
+        guard PhotoSourceLoader.isRAW(url) else {
             return PhotoSourceLoader.load(url, maxDimension: Self.workingDimension, raw: raw)
         }
-        // A tint that comes back to unset would otherwise keep its old value on a reused filter.
-        let otherKey = raw.withoutWhiteBalance.cacheKey + (raw.tint == nil ? "|auto-tint" : "|tint") + (raw.temperature == nil ? "|auto-temp" : "|temp")
-        if let held = heldRawFilter, held.url == key, held.otherSettingsKey == otherKey {
-            PhotoSourceLoader.applyWhiteBalance(raw, to: held.filter)
+        let otherKey = raw.withoutWhiteBalance.cacheKey
+        if var held = heldRawFilter, held.url == key, held.otherSettingsKey == otherKey {
+            Self.setWhiteBalance(raw, on: &held)
+            heldRawFilter = held
             return held.filter.outputImage
         }
         heldRawFilter = nil
-        guard let filter = PhotoSourceLoader.makeRawFilter(url, settings: raw, maxDimension: Self.workingDimension)
+        guard let filter = PhotoSourceLoader.makeRawFilter(url, settings: raw.withoutWhiteBalance, maxDimension: Self.workingDimension)
         else { return nil }
-        heldRawFilter = HeldRawFilter(url: key, otherSettingsKey: otherKey, filter: filter)
+        var held = HeldRawFilter(
+            url: key, otherSettingsKey: otherKey, filter: filter,
+            asShotTemperature: filter.neutralTemperature, asShotTint: filter.neutralTint)
+        Self.setWhiteBalance(raw, on: &held)
+        heldRawFilter = held
         return filter.outputImage
+    }
+
+    /// Both values are set every time, so a temperature or tint that goes back to unset returns to as-shot.
+    private static func setWhiteBalance(_ raw: RawSettings, on held: inout HeldRawFilter) {
+        let temperature = raw.temperature.map { Float(min(50000, max(2000, $0))) } ?? held.asShotTemperature
+        let tint = raw.tint.map { Float(min(150, max(-150, $0))) } ?? held.asShotTint
+        if held.filter.neutralTemperature != temperature { held.filter.neutralTemperature = temperature }
+        if held.filter.neutralTint != tint { held.filter.neutralTint = tint }
     }
 
     private func workingSource(for url: URL, raw: RawSettings) -> CIImage? {

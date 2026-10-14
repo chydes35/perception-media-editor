@@ -11,7 +11,7 @@ The photo in Develop and Cull-compare is drawn by an `MTKView` through Core Imag
 ## Staging
 
 1. **This plan, step 1:** display-only swap. The renderer still produces a `CGImage`; the canvas draws it on the GPU. Fit math is a pure, tested function. A defaults switch (`PME_SystemImageCanvas`) restores the SwiftUI image for A/B comparison.
-2. GPU histogram (`CIAreaHistogram`) so the preview no longer needs a CPU pass per render.
+2. ~~GPU histogram (`CIAreaHistogram`)~~ **Dropped after measurement (2026-10-14).** The CPU histogram counts a 256-px downscale of the finished preview and takes about 0.55 ms in a release build. A `CIAreaHistogram` version fed the same `CGImage` was exact against a full-resolution count but took about 5.9 ms (upload plus synchronous readback), roughly 10× slower. Debug builds showed the opposite (GPU 6 ms vs CPU 26 ms) because the CPU loop is unoptimized there; always judge this by release numbers. Revisit only if step 3 leaves the histogram without a `CGImage` to read, and then measure again.
 3. Deliver the lazy `CIImage` graph to the canvas (skip the `CGImage` bitmap) with a low-resolution drag preview.
 4. Display P3 and EDR (`wantsExtendedDynamicRangeContent`) once the working pipeline outputs wide-gamut.
 

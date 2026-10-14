@@ -519,7 +519,7 @@ actor PhotoRenderer {
     /// Decodes `url` at working size. A RAW photo keeps its filter from its first decode, so the
     /// first white balance edit and each one after it only mutate that filter; any other RAW change
     /// starts a new filter.
-    func decode(_ url: URL, key: String, raw: RawSettings) -> CIImage? {
+    private func decode(_ url: URL, key: String, raw: RawSettings) -> CIImage? {
         guard PhotoSourceLoader.isRAW(url) else {
             return PhotoSourceLoader.load(url, maxDimension: Self.workingDimension, raw: raw)
         }
@@ -538,6 +538,13 @@ actor PhotoRenderer {
         Self.setWhiteBalance(raw, on: &held)
         heldRawFilter = held
         return filter.outputImage
+    }
+
+    /// A small render of the held-filter decode, so tests can compare it without moving a `CIImage` out of the actor.
+    func heldDecodeThumbnail(url: URL, raw: RawSettings, width: CGFloat) -> CGImage? {
+        guard let image = decode(url, key: cacheKey(for: url), raw: raw), image.extent.width > 0 else { return nil }
+        let scaled = image.transformed(by: CGAffineTransform(scaleX: width / image.extent.width, y: width / image.extent.width))
+        return context.createCGImage(scaled, from: scaled.extent, format: .RGBA8, colorSpace: displayColorSpace)
     }
 
     /// Both values are set every time, so a temperature or tint that goes back to unset returns to as-shot.

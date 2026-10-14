@@ -79,9 +79,9 @@ struct HeldRawFilterTests {
         var warmOnly = RawSettings(); warmOnly.temperature = info.asShotTemperature + 700
         let steps: [RawSettings] = [RawSettings(), cool, tinted, cool, RawSettings(), warmOnly]
         for settings in steps {
-            let held = try #require(await renderer.decode(url, key: url.path, raw: settings))
+            let held = try #require(await renderer.heldDecodeThumbnail(url: url, raw: settings, width: 200))
             let scratch = try #require(PhotoSourceLoader.load(url, maxDimension: PhotoRenderer.workingDimension, raw: settings))
-            #expect(maxDiff(try render(held), try render(scratch)) <= 1, "settings \(settings.cacheKey)")
+            #expect(maxDiff(held, try render(scratch)) <= 1, "settings \(settings.cacheKey)")
         }
     }
 

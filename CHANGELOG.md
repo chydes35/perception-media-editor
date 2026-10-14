@@ -4,6 +4,7 @@ Newest first. Pull request numbers refer to `chydes35/perception-media-editor`.
 
 ## Unreleased
 
+- White balance temperature drags show a fast approximate preview (about 5 ms) and render the exact RAW decode when the slider rests; tint and other RAW settings are unchanged.
 - Photo canvas drawn by a Metal view through Core Image (step 1 of [metal-canvas](plans/active/metal-canvas.md)); `PME_SystemImageCanvas=1` restores the SwiftUI image.
 - Integrated photo tools, reliability safeguards, and batch JPEG delivery (#7): subject and sky masks (Vision and a CoreML sky model), advanced Auto tone and white balance, white balance eyedropper, schema 10, save recovery, bounded undo and caches, memory-pressure cleanup, sequential batch JPEG export, preview lifecycle fixes.
 - Known issue: the edited canvas can stay black after Export → New → Open → Photo (see [CURRENT_STATUS](docs/CURRENT_STATUS.md)).

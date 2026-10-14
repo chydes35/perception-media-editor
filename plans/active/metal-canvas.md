@@ -31,17 +31,16 @@ No project-schema, original-media, or renderer-memory changes. One shared `MTLDe
 
 Runtime verification on the target Mac, then steps 2–4.
 
-### White-balance latency (2026-10-14, preliminary)
+### White-balance latency (2026-10-14)
 
-Real S5 RAW, release build, Apple M1 / 8 GB. **The machine was under load** (an Android emulator using about 220% CPU, load average 6–9), so only minimums and robust relationships are recorded; medians were unusable.
+Real S5 RAW, release build, Apple M1 / 8 GB. The first runs were under load from an Android emulator and unusable beyond minimums; the numbers below marked *quiet* were taken afterwards (load average about 2).
 
-- A white-balance tick builds a new `CIRAWFilter`, decodes, and renders into the half-float working buffer: about 340–460 ms best case, 0.5–1.3 s typical under load.
-- **Filter creation is about 53 ms** of that (stable). Everything else is the decode and render.
-- **Decode size does not matter.** The best case is about 310–340 ms at 800, 1024, 1280 and 1800 px alike. The demosaic runs at full resolution, so a smaller working copy or proxy cannot beat roughly 320 ms. (This is why the drag-proxy table shows no white-balance gain.)
-- **Reusing one filter and changing `neutralTemperature` may cache the demosaic: 3 of 20 reused renders took about 100 ms.** But re-rendering an unchanged filter also ranged from 104 ms to 1.2 s, so the spread is contention and this is **not established**. Rerun on a quiet machine before building on it.
-- **A Bradford chromatic-adaptation shift on the as-shot decode** (Planckian white points, 3×3 in linear sRGB) is a usable but rough drag-time stand-in: mean error 3.4–13 out of 255 across 2610–7110 K against 6.5–30 for the unchanged image (as-shot 4110 K). It ignores tint and the locus differs from the camera's definition of temperature, so it would need to snap to the exact decode on release.
+- **Why a tick is slow.** Each white-balance tick builds a new `CIRAWFilter`, decodes and renders: 332–700 ms *quiet* (0.5–1.3 s under load). Filter creation is about 53 ms of that. The demosaic cost does not shrink with output size: the best case is about 310–340 ms at 800, 1024, 1280 and 1800 px alike, which is why the drag proxy shows no white-balance gain.
+- **Reusing one filter works.** *Quiet:* with one `CIRAWFilter` and only `neutralTemperature` changed, most renders take 91–99 ms, the same as re-rendering an unchanged filter (90–95 ms), against 330–700 ms for a fresh filter. A minority of reused renders still take 200–700 ms (unexplained; possibly the engine dropping its cache under the context's 256 MB target). **Not yet implemented**; it needs a policy for holding one filter (and its decoded data) for the current photo only, released on photo change and memory pressure.
+- **Draft preview (implemented).** While a temperature slider moves, `PhotoRenderer.preview(..., allowsDraft: true)` shifts the cached as-shot decode with `WhiteBalanceShift` (Bradford adaptation between Planckian white points in linear sRGB) instead of re-decoding: 5–6 ms per tick *quiet*, after a one-time cold cost of about 0.27 s for the first use in a process. The result is flagged `isDraft`; `EditorStore` renders the exact decode after `draftSettleDelay` (350 ms) with no new input, cancels that on new input or project reset, and renders exactly when the requested decode is already cached. Only a temperature change on otherwise default RAW settings with no tint is drafted; tint or any other RAW setting uses the exact path as before.
+- **Draft accuracy.** Against the exact decode (mean absolute error over RGB, 0–255): 3–6 for ±700–1500 K from as-shot, 8 at +3000 K, 10 at −1200 K (2910 K), 13 at −1500 K (2610 K); an unchanged image is off by 6–30. Four white-point/adaptation models and a mired scale factor were compared; all plateau at the same error, so the residual is the engine's nonlinear handling, not the model. Tint is not modeled.
+- **Not verified:** how the snap from draft to exact looks and feels in the app; other RAW files, cameras and lighting; memory with a held filter.
 
-Candidate designs, cheapest first: (1) keep one `CIRAWFilter` per photo and mutate it, if the quiet-machine rerun confirms the cache; (2) the approximation above as a drag preview with an exact render when the slider settles; (3) a per-photo fitted matrix from a few reference decodes. The probe tests live outside the repository; their shape is: time `makeRawFilter` + render for 20 temperatures with a fresh filter versus one mutated filter.
+Next: hold one `CIRAWFilter` per current photo to bring the exact render to about 90 ms, then decide whether the draft is still needed. The probe tests live outside the repository.
 
-Caveat for the earlier measurements in this file: they were comparisons within a single run on the same machine, so the ratios should hold, but the absolute milliseconds were probably also taken under some load.
-
+Caveat for the earlier measurements in this file: they were comparisons within a single run on the same machine, so the ratios should hold, but the absolute milliseconds may have been taken under some load.

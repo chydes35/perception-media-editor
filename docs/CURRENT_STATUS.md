@@ -17,6 +17,10 @@ Card import with verified copies, culling, RAW develop (white balance with eyedr
 | Agreed performance thresholds | NOT VERIFIED (observations only; see [PERFORMANCE_TARGETS](PERFORMANCE_TARGETS.md)) |
 | Distribution signing and notarization | NOT VERIFIED |
 
+## In progress
+
+White-balance drag latency ([plan](../plans/active/metal-canvas.md)): while the temperature slider moves, the preview is a 5–6 ms shift of the as-shot decode (typically 3–8 levels out of 255 from the true decode, up to 13 at the extremes) and the exact decode follows 350 ms after input stops. Only for a temperature change on default RAW settings with no tint. Not yet checked by eye in the app. Next: reuse one RAW filter per photo, which measured about 92 ms per exact render against 330–700 ms.
+
 ## Open problems
 
 1. **Black edited canvas (open bug).** After Export → New → Open → Photo, the edited preview can stay black although the render and histogram are valid; switching Original → Edited restores it. Cause not established. Publication-during-update faults and stale-completion races were fixed separately and are covered by tests. Evidence: [workspace transition](archive/WORKSPACE_TRANSITION_2026-10-10.md), [preview trace](archive/PREVIEW_TRACE_2026-10-09.md). Plan: [preview-reopen-recovery](../plans/active/preview-reopen-recovery.md). In progress on branch `metal-canvas` ([plan](../plans/active/metal-canvas.md)): the photo is drawn by a Metal view instead of SwiftUI `Image`. Whether that removes the black canvas is **NOT VERIFIED**; set `PME_SystemImageCanvas=1` to compare against the old canvas.

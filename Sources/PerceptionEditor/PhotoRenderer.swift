@@ -14,6 +14,8 @@ struct PhotoPreviewResult: Sendable {
     var histogram: HistogramData
     /// The selected mask as a red tint (opaque where the mask applies), the same size as `edited`.
     var maskOverlay: RenderedImage?
+    /// True when white balance was approximated from the as-shot decode; an exact render should follow.
+    var isDraft = false
 }
 
 /// A 1:1 pixel render of part of a photo, for checking focus at 100%.
@@ -253,9 +255,13 @@ actor PhotoRenderer {
         return newContext
     }
 
-    func preview(url: URL, adjustments: PhotoAdjustments, overlayMaskID: UUID? = nil) -> PhotoPreviewResult? {
+    /// With `allowsDraft`, a white balance temperature change that has no decode cached yet is
+    /// approximated from the photo's as-shot decode (see `WhiteBalanceShift`) instead of waiting
+    /// for a RAW re-decode; the result is flagged `isDraft`.
+    func preview(url: URL, adjustments: PhotoAdjustments, overlayMaskID: UUID? = nil, allowsDraft: Bool = false) -> PhotoPreviewResult? {
         return autoreleasepool {
-            guard let source = workingSource(for: url, raw: adjustments.raw) else {
+            let draft = allowsDraft ? draftWhiteBalanceSource(url: url, raw: adjustments.raw) : nil
+            guard let source = draft ?? workingSource(for: url, raw: adjustments.raw) else {
                 PhotoPreviewDiagnostics.record("renderer preview source unavailable")
                 return nil
             }
@@ -271,7 +277,7 @@ actor PhotoRenderer {
             }
             let data = histogram(of: image.cgImage)
             PhotoPreviewDiagnostics.record("renderer preview width=\(image.cgImage.width) height=\(image.cgImage.height) histogram=\(data.hasValues) nonzeroBins=\(data.red.filter { $0 > 0 }.count),\(data.green.filter { $0 > 0 }.count),\(data.blue.filter { $0 > 0 }.count) overlay=\(overlay != nil)")
-            return PhotoPreviewResult(edited: image, histogram: data, maskOverlay: overlay)
+            return PhotoPreviewResult(edited: image, histogram: data, maskOverlay: overlay, isDraft: draft != nil)
         }
     }
 
@@ -493,6 +499,17 @@ actor PhotoRenderer {
     /// RAW settings only matter to RAW files; every other file shares one decode.
     private func rawKey(for url: URL, raw: RawSettings) -> String {
         PhotoSourceLoader.isRAW(url) ? raw.cacheKey : RawSettings().cacheKey
+    }
+
+    /// The as-shot decode shifted to the requested temperature, or nil when an exact decode is
+    /// already cached, the as-shot decode is not, or other RAW settings are in play.
+    private func draftWhiteBalanceSource(url: URL, raw: RawSettings) -> CIImage? {
+        guard WhiteBalanceShift.canShift(raw), let target = raw.temperature, PhotoSourceLoader.isRAW(url) else { return nil }
+        let key = cacheKey(for: url)
+        if workingSources.contains(where: { $0.url == key && $0.rawKey == raw.cacheKey }) { return nil }
+        guard let base = workingSources.first(where: { $0.url == key && $0.rawKey == RawSettings().cacheKey }),
+              let info = rawInfo(url: url) else { return nil }
+        return WhiteBalanceShift.apply(to: base.image, from: info.asShotTemperature, to: target)
     }
 
     private func workingSource(for url: URL, raw: RawSettings) -> CIImage? {

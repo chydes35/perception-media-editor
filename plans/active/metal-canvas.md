@@ -13,6 +13,20 @@ The photo in Develop and Cull-compare is drawn by an `MTKView` through Core Imag
 1. **This plan, step 1:** display-only swap. The renderer still produces a `CGImage`; the canvas draws it on the GPU. Fit math is a pure, tested function. A defaults switch (`PME_SystemImageCanvas`) restores the SwiftUI image for A/B comparison.
 2. ~~GPU histogram (`CIAreaHistogram`)~~ **Dropped after measurement (2026-10-14).** The CPU histogram counts a 256-px downscale of the finished preview and takes about 0.55 ms in a release build. A `CIAreaHistogram` version fed the same `CGImage` was exact against a full-resolution count but took about 5.9 ms (upload plus synchronous readback), roughly 10× slower. Debug builds showed the opposite (GPU 6 ms vs CPU 26 ms) because the CPU loop is unoptimized there; always judge this by release numbers. Revisit only if step 3 leaves the histogram without a `CGImage` to read, and then measure again.
 3. ~~Deliver the lazy `CIImage` graph to the canvas~~ **Paused after measurement (2026-10-14).** Release build, 3000×2000 JPEG, basic adjustments (exposure, contrast, highlights, shadows, warmth, vibrance, sharpness, vignette), 2000×1300 canvas, 30 ticks with a changing exposure: today's tick (render, read back to `CGImage`, histogram) averages about 13 ms; building the graph and drawing it straight into a Metal texture averages about 10 ms. That is roughly 3 ms of 13, and both are inside a 16 ms frame. Costs and risks of doing it anyway: graph evaluation and any CPU-side filter setup would move onto the main thread; masks, healing (which needs its own larger allocation context) and the sky/subject rasters would then be evaluated by the canvas's context instead of the memory-bounded renderer actor; the canvas would hold the working source buffer alive. The unmeasured part is the main-actor cost of publishing an `NSImage` and re-uploading it, which a direct path would avoid. Revisit if profiling a real 24 MP RAW with masks shows that cost, or if a drag-time proxy (render from a ~900 px copy of the source while a slider moves) is wanted. A proxy would be the larger lever, because Core Image filters run at the source's resolution.
+
+### Drag-proxy measurement (2026-10-14)
+
+Release build on an Apple M1, 8 GB, using a copy of a real Lumix S5 RW2 (24 MP). Edit: exposure, contrast, highlights, shadows, vibrance, sharpness, vignette, an RGB tone curve, HSL, one radial and one linear mask. A renderer with a smaller working copy and preview, compared with today's 2560/1800:
+
+| Renderer | Output | First open | Look-slider tick (cached source) | White-balance tick (re-decode) |
+| --- | --- | --- | --- | --- |
+| Today, 2560 / 1800 | 1800×1201 | 0.75–1.6 s | 16–17 ms | 0.42–0.73 s |
+| Proxy, 1280 / 900 | 900×601 | 0.30–0.61 s | 5.6–7.6 ms | 0.33–0.43 s |
+| Proxy, 1024 / 700 | 700×467 | 0.26–0.29 s | 4.5–4.8 ms | 0.35–0.38 s |
+
+Reading: look sliders get about 2.5× cheaper (16 ms, at the edge of a 60 Hz frame, to about 6 ms), which leaves room for heavier edits than this one. The RAW-decode controls (white balance, noise reduction, detail, lens correction) barely improve, because the decode, not the output size, dominates; they stay at roughly half a second. Costs to weigh: the image is visibly softer while dragging, and sharpness, detail, noise reduction and vignette cannot be judged on a proxy, so those sliders would need to stay at full resolution; a second, smaller working copy per photo (about 9 MB versus 35 MB at half-float RGBA); and a new "a slider is being dragged" signal in the store, which does not exist today for the Develop sliders. Two runs, one machine, one photo; the first-open column is noisy. Not yet checked: heavier edits (healing, brush and sky masks) and a 100+ photo session.
+
+Decision pending: build it only if look sliders feel laggy on real shoots; the benchmark harness is not kept (see the commit history for its shape).
 4. Display P3 and EDR (`wantsExtendedDynamicRangeContent`) once the working pipeline outputs wide-gamut.
 
 ## Safety and performance

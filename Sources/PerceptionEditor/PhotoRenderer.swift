@@ -111,12 +111,7 @@ enum PhotoSourceLoader {
         }
 
         // Temperature and tint are coupled, so set both from the as-shot values when only one is given.
-        if settings.hasWhiteBalance {
-            let temperature = settings.temperature ?? Double(filter.neutralTemperature)
-            let tint = settings.tint ?? Double(filter.neutralTint)
-            filter.neutralTemperature = Float(min(50000, max(2000, temperature)))
-            filter.neutralTint = Float(min(150, max(-150, tint)))
-        }
+        applyWhiteBalance(settings, to: filter)
         if filter.isLuminanceNoiseReductionSupported, let value = settings.luminanceNoiseReduction {
             filter.luminanceNoiseReductionAmount = Float(min(1, max(0, value)))
         }
@@ -133,6 +128,16 @@ enum PhotoSourceLoader {
             filter.isLensCorrectionEnabled = enabled
         }
         return filter
+    }
+
+    /// Sets temperature and tint on `filter`. Both come from the as-shot values when only one is given,
+    /// so `filter` must not have had a white balance applied yet unless `settings` carries both.
+    static func applyWhiteBalance(_ settings: RawSettings, to filter: CIRAWFilter) {
+        guard settings.hasWhiteBalance else { return }
+        let temperature = settings.temperature ?? Double(filter.neutralTemperature)
+        let tint = settings.tint ?? Double(filter.neutralTint)
+        filter.neutralTemperature = Float(min(50000, max(2000, temperature)))
+        filter.neutralTint = Float(min(150, max(-150, tint)))
     }
 
     /// As-shot white balance and the RAW engine's defaults for a file.
@@ -229,6 +234,16 @@ actor PhotoRenderer {
     private var workingSources: [WorkingEntry] = []
     private var fullResolution: WorkingEntry?
     private var rawInfoCache: [String: RawInfo?] = [:]
+
+    /// One RAW filter kept for the current photo so white-balance changes re-render from the
+    /// engine's cached demosaic (about 90 ms) instead of building and decoding a new filter (330-700 ms).
+    private struct HeldRawFilter {
+        var url: String
+        /// Every RAW setting except white balance; the filter is only reused while these match.
+        var otherSettingsKey: String
+        var filter: CIRAWFilter
+    }
+    private var heldRawFilter: HeldRawFilter?
 
     /// The context budget controls temporary render allocations, not the entire process.
     /// Half-float working precision is retained for RAW highlight recovery.
@@ -448,6 +463,7 @@ actor PhotoRenderer {
     func releaseMemoryUnderPressure() {
         // Preserve only the most recent source(s), so the visible photo stays responsive.
         if workingSources.count > 2 { workingSources.removeFirst(workingSources.count - 2) }
+        heldRawFilter = nil
         rawInfoCache.removeAll()
         clearRenderCaches()
     }
@@ -477,12 +493,14 @@ actor PhotoRenderer {
     func evict(url: URL) {
         let prefix = url.path + "|"
         workingSources.removeAll { $0.url.hasPrefix(prefix) }
+        if heldRawFilter?.url.hasPrefix(prefix) == true { heldRawFilter = nil }
         rawInfoCache = rawInfoCache.filter { !$0.key.hasPrefix(prefix) }
         if fullResolution?.url.hasPrefix(prefix) == true { fullResolution = nil }
     }
 
     func evictAll() {
         workingSources.removeAll()
+        heldRawFilter = nil
         fullResolution = nil
         rawInfoCache.removeAll()
         clearRenderCaches()
@@ -512,10 +530,30 @@ actor PhotoRenderer {
         return WhiteBalanceShift.apply(to: base.image, from: info.asShotTemperature, to: target)
     }
 
+    /// Decodes `url` at working size. A RAW photo with a white balance edit keeps its filter, so the
+    /// next temperature or tint change only mutates it; any other RAW change starts a new filter.
+    private func decode(_ url: URL, key: String, raw: RawSettings) -> CIImage? {
+        guard PhotoSourceLoader.isRAW(url), raw.hasWhiteBalance else {
+            return PhotoSourceLoader.load(url, maxDimension: Self.workingDimension, raw: raw)
+        }
+        // A tint that comes back to unset would otherwise keep its old value on a reused filter.
+        let otherKey = raw.withoutWhiteBalance.cacheKey + (raw.tint == nil ? "|auto-tint" : "|tint") + (raw.temperature == nil ? "|auto-temp" : "|temp")
+        if let held = heldRawFilter, held.url == key, held.otherSettingsKey == otherKey {
+            PhotoSourceLoader.applyWhiteBalance(raw, to: held.filter)
+            return held.filter.outputImage
+        }
+        heldRawFilter = nil
+        guard let filter = PhotoSourceLoader.makeRawFilter(url, settings: raw, maxDimension: Self.workingDimension)
+        else { return nil }
+        heldRawFilter = HeldRawFilter(url: key, otherSettingsKey: otherKey, filter: filter)
+        return filter.outputImage
+    }
+
     private func workingSource(for url: URL, raw: RawSettings) -> CIImage? {
         let key = cacheKey(for: url)
         let variant = rawKey(for: url, raw: raw)
         let defaultVariant = RawSettings().cacheKey
+        if let held = heldRawFilter, held.url != key { heldRawFilter = nil }
 
         if let index = workingSources.firstIndex(where: { $0.url == key && $0.rawKey == variant }) {
             let entry = workingSources.remove(at: index)
@@ -523,7 +561,7 @@ actor PhotoRenderer {
             return entry.image
         }
 
-        guard let decoded = PhotoSourceLoader.load(url, maxDimension: Self.workingDimension, raw: raw),
+        guard let decoded = decode(url, key: key, raw: raw),
               let image = materialize(decoded)
         else { return nil }
 

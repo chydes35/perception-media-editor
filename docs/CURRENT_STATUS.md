@@ -19,7 +19,7 @@ Card import with verified copies, culling, RAW develop (white balance with eyedr
 
 ## In progress
 
-White-balance drag latency ([plan](../plans/active/metal-canvas.md)): while the temperature slider moves, the preview is a 5–6 ms shift of the as-shot decode (typically 3–8 levels out of 255 from the true decode, up to 13 at the extremes) and the exact decode follows 350 ms after input stops. Only for a temperature change on default RAW settings with no tint. Not yet checked by eye in the app. Next: reuse one RAW filter per photo, which measured about 92 ms per exact render against 330–700 ms.
+White-balance drag latency ([plan](../plans/active/metal-canvas.md)): while the temperature slider moves, the preview is a 5–6 ms shift of the as-shot decode (typically 3–8 levels out of 255 from the true decode, up to 13 at the extremes) and the exact decode follows 350 ms after input stops. Only for a temperature change on default RAW settings with no tint. Not yet checked by eye in the app. The renderer now holds one RAW filter per current photo during white balance edits: exact renders are about 110 ms on roughly 40% of ticks and 250 ms–1.3 s on the rest (480 ms+ without it), with the same pixels. What keeps its cache alive is not yet established. Next: find that, then decide whether the draft is still needed.
 
 ## Open problems
 

@@ -13,4 +13,4 @@ The exact RAW reproduction passes with the correction; temporarily restoring the
 
 A separate missing-source reproduction confirms subject selection's failure branch left “Analyzing subjects…” in the footer. Set a completed-failure status while retaining the error message and avoiding any project edit. This corrects feedback, not segmentation quality.
 
-The corrected release displays healed 100% focus and native subject selection successfully. Displayed delivery measurements are recorded in the [workflow report](../WORKFLOW_VALIDATION_2026-10-07.md). Large/many repairs, varied native subject/sky selections, a genuine 100–200-file single shoot, and baseline/threshold performance comparison remain separate gates.
+The corrected release displays healed 100% focus and native subject selection successfully. Displayed delivery measurements are recorded in the [workflow report](../archive/WORKFLOW_VALIDATION_2026-10-07.md). Large/many repairs, varied native subject/sky selections, a genuine 100–200-file single shoot, and baseline/threshold performance comparison remain separate gates.

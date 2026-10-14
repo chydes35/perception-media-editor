@@ -37,4 +37,4 @@ Fixtures are read-only disposable copies from the prior hashed workload. Outputs
 
 Do not add inferred quality pass assertions based only on nonempty masks. Capture inference errors as explicit observations. Whole-shoot and broad quality milestones remain active.
 
-Six cases/five distinct RAW copies generated structural evidence. Repeated inference timings, inspected artifacts and limitations are in the [October 8 report](../../docs/SELECTION_QUALITY_2026-10-08.md). Source integrity PASS for five originals/copies. Keep the plan active: demonstrated group/sky misses need bounded implementation work and annotated references; genuine-shoot path is still pending.
+Six cases/five distinct RAW copies generated structural evidence. Repeated inference timings, inspected artifacts and limitations are in the [October 8 report](../../docs/archive/SELECTION_QUALITY_2026-10-08.md). Source integrity PASS for five originals/copies. Keep the plan active: demonstrated group/sky misses need bounded implementation work and annotated references; genuine-shoot path is still pending.

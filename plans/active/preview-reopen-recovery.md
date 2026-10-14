@@ -47,7 +47,7 @@ Started with a clean checkout at `12440f4`. Add opt-in local metadata tracing ac
 
 - [x] Focused cold-preview stress and retained-model trace: four checks pass; 84 renderer frames, 30 obsolete completions discarded, three retained-model analyses.
 - [x] Run required full QA (298 executed / 18 skipped), isolated traced release/signature/plist and displayed workflow. UI reliability **FAILS** on one persistent black canvas; media/integrity checks pass.
-- [x] Record reproduction, source integrity and footprint in [trace evidence](../../docs/PREVIEW_TRACE_2026-10-09.md). Peak 1.096 GiB with fresh native analysis; matched performance acceptance remains NOT VERIFIED.
+- [x] Record reproduction, source integrity and footprint in [trace evidence](../../docs/archive/PREVIEW_TRACE_2026-10-09.md). Peak 1.096 GiB with fresh native analysis; matched performance acceptance remains NOT VERIFIED.
 - [x] Remove the speculative image-view identity change: it and the reverted baseline both pass on retry, so causality is unproven.
 - [x] Push `ec68fed` and verify [GitHub QA](https://github.com/chydes35/perception-media-editor/actions/runs/37919286297): 316 reported, 288 executed / 28 skipped, 38.016 seconds; build/source checks pass. Final documentation-head CI is recorded on draft PR #7.
 - [ ] Isolate native image/display invalidation and prove a causal correction; keep this plan active.
@@ -62,4 +62,4 @@ Start clean at `eaae645`. Structured native fault logs from the captured black f
 - [x] Record remaining black-frame causality, push `5d19f60` and verify [GitHub QA](https://github.com/chydes35/perception-media-editor/actions/runs/38062170590): 292 executed / 28 skipped.
 - [ ] Isolate and causally correct the original intermittent canvas failure; keep this plan active.
 
-The picker-only candidate removes publication faults but reproduces the persistent black frame after mask selection. A positive fitted-frame experiment and its reverted baseline both display correctly on retry, so remove that unproven edit. AppKit negative geometry frames symbolicate to the native selective-sharing titlebar indicator, not the photo canvas. Record this distinction in [workspace evidence](../../docs/WORKSPACE_TRANSITION_2026-10-10.md). Continue native image/compositor invalidation and captured-window isolation; the original causal correction remains open.
+The picker-only candidate removes publication faults but reproduces the persistent black frame after mask selection. A positive fitted-frame experiment and its reverted baseline both display correctly on retry, so remove that unproven edit. AppKit negative geometry frames symbolicate to the native selective-sharing titlebar indicator, not the photo canvas. Record this distinction in [workspace evidence](../../docs/archive/WORKSPACE_TRANSITION_2026-10-10.md). Continue native image/compositor invalidation and captured-window isolation; the original causal correction remains open.

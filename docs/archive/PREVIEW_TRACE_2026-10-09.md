@@ -27,7 +27,7 @@ The disposable project preserves schema 10, media and complete adjustments after
 | Isolated release build/package | **PASS** — `swift build --disable-sandbox --scratch-path .build -c release --product PerceptionEditor` (58.04 seconds), candidate `codesign --verify --deep --strict` and `plutil -lint`; installed app unchanged |
 | Traced release UI/media/integrity | **FAIL / PASS** — persistent edited black canvas reproduced; save/decoded export and source integrity pass |
 | Whole-app performance | Observed above; matched thresholds and genuine full-shoot acceptance **NOT VERIFIED** |
-| Original persistent black canvas | **FAIL** — reproduced; causal correction **NOT VERIFIED**; [recovery plan](../plans/active/preview-reopen-recovery.md) remains active |
+| Original persistent black canvas | **FAIL** — reproduced; causal correction **NOT VERIFIED**; [recovery plan](../../plans/active/preview-reopen-recovery.md) remains active |
 
 The test-only fixture `TraceQA.pmedit` is cloned under `.build/preview-trace-validation/` before UI work to avoid autosaving new masks into the earlier QA fixture. Logs use `/private/tmp/perception-preview-{stress-focused,retained-model,trace-full-qa}.log`; local category capture and summaries remain under `.build/preview-trace-validation/`. These local fixtures and traces are not uploaded to GitHub.
 

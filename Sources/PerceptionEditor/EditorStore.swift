@@ -1,6 +1,7 @@
 import AppKit
 @preconcurrency import AVFoundation
 import Combine
+import Dispatch
 import CoreImage
 import UniformTypeIdentifiers
 
@@ -8,9 +9,16 @@ import UniformTypeIdentifiers
 final class EditorStore: ObservableObject {
     @Published var project = EditorProject.starter
     @Published var workspace: Workspace = .library {
-        didSet { workspaceDidChange() }
+        didSet {
+            workspaceChangeTask?.cancel()
+            workspaceChangeTask = nil
+            workspaceDidChange()
+        }
     }
-    @Published var selectedAssetID: UUID?
+    private(set) var workspaceChangeTask: Task<Void, Never>?
+    @Published var selectedAssetID: UUID? {
+        didSet { if oldValue != selectedAssetID { cancelAutoAdjustment() } }
+    }
     @Published var selectedAssetIDs: Set<UUID> = []
     @Published var filter = LibraryFilter() {
         didSet { filterDidChange() }
@@ -25,13 +33,36 @@ final class EditorStore: ObservableObject {
     @Published var ingest = IngestState.idle
     /// RAW engine defaults for the selected photo; nil when it is not a RAW file.
     @Published var rawInfo: RawInfo?
+    @Published var isPickingWhiteBalance = false
+    @Published var isSamplingWhiteBalance = false
+    var whiteBalanceRequestID = UUID()
     @Published var isRenderingPreview = false
+    var autoAdjustmentTask: Task<Void, Never>?
+    let autoAdjustmentAnalyzer: (@Sendable (URL, PhotoAdjustments) async throws -> AutoAdjustmentSuggestion)?
     @Published var maskTool: MaskTool = .none
     @Published var selectedMaskID: UUID?
     @Published var showMaskOverlay = false
     /// True while a mask is being dragged or painted, so its area shows without the toggle.
     @Published var isMaskInteracting = false
     @Published var maskOverlay: NSImage?
+    @Published var isAnalyzingSubjects = false
+    @Published var isPickingSubject = false
+    @Published var subjectAnalysis: SubjectAnalysis?
+    @Published var subjectSelectionOverlay: NSImage?
+    @Published var highlightedSubjectID: Int?
+    var subjectRequestID = UUID()
+    var subjectOverlayRequestID = UUID()
+    var subjectOverlayTask: Task<Void, Never>?
+    /// Zero is the all-subject overview. At most four preview-sized overlays are retained.
+    var subjectOverlayCache: [(id: Int, image: NSImage)] = []
+    var subjectOverlayAdjustments: PhotoAdjustments?
+    let subjectAnalyzer = SubjectAnalysisService()
+    @Published var isAnalyzingSky = false
+    var skyRequestID = UUID()
+    let skyAnalyzer = SkyAnalysisService()
+    @Published var isAnalyzingAuto = false
+    var autoRequestID = UUID()
+    let autoAnalyzer = AutoAdjustmentService()
     @Published var brushSize = 0.06
     @Published var brushFeather = 0.5
     @Published var brushErasing = false
@@ -60,7 +91,6 @@ final class EditorStore: ObservableObject {
     @Published private(set) var timelinePlaybackPositionSeconds = 0.0
     @Published private(set) var timelinePlaybackDurationSeconds = 0.0
     @Published private(set) var timelinePlaybackWarnings: [String] = []
-    @Published private(set) var videoThumbnails: [UUID: NSImage] = [:]
     @Published private(set) var audioWaveforms: [UUID: [Float]] = [:]
     @Published var renderedPreview: NSImage?
     @Published var originalPreview: NSImage?
@@ -71,32 +101,44 @@ final class EditorStore: ObservableObject {
     @Published var latestAgentReport: AgentReport?
     @Published var statusMessage = "Ready"
     @Published var lastError: String?
+    /// Independent of general status messages, so a later edit cannot hide a failed save.
+    @Published var projectSaveError: String?
     @Published private(set) var isEditingCrop = false
-    @Published private(set) var isExporting = false
-    @Published private(set) var photoThumbnails: [UUID: PhotoThumbnail] = [:]
+    @Published var isExporting = false
+    @Published var batchExportState = BatchExportState()
+    var batchExportTask: Task<Void, Never>?
+    let batchPhotoExporter: BatchPhotoExporter?
+    @Published private(set) var thumbnailRevision = 0
 
     var projectURL: URL?
+    var projectGeneration = UUID()
     /// The project as it was last opened or saved; `hasUnsavedChanges` compares against it.
     var lastSavedProject = EditorProject.starter
 
     let photoRenderer = PhotoRenderer()
-    private let thumbnailRenderer = PhotoRenderer(workingCacheLimit: 0)
+    /// Optional boundary-test operation; production previews use the render actor below.
+    private let previewRenderOperation: (@Sendable (URL, PhotoAdjustments, UUID?, Bool) async
+        -> (RenderedImage?, PhotoPreviewResult?))?
+    private let thumbnailRenderer = PhotoRenderer(workingCacheLimit: 0, memoryTargetMB: 32)
     let cullCache = CullPreviewCache()
     /// Full-resolution decodes for the 100% view get their own renderer, so a one-second decode
     /// never holds up slider previews.
-    let focusRenderer = PhotoRenderer(workingCacheLimit: 0)
+    let focusRenderer = PhotoRenderer(workingCacheLimit: 0, memoryTargetMB: 128)
     var rawInfoAssetID: UUID?
     var zoomCenter = CGPoint(x: 0.5, y: 0.5)
     var focusFullSize = CGSize.zero
     var focusViewportPixels = CGSize.zero
     var focusTask: Task<Void, Never>?
     var needsAnotherFocus = false
-    /// Thumbnails read back from the disk cache during view updates. Not published, because
-    /// filling it while SwiftUI is drawing must not trigger another update.
-    private var diskThumbnailMemo: [UUID: PhotoThumbnail] = [:]
+    private var memoryPressureSource: (any DispatchSourceMemoryPressure)?
     private var cancellables: Set<AnyCancellable> = []
     var ingestWorker: Task<Result<IngestResult, Error>, Never>?
-    private var previewTask: Task<Void, Never>?
+    var retiringIngestWorker: Task<Result<IngestResult, Error>, Never>?
+    var ingestTask: Task<Void, Never>?
+    var ingestScanTask: Task<[SourceFile], Never>?
+    var ingestOperationID: UUID?
+    let ingestScanner: @Sendable (URL) -> [SourceFile]
+    private(set) var previewTask: Task<Void, Never>?
     private var needsAnotherPreviewRender = false
     private var originalPreviewAssetID: UUID?
     private var pendingPhotoThumbnails: Set<UUID> = []
@@ -111,14 +153,30 @@ final class EditorStore: ObservableObject {
     private var compositionRebuildTask: Task<Void, Never>?
     private var playbackMonitorTask: Task<Void, Never>?
     private var playbackRequestID = UUID()
-    private var adjustmentUndoStack: [[UUID: PhotoAdjustments]] = []
-    private var adjustmentRedoStack: [[UUID: PhotoAdjustments]] = []
+    var photoUndoHistory = PhotoUndoHistory()
     var activeAdjustmentSnapshot: [UUID: PhotoAdjustments]?
 
-    init(presetRepository: UserPresetRepository = UserPresetRepository()) {
+    init(
+        presetRepository: UserPresetRepository = UserPresetRepository(),
+        ingestScanner: @escaping @Sendable (URL) -> [SourceFile] = { IngestService.scan($0) },
+        autoAdjustmentAnalyzer: (@Sendable (URL, PhotoAdjustments) async throws -> AutoAdjustmentSuggestion)? = nil,
+        batchPhotoExporter: BatchPhotoExporter? = nil,
+        previewRenderOperation: (@Sendable (URL, PhotoAdjustments, UUID?, Bool) async
+            -> (RenderedImage?, PhotoPreviewResult?))? = nil
+    ) {
+        self.ingestScanner = ingestScanner
+        self.autoAdjustmentAnalyzer = autoAdjustmentAnalyzer
+        self.batchPhotoExporter = batchPhotoExporter
+        self.previewRenderOperation = previewRenderOperation
         userPresetRepository = presetRepository
         userPresets = presetRepository.load()
         cullCache.onLoaded = { [weak self] id in self?.cullPreviewLoaded(id) }
+        let pressure = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical], queue: .main)
+        pressure.setEventHandler { [weak self] in
+            Task { @MainActor [weak self] in self?.releaseMemoryUnderPressure() }
+        }
+        pressure.resume()
+        memoryPressureSource = pressure
 
         // Projects with a file on disk save themselves shortly after every change, so culling
         // and rating work is never lost to a crash or a forgotten ⌘S.
@@ -130,6 +188,8 @@ final class EditorStore: ObservableObject {
             }
             .store(in: &cancellables)
     }
+
+    deinit { memoryPressureSource?.cancel() }
 
     var presets: [PhotoPreset] {
         PhotoPreset.builtIns + userPresets
@@ -178,8 +238,8 @@ final class EditorStore: ObservableObject {
         }
     }
 
-    var canUndoPhotoEdit: Bool { !adjustmentUndoStack.isEmpty }
-    var canRedoPhotoEdit: Bool { !adjustmentRedoStack.isEmpty }
+    var canUndoPhotoEdit: Bool { !photoUndoHistory.undo.isEmpty }
+    var canRedoPhotoEdit: Bool { !photoUndoHistory.redo.isEmpty }
 
     var selectedVideoAdjustments: PhotoAdjustments {
         guard let selectedTimelineClipID else { return .neutral }
@@ -204,13 +264,16 @@ final class EditorStore: ObservableObject {
         importURLs(panel.urls)
     }
 
-    func importURLs(_ urls: [URL]) {
-        Task {
-            await importURLsAsync(urls)
+    @discardableResult
+    func importURLs(_ urls: [URL]) -> Task<Void, Never> {
+        let generation = projectGeneration
+        return Task {
+            await importURLsAsync(urls, generation: generation)
         }
     }
 
-    private func importURLsAsync(_ urls: [URL]) async {
+    private func importURLsAsync(_ urls: [URL], generation: UUID) async {
+        guard projectGeneration == generation else { return }
         var importedCount = 0
         var lastImportedKind: MediaKind?
 
@@ -223,6 +286,7 @@ final class EditorStore: ObservableObject {
                 guard let size = await Task.detached(operation: { PhotoSourceLoader.dimensions(of: url) }).value else {
                     continue
                 }
+                guard projectGeneration == generation else { return }
                 let asset = MediaAsset(
                     url: url,
                     kind: .photo,
@@ -235,6 +299,7 @@ final class EditorStore: ObservableObject {
                 importedCount += 1
             case .video, .audio:
                 let metadata = await videoMediaService.metadata(for: url)
+                guard projectGeneration == generation else { return }
                 let asset = MediaAsset(
                     url: url,
                     kind: kind,
@@ -275,6 +340,8 @@ final class EditorStore: ObservableObject {
         if selectedAssetID != asset.id {
             endMaskEditing()
             endRetouchEditing()
+            cancelWhiteBalancePicking()
+            cancelSubjectSelection()
         }
         selectedAssetID = asset.id
         selectedAssetIDs = [asset.id]
@@ -293,6 +360,7 @@ final class EditorStore: ObservableObject {
 
     func updateAdjustments(_ update: (inout PhotoAdjustments) -> Void) {
         guard selectedAssetID != nil else { return }
+        cancelAutoAdjustment()
         let before = project.adjustmentsByAssetID
         var adjustments = selectedAdjustments
         update(&adjustments)
@@ -303,6 +371,7 @@ final class EditorStore: ObservableObject {
     }
 
     func beginAdjustmentEdit() {
+        cancelAutoAdjustment()
         guard activeAdjustmentSnapshot == nil else { return }
         activeAdjustmentSnapshot = project.adjustmentsByAssetID
     }
@@ -324,15 +393,15 @@ final class EditorStore: ObservableObject {
         let label = nextHistoryLabel
         nextHistoryLabel = nil
         guard snapshot != project.adjustmentsByAssetID else { return }
-        adjustmentUndoStack.append(snapshot)
-        adjustmentRedoStack.removeAll()
+        if !photoUndoHistory.record(before: snapshot, after: project.adjustmentsByAssetID) {
+            statusMessage = "Edit applied; too large to keep in Undo."
+        }
         appendHistory(before: snapshot, label: label)
     }
 
     private func clearAdjustmentHistory() {
         history = [:]
-        adjustmentUndoStack.removeAll()
-        adjustmentRedoStack.removeAll()
+        photoUndoHistory.clear()
         activeAdjustmentSnapshot = nil
     }
 
@@ -342,19 +411,26 @@ final class EditorStore: ObservableObject {
     }
 
     func undoPhotoEdit() {
-        guard let previous = adjustmentUndoStack.popLast() else { return }
-        adjustmentRedoStack.append(project.adjustmentsByAssetID)
-        project.adjustmentsByAssetID = previous
+        cancelAutoAdjustment()
+        guard let step = photoUndoHistory.undoStep() else { return }
+        applyUndoStep(step, restoringBefore: true)
         refreshPreview()
         statusMessage = "Undid photo edit"
     }
 
     func redoPhotoEdit() {
-        guard let next = adjustmentRedoStack.popLast() else { return }
-        adjustmentUndoStack.append(project.adjustmentsByAssetID)
-        project.adjustmentsByAssetID = next
+        cancelAutoAdjustment()
+        guard let step = photoUndoHistory.redoStep() else { return }
+        applyUndoStep(step, restoringBefore: false)
         refreshPreview()
         statusMessage = "Redid photo edit"
+    }
+
+    private func applyUndoStep(_ step: PhotoUndoStep, restoringBefore: Bool) {
+        let present = Set(project.media.filter { $0.kind == .photo }.map(\.id))
+        for (id, change) in step.changes where present.contains(id) {
+            project.adjustmentsByAssetID[id] = restoringBefore ? change.before : change.after
+        }
     }
 
     func updateCropRectFromDisplay(_ rect: CGRect?) {
@@ -477,10 +553,25 @@ final class EditorStore: ObservableObject {
         }
     }
 
+    /// Segmented-picker bindings can be written while SwiftUI updates its native view.
+    /// Publish navigation and its dependent state only after that update returns.
+    func requestWorkspaceChange(to requested: Workspace) {
+        workspaceChangeTask?.cancel()
+        workspaceChangeTask = nil
+        guard requested != workspace else { return }
+        let generation = projectGeneration
+        workspaceChangeTask = Task { [weak self] in
+            guard !Task.isCancelled, let self, generation == self.projectGeneration else { return }
+            self.workspaceChangeTask = nil
+            self.workspace = requested
+        }
+    }
+
     /// Requests a preview of the selected photo. Rendering runs on `PhotoRenderer`; while a
     /// render is in flight, further requests collapse into one follow-up render with the
     /// latest adjustments, so slider drags never queue up stale work.
     func refreshPreview() {
+        if isPickingSubject { previewSubjectCandidate(highlightedSubjectID) }
         if isZoom100 { refreshFocus() }
         // Develop-quality renders (a full RAW decode) only run where they are shown.
         guard workspace == .photo || workspace == .export else { return }
@@ -502,7 +593,9 @@ final class EditorStore: ObservableObject {
         refreshRawInfo(for: asset)
 
         guard previewTask == nil else {
+            PhotoPreviewDiagnostics.record("store coalesced workspace=\(workspace.rawValue)")
             needsAnotherPreviewRender = true
+            isRenderingPreview = true
             return
         }
         startPreviewRender(for: asset)
@@ -511,17 +604,31 @@ final class EditorStore: ObservableObject {
     private func startPreviewRender(for asset: MediaAsset) {
         let url = asset.url
         let assetID = asset.id
+        let generation = projectGeneration
         let adjustments = isEditingCrop ? selectedAdjustments.withoutCrop : selectedAdjustments
         let needsOriginal = originalPreviewAssetID != assetID
         let renderer = photoRenderer
         let overlayID = (showMaskOverlay || isMaskInteracting) ? selectedMaskID : nil
+        let operation = previewRenderOperation
+        let requestID = UUID()
         isRenderingPreview = true
+        PhotoPreviewDiagnostics.record("store start request=\(requestID) generation=\(generation) originalNeeded=\(needsOriginal) overlayRequested=\(overlayID != nil)")
 
         previewTask = Task { [weak self] in
-            let original = needsOriginal ? await renderer.original(url: url) : nil
-            let result = await renderer.preview(url: url, adjustments: adjustments, overlayMaskID: overlayID)
+            let original: RenderedImage?
+            let result: PhotoPreviewResult?
+            if let operation {
+                (original, result) = await operation(url, adjustments, overlayID, needsOriginal)
+            } else {
+                original = needsOriginal && !Task.isCancelled ? await renderer.original(url: url) : nil
+                result = !Task.isCancelled
+                    ? await renderer.preview(url: url, adjustments: adjustments, overlayMaskID: overlayID) : nil
+            }
             self?.finishPreviewRender(
                 assetID: assetID,
+                sourceURL: url,
+                generation: generation,
+                requestID: requestID,
                 needsOriginal: needsOriginal,
                 original: original,
                 result: result
@@ -531,6 +638,9 @@ final class EditorStore: ObservableObject {
 
     private func finishPreviewRender(
         assetID: UUID,
+        sourceURL: URL,
+        generation: UUID,
+        requestID: UUID,
         needsOriginal: Bool,
         original: RenderedImage?,
         result: PhotoPreviewResult?
@@ -538,7 +648,9 @@ final class EditorStore: ObservableObject {
         previewTask = nil
         isRenderingPreview = false
 
-        if selectedAssetID == assetID {
+        if !Task.isCancelled, projectGeneration == generation,
+           selectedAssetID == assetID, selectedAsset?.url == sourceURL {
+            PhotoPreviewDiagnostics.record("store publish request=\(requestID) original=\(original != nil) edited=\(result != nil) overlay=\(result?.maskOverlay != nil) histogram=\(result?.histogram.hasValues == true)")
             if needsOriginal {
                 originalPreview = original.map(Self.nsImage)
                 originalPreviewAssetID = assetID
@@ -546,6 +658,8 @@ final class EditorStore: ObservableObject {
             renderedPreview = result.map { Self.nsImage($0.edited) }
             maskOverlay = result?.maskOverlay.map(Self.nsImage)
             histogram = result?.histogram ?? .empty
+        } else {
+            PhotoPreviewDiagnostics.record("store discard request=\(requestID) canceled=\(Task.isCancelled) generationMatches=\(projectGeneration == generation) assetMatches=\(selectedAssetID == assetID) sourceMatches=\(selectedAsset?.url == sourceURL)")
         }
 
         if needsAnotherPreviewRender {
@@ -573,8 +687,11 @@ final class EditorStore: ObservableObject {
 
     func beginCropEditing() {
         guard selectedAsset != nil, !isEditingCrop else { return }
+        cancelAutoAdjustment()
         endMaskEditing()
         endRetouchEditing()
+        cancelWhiteBalancePicking()
+        cancelSubjectSelection()
         exitZoom100()
         beginAdjustmentEdit()
         isEditingCrop = true
@@ -599,6 +716,10 @@ final class EditorStore: ObservableObject {
     /// Asks whether to save before the current project is replaced or the app quits.
     /// Returns `false` when the user cancels or the save does not complete.
     func confirmDiscardingUnsavedChanges() -> Bool {
+        guard !ingest.isRunning else {
+            lastError = "Stop the current import before replacing the project or quitting."
+            return false
+        }
         guard hasUnsavedChanges else { return true }
 
         // A project that already has a file autosaves, so just flush the pending change.
@@ -629,6 +750,10 @@ final class EditorStore: ObservableObject {
 
     /// Replaces the current project with an empty one. Callers confirm unsaved changes first.
     func resetToEmptyProject(named name: String) {
+        invalidateIngest()
+        invalidateBatchExport()
+        projectGeneration = UUID()
+        projectSaveError = nil
         project = EditorProject(name: name)
         lastSavedProject = project
         projectURL = nil
@@ -642,7 +767,6 @@ final class EditorStore: ObservableObject {
         replaceVideoPlayer(nil, timelineMode: false)
         timelinePlaybackDurationSeconds = 0
         timelinePlaybackWarnings = []
-        videoThumbnails = [:]
         pendingVideoThumbnails = []
         audioWaveforms = [:]
         pendingAudioWaveforms = []
@@ -669,16 +793,9 @@ final class EditorStore: ObservableObject {
 
         guard let destination else { return false }
 
-        do {
-            try document.save(project, to: destination)
-            projectURL = destination
-            lastSavedProject = project
-            statusMessage = "Saved \(destination.lastPathComponent)"
-            return true
-        } catch {
-            lastError = error.localizedDescription
-            return false
-        }
+        let saved = saveProject(to: destination)
+        if !saved { lastError = projectSaveError }
+        return saved
     }
 
     func openProject() {
@@ -701,6 +818,10 @@ final class EditorStore: ObservableObject {
     /// Loads a project file and resets everything derived from the previous one.
     func loadProject(from url: URL) throws {
         let loaded = try document.load(from: url)
+        invalidateIngest()
+        invalidateBatchExport()
+        projectGeneration = UUID()
+        projectSaveError = nil
         project = loaded
         lastSavedProject = project
         projectURL = url
@@ -748,17 +869,27 @@ final class EditorStore: ObservableObject {
         panel.nameFieldStringValue = asset.url.deletingPathExtension().lastPathComponent + "_edited.jpg"
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
+        let protectedOriginals = project.media.map(\.url)
+        do {
+            try ExportFileSafety.validate(url, protecting: protectedOriginals)
+        } catch {
+            lastError = error.localizedDescription
+            return
+        }
         let type: UTType = url.pathExtension.lowercased() == "png" ? .png : .jpeg
         let adjustments = selectedAdjustments
         // Full-resolution decodes get their own renderer so they neither block previews
         // nor stay cached after the export finishes.
-        let exporter = PhotoRenderer(workingCacheLimit: 0)
+        let exporter = PhotoRenderer(workingCacheLimit: 0, memoryTargetMB: 128)
         isExporting = true
         statusMessage = "Exporting \(url.lastPathComponent)…"
 
         Task {
             do {
-                try await exporter.export(url: asset.url, adjustments: adjustments, to: url, type: type)
+                try await exporter.export(
+                    url: asset.url, adjustments: adjustments, to: url, type: type,
+                    protectedOriginals: protectedOriginals
+                )
                 statusMessage = "Exported \(url.lastPathComponent)"
             } catch {
                 lastError = error.localizedDescription
@@ -769,41 +900,25 @@ final class EditorStore: ObservableObject {
     }
 
     func thumbnail(for asset: MediaAsset) -> NSImage? {
+        let adjustments = asset.kind == .photo ? project.adjustmentsByAssetID[asset.id] ?? .neutral : .neutral
+        if let cached = thumbnailCache.image(for: asset, adjustments: adjustments) { return cached }
         if asset.kind == .video {
-            if let cached = thumbnailCache.image(for: asset, adjustments: .neutral) {
-                return cached
-            }
-            if let image = videoThumbnails[asset.id] { return image }
             if !pendingVideoThumbnails.contains(asset.id) {
                 pendingVideoThumbnails.insert(asset.id)
+                let generation = projectGeneration
                 Task {
                     let image = await videoMediaService.thumbnail(for: asset.url)
+                    guard generation == projectGeneration else { return }
                     pendingVideoThumbnails.remove(asset.id)
-                    if let image {
-                        videoThumbnails[asset.id] = image
-                        thumbnailCache.store(image, for: asset, adjustments: .neutral)
-                    }
+                    guard let image, project.media.contains(where: { $0.id == asset.id && $0.url == asset.url }) else { return }
+                    thumbnailCache.store(image, for: asset, adjustments: .neutral)
+                    thumbnailRevision &+= 1
                 }
             }
-            return nil
+        } else if asset.kind == .photo {
+            requestPhotoThumbnail(for: asset, adjustments: adjustments)
         }
-
-        guard asset.kind == .photo else { return nil }
-        let adjustments = project.adjustmentsByAssetID[asset.id] ?? .neutral
-
-        // Fast path: no file or disk access while the grid redraws.
-        if let entry = photoThumbnails[asset.id] ?? diskThumbnailMemo[asset.id],
-           entry.matches(url: asset.url, adjustments: adjustments) {
-            return entry.image
-        }
-        if let cached = thumbnailCache.image(for: asset, adjustments: adjustments) {
-            diskThumbnailMemo[asset.id] = PhotoThumbnail(image: cached, url: asset.url, adjustments: adjustments)
-            return cached
-        }
-
-        requestPhotoThumbnail(for: asset, adjustments: adjustments)
-        // Keep showing the last thumbnail while an updated one renders.
-        return photoThumbnails[asset.id]?.image ?? diskThumbnailMemo[asset.id]?.image
+        return thumbnailCache.previousImage(for: asset)
     }
 
     /// Renders one photo thumbnail at a time on a dedicated renderer. If the photo's
@@ -812,37 +927,66 @@ final class EditorStore: ObservableObject {
         guard !pendingPhotoThumbnails.contains(asset.id), !isMissing(asset) else { return }
         pendingPhotoThumbnails.insert(asset.id)
         let renderer = thumbnailRenderer
+        let generation = projectGeneration
 
         Task { [weak self] in
             let rendered = await renderer.thumbnail(url: asset.url, adjustments: adjustments)
-            guard let self else { return }
+            guard let self, generation == projectGeneration else { return }
             pendingPhotoThumbnails.remove(asset.id)
-            guard let rendered, project.media.contains(where: { $0.id == asset.id && $0.url == asset.url }) else {
+            guard let rendered, project.media.contains(where: { $0.id == asset.id && $0.url == asset.url }) else { return }
+            guard (project.adjustmentsByAssetID[asset.id] ?? .neutral) == adjustments else {
+                // Request the current edit on the next redraw after discarding this stale render.
+                thumbnailRevision &+= 1
                 return
             }
             let image = Self.nsImage(rendered)
             thumbnailCache.store(image, for: asset, adjustments: adjustments)
-            diskThumbnailMemo[asset.id] = nil
-            photoThumbnails[asset.id] = PhotoThumbnail(image: image, url: asset.url, adjustments: adjustments)
+            thumbnailRevision &+= 1
         }
     }
 
     /// Drops every cached thumbnail for a photo that left the project.
     func photoThumbnailsForget(_ id: UUID) {
-        photoThumbnails[id] = nil
-        diskThumbnailMemo[id] = nil
         pendingPhotoThumbnails.remove(id)
         thumbnailCache.invalidate(assetID: id)
     }
 
+    /// Called by macOS when shared CPU/GPU memory is under pressure. Visible images remain
+    /// available; expendable caches are released on their owning render actors.
+    func releaseMemoryUnderPressure() {
+        thumbnailCache.clearMemory()
+        cullCache.clear()
+        BrushMaskCache.shared.clear()
+        SubjectMaskRenderer.clearCaches()
+        cancelSubjectSelection()
+        let renderer = photoRenderer
+        let thumbnails = thumbnailRenderer
+        let focus = focusRenderer
+        Task {
+            await renderer.releaseMemoryUnderPressure()
+            await thumbnails.clearRenderCaches()
+            await focus.clearRenderCaches()
+        }
+    }
+
     private func resetPhotoRenderState() {
+        workspaceChangeTask?.cancel()
+        workspaceChangeTask = nil
+        PhotoPreviewDiagnostics.record("store reset pending=\(previewTask != nil)")
+        // Keep the worker slot until its completion drains. Starting a new render while
+        // the old actor call finishes would queue unbounded work during repeated opens.
+        previewTask?.cancel()
+        isRenderingPreview = false
+        cancelAutoAdjustment()
         endMaskEditing()
         endRetouchEditing()
+        cancelWhiteBalancePicking()
+        cancelSubjectSelection()
+        SubjectMaskRenderer.clearCaches()
         needsAnotherPreviewRender = false
         originalPreviewAssetID = nil
         isEditingCrop = false
-        photoThumbnails = [:]
-        diskThumbnailMemo = [:]
+        thumbnailCache.clearMemory()
         pendingPhotoThumbnails = []
         exitZoom100()
         cullCache.clear()
@@ -853,7 +997,11 @@ final class EditorStore: ObservableObject {
         originalPreview = nil
         histogram = .empty
         let renderer = photoRenderer
-        Task { await renderer.evictAll() }
+        let thumbnails = thumbnailRenderer
+        Task {
+            await renderer.evictAll()
+            await thumbnails.clearRenderCaches()
+        }
     }
 
     /// Projects saved before photo dimensions were recorded get them from file metadata.
@@ -923,7 +1071,6 @@ final class EditorStore: ObservableObject {
         }
 
         thumbnailCache.invalidate(assetID: target.id)
-        videoThumbnails[target.id] = nil
         pendingVideoThumbnails.remove(target.id)
         audioWaveforms[target.id] = nil
         pendingAudioWaveforms.remove(target.id)
@@ -934,8 +1081,6 @@ final class EditorStore: ObservableObject {
         if let photoSize {
             project.media[index].pixelWidth = photoSize.width
             project.media[index].pixelHeight = photoSize.height
-            photoThumbnails[target.id] = nil
-            diskThumbnailMemo[target.id] = nil
             pendingPhotoThumbnails.remove(target.id)
             cullCache.remove(target.id)
             let renderer = photoRenderer

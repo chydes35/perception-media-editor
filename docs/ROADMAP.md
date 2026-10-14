@@ -17,6 +17,33 @@ The goal is a full Lightroom replacement for a single photographer's workflow. P
 - [x] GitHub Actions build
 - [ ] Split photo, timeline, and project responsibilities out of `EditorStore` (carried into Phase 2; culling and ingest live in `EditorStore+Culling.swift` and `EditorStore+Ingest.swift`)
 
+#### Reliability follow-up — 2026-09-28
+
+- [x] Protect all referenced originals during export and publish completed outputs atomically
+- [x] Bind import callbacks to an operation/project generation; cancel scanning and drain old copy workers safely
+- [x] Reconcile all verified imports before the final project save
+- [x] Persist save-failure status with Retry Save and Save As recovery
+- [x] Store undo changes for affected photos with shared undo/redo and shoot-wide history retention budgets
+- [x] Separate deterministic brush-cache checks from isolated timing benchmarks
+- [ ] Complete a real 100–200-distinct-photo UI workflow and combined process-memory profile
+
+See [Reliability Pass](RELIABILITY_PASS_2026-09-28.md) for verification evidence and remaining acceptance work.
+
+#### Memory follow-up — 2026-09-28
+
+- [x] Release autoreleased rendering intermediates and clear focus/export/project-replacement caches
+- [x] Tune editing, thumbnail, focus and export context allocation targets on the 8 GiB M1 Mac
+- [x] Share one bounded thumbnail cache and make disk keys deterministic
+- [x] Bound culling decodes, replace stale queued work and prevent late cache repopulation
+- [x] Reclaim expendable caches on macOS memory pressure
+- [x] Add isolated RAM/latency/output-equivalence profiling with real RAW samples
+
+See [Memory Optimization](MEMORY_OPTIMIZATION_2026-09-28.md) for measurements and remaining whole-app acceptance work.
+
+#### Local integration — 2026-10-07
+
+The [integration plan](../plans/completed/photo-workflow-integration.md) combines GitHub main, the advanced local photo tools, and the preserved reliability/memory/batch-delivery work on `codex/photo-workflow-integration`. The candidate retains project schema 10. Automated integration checks do not close the open UI, image-quality, or 100–200-photo performance gates. The [target-Mac validation](WORKFLOW_VALIDATION_2026-10-07.md) adds displayed evidence from 100 distinct S5 photos across dated library folders and records the healing allocation defect/correction; genuine single-shoot, broad visual, and threshold-based acceptance remain open.
+
 ### Phase 1 — Library and culling (complete, PR #2)
 
 - [x] One folder per shoot: `<Shoots>/<date> <Name>/{Name.pmedit, Originals/}`, saved automatically
@@ -26,7 +53,7 @@ The goal is a full Lightroom replacement for a single photographer's workflow. P
 - [x] Cull view: instant next/previous from a preview cache, compare (C), full screen (F), auto-advance, Develop (D)
 - [x] Delete Rejected moves originals inside the shoot's Originals folder to the Trash (recoverable) after confirmation
 - [ ] RAW+JPEG pairs treated as one photo
-- [ ] Zoom to 100% for focus checks (needs the full RAW decode; Phase 2)
+- [x] Zoom to 100% for focus checks (delivered in Phase 2)
 - [ ] Undo for rating, flag, and label changes
 
 ### Phase 2 — RAW develop and presets (in progress)
@@ -40,8 +67,8 @@ The goal is a full Lightroom replacement for a single photographer's workflow. P
 - [x] Apply a preset to the whole selection as one undo step
 - [x] Copy Settings (⇧⌘C), Paste Settings (⇧⌘V), Sync Settings
 - [x] History: named steps for the current photo; click one to go back
-- [ ] White balance eyedropper (click a neutral gray)
-- [ ] Auto tone and auto white balance
+- [x] White balance eyedropper for RAW photos (click a neutral gray to set Kelvin and tint)
+- [x] Auto tone and auto white balance: one button beneath the histogram; bounded on-device analysis, photo-specific basic slider values, conservative neutral-reference WB, one undo step
 - [ ] Split `EditorStore` into photo, timeline, and project parts
 
 ### Phase 3 — Masks and healing (in progress)
@@ -52,13 +79,21 @@ The goal is a full Lightroom replacement for a single photographer's workflow. P
 - [x] Masks stay on the same part of the picture through rotation, straighten, and crop
 - [x] Red mask overlay (O), shown automatically while dragging or painting
 - [x] Gradient masks sync, copy, and save into presets; brush strokes stay with their photo
-- [ ] Subject and sky selection (Vision)
+- [x] First subject-selection pass: Vision person and foreground instances, click or list selection, soft saved mask, brush correction, and local adjustments
+- [x] Subject refinement controls: candidate hover previews, edge shift, feather, contrast, reset, and a consistent all-subject union
+- [ ] Subject-selection quality validation across hair, translucent details, groups, and mixed RAW cameras (two-person JPEG and synthetic soft-edge checks covered; broader real-photo fixtures still needed)
+- [x] First sky-selection pass: bundled Core ML semantic segmentation, guided edge refinement, saved mask, Add/Remove spill brushes, and local adjustments
+- [ ] Sky-selection quality validation across sunsets, overcast scenes, foliage, fine structures, reflections, and mixed RAW cameras
 - [ ] Color and luminance range masks
 - [x] Spot healing and clone: paint soft repairs, adjust source points, and retain edits through crop, rotation, save, and export
 
-### Phase 4 — Delivery
+The [October 8 real-RAW selection pass](SELECTION_QUALITY_2026-10-08.md) records missing group candidates and missed sky gaps through fine branches. These quality gates remain open despite structural mask/export checks passing.
 
-- Batch export recipes: size, quality, output sharpening, sRGB/P3, naming, copyright/IPTC, watermark
+### Phase 4 — Delivery (in progress)
+
+- [x] Sequential selected-photo JPEG export with quality, long-edge size, collision-safe naming, progress/cancel, and per-file results
+- [ ] Batch export recipes: persistent presets, output sharpening, P3, copyright/IPTC, watermark
+- [ ] Real 100–200-photo delivery pass and whole-app export memory profile
 
 ### Phase 5 — Smart culling
 
@@ -92,7 +127,7 @@ Video (V0.3 below) resumes after the photo phases. Lumix S5 10-bit 4:2:2 and V-L
 - [x] Grouped photo edit undo and redo with direct adjustment values
 - [ ] Export presets, resize, watermark, and metadata controls
 
-## V0.3 — Video Editor (current)
+## V0.3 — Video Editor (existing baseline; development deferred)
 
 - [x] AVFoundation video import, thumbnails, metadata, and playback
 - [x] Persistent V1/A1 timeline model and interface
@@ -114,7 +149,7 @@ Video (V0.3 below) resumes after the photo phases. Lumix S5 10-bit 4:2:2 and V-L
 
 ## Later
 
-- Subject masking with Vision
+- Local generative remove/fill: deferred until the core photo editor is complete. The initial M1/PyTorch inpainting trial hit its five-minute limit at step 5 of 20 and increased system swap substantially; see [local trial notes](LOCAL_GENERATIVE_REMOVE_TRIAL.md).
 - Keyframes and tracking
 - Multicam synchronization and angle editor
 - Optical-flow speed changes

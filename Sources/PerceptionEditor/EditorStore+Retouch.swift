@@ -12,8 +12,11 @@ extension EditorStore {
 
     func chooseRetouchTool(_ tool: RetouchKind) {
         guard selectedAsset?.kind == .photo else { return }
+        cancelAutoAdjustment()
         let next = retouchTool == tool ? nil : tool
         if next != nil {
+            cancelSubjectSelection()
+            cancelWhiteBalancePicking()
             endMaskEditing()
             exitZoom100()
             cancelCropEditing()
@@ -25,6 +28,7 @@ extension EditorStore {
     }
 
     func selectRetouch(_ id: UUID?) {
+        cancelAutoAdjustment()
         selectedRetouchID = id
         retouchTool = nil
         retouchPickingSource = false

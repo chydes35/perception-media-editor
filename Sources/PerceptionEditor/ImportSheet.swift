@@ -183,7 +183,7 @@ struct ImportSheet: View {
                 .foregroundStyle(.secondary)
             HStack {
                 Spacer()
-                Button("Stop After This File") { store.cancelIngest() }
+                Button("Stop Import") { store.cancelIngest() }
             }
         }
     }

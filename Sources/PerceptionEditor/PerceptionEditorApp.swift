@@ -17,8 +17,10 @@ struct PerceptionEditorApp: App {
             CommandGroup(replacing: .newItem) {
                 Button("New Project") { store.newProject() }
                     .keyboardShortcut("n")
+                    .disabled(store.ingest.isRunning)
                 Button("Open Project…") { store.openProject() }
                     .keyboardShortcut("o")
+                    .disabled(store.ingest.isRunning)
                 Divider()
                 Button("Import from Card or Folder…") { store.showImportSheet() }
                     .keyboardShortcut("i")
@@ -49,6 +51,9 @@ struct PerceptionEditorApp: App {
                 Button("Show Original") { store.setShowingOriginal(true) }
                 Button("Show Edited") { store.setShowingOriginal(false) }
                 Divider()
+                Button("Auto Adjust") { store.startAutoAdjustment() }
+                    .keyboardShortcut("a", modifiers: [.command, .shift])
+                    .disabled(!store.canAutoAdjustPhoto)
                 Button("Reset Adjustments") { store.resetAdjustments() }
                 Divider()
                 Button("Save Preset…") { store.isShowingSavePresetSheet = true }

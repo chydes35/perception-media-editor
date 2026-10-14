@@ -37,6 +37,60 @@ struct MaskPanel: View {
                 toolButton(.radial, "Radial", "circle.dashed", "Drag from the center outward")
                 toolButton(.brush, "Brush", "paintbrush.pointed", "Paint the area to adjust. Hold ⌥ to erase, and use [ and ] to resize.")
             }
+            HStack(spacing: 6) {
+                Button {
+                    store.startSubjectSelection()
+                } label: {
+                    Label("Select Subject", systemImage: "person.crop.rectangle.stack")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(store.isAnalyzingSubjects || store.isAnalyzingSky || store.isEditingCrop)
+                .help("Detect foreground subjects and select one for local adjustments")
+                if store.isAnalyzingSubjects { ProgressView().controlSize(.small) }
+                if store.isPickingSubject {
+                    Button("Cancel") { store.cancelSubjectSelection() }
+                        .buttonStyle(.bordered)
+                }
+            }
+            HStack(spacing: 6) {
+                Button { store.startSkySelection() } label: {
+                    Label("Select Sky", systemImage: "cloud.sun")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .disabled(store.isAnalyzingSubjects || store.isAnalyzingSky || store.isEditingCrop)
+                .help("Detect the sky for separate exposure and color adjustments")
+                if store.isAnalyzingSky {
+                    ProgressView().controlSize(.small)
+                    Button("Cancel") { store.cancelSkySelection() }
+                        .buttonStyle(.bordered)
+                }
+            }
+            if let analysis = store.subjectAnalysis, analysis.candidates.count > 1 {
+                HStack {
+                    Text("\(analysis.candidates.count) subjects found")
+                        .font(.caption2).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Done selecting") { store.cancelSubjectSelection() }
+                        .buttonStyle(.borderless).font(.caption2)
+                }
+                if store.isPickingSubject {
+                    Text("Hover over the photo or a name to preview. Click to select.")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Button("Add all subjects") { store.selectAllSubjects() }
+                        .onHover { if $0 { store.previewSubjectCandidate(nil) } }
+                    ForEach(analysis.candidates) { candidate in
+                        Button("Add \(candidate.name)") { store.selectSubjectCandidate(candidate.id) }
+                            .tint(store.highlightedSubjectID == candidate.id ? .orange : .accentColor)
+                            .onHover { store.previewSubjectCandidate($0 ? candidate.id : nil) }
+                            .help("Preview \(candidate.name) in the photo before selecting it")
+                    }
+                }
+                .buttonStyle(.bordered)
+            }
             if store.maskTool != .none || store.selectedMask != nil {
                 HStack {
                     Toggle("Show mask", isOn: Binding(
@@ -144,6 +198,8 @@ struct MaskPanel: View {
         case .linear: "rectangle.tophalf.inset.filled"
         case .radial: "circle.dashed"
         case .brush: "paintbrush.pointed"
+        case .subject: "person.crop.rectangle"
+        case .sky: "cloud.sun"
         }
     }
 
@@ -167,6 +223,57 @@ struct MaskPanel: View {
             }
 
             maskSlider("Amount", mask, range: 0 ... 100, format: "%.0f") { $0.amount * 100 } set: { $0.amount = $1 / 100 }
+
+            if let subject = mask.shape.rasterSelection {
+                let kind = mask.shape.kindName
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack {
+                        Text("REFINE \(kind.uppercased())")
+                            .font(.system(size: 9, weight: .bold))
+                            .tracking(0.8)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Reset edges") {
+                            store.nextHistoryLabel = "Reset \(kind.lowercased()) edges"
+                            store.updateMask(mask.id) {
+                                guard var value = $0.shape.rasterSelection else { return }
+                                value.edgeShift = 0
+                                value.edgeFeather = 0
+                                value.edgeContrast = 0
+                                $0.shape.rasterSelection = value
+                            }
+                        }
+                        .buttonStyle(.borderless).font(.caption2)
+                        .disabled(subject.edgeShift == 0 && subject.edgeFeather == 0 && subject.edgeContrast == 0)
+                    }
+                    subjectEdgeSlider("Edge shift", mask, -0.5 ... 0.5, \.edgeShift, format: "%.2f%%")
+                        .help("Negative values pull the edge inward; positive values expand it. Percentage of the photo's longer side.")
+                    subjectEdgeSlider("Edge feather", mask, 0 ... 0.5, \.edgeFeather, format: "%.2f%%")
+                        .help("Soften the selection boundary. Keep low to preserve fine hair and translucent fabric.")
+                    subjectEdgeSlider("Edge contrast", mask, 0 ... 100, \.edgeContrast, format: "%.0f")
+                        .help("Make soft selection edges firmer. Higher values may remove translucent detail.")
+                    HStack(spacing: 6) {
+                        Button {
+                            store.beginSubjectRefinement(erasing: false)
+                        } label: {
+                            Label("Add to \(kind.lowercased())", systemImage: "plus.circle")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .tint(store.maskTool == .brush && !store.brushErasing ? .orange : .accentColor)
+                        Button {
+                            store.beginSubjectRefinement(erasing: true)
+                        } label: {
+                            Label("Remove spill", systemImage: "minus.circle")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .tint(store.maskTool == .brush && store.brushErasing ? .orange : .accentColor)
+                    }
+                    .buttonStyle(.bordered)
+                    Text("Paint over areas to add or remove them. Adjust Size and Feather above; press Esc when done.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
 
             if case .radial(let center, let rx, let ry, let rotation, let feather) = mask.shape {
                 slider("Feather", value: Binding(
@@ -203,6 +310,20 @@ struct MaskPanel: View {
         _ label: String, _ mask: LocalMask, _ range: ClosedRange<Double>, _ keyPath: WritableKeyPath<MaskAdjustments, Double>
     ) -> some View {
         maskSlider(label, mask, range: range, format: "%.2f") { $0.adjustments[keyPath: keyPath] } set: { $0.adjustments[keyPath: keyPath] = $1 }
+    }
+
+    private func subjectEdgeSlider(
+        _ label: String, _ mask: LocalMask, _ range: ClosedRange<Double>,
+        _ keyPath: WritableKeyPath<SubjectMask, Double>, format: String
+    ) -> some View {
+        maskSlider(label, mask, range: range, format: format) {
+            guard let subject = $0.shape.rasterSelection else { return 0 }
+            return subject[keyPath: keyPath] * 100
+        } set: {
+            guard var subject = $0.shape.rasterSelection else { return }
+            subject[keyPath: keyPath] = $1 / 100
+            $0.shape.rasterSelection = subject
+        }
     }
 
     /// A slider that reads and writes one value of a mask, as one undo step per drag.

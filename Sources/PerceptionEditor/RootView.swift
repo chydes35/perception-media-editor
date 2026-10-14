@@ -54,7 +54,10 @@ struct RootView: View {
 
             Spacer()
 
-            Picker("Workspace", selection: $store.workspace) {
+            Picker("Workspace", selection: Binding(
+                get: { store.workspace },
+                set: { store.requestWorkspaceChange(to: $0) }
+            )) {
                 ForEach(Workspace.allCases) { workspace in
                     Text(workspace.rawValue.uppercased()).tag(workspace)
                 }
@@ -110,16 +113,28 @@ struct RootView: View {
     private var statusBar: some View {
         HStack {
             Circle()
-                .fill(Color.green)
+                .fill(saveStateColor)
                 .frame(width: 7, height: 7)
             Text(store.statusMessage)
             Spacer()
-            if store.hasUnsavedChanges, store.projectURL == nil {
-                Label("Unsaved changes", systemImage: "circle.fill")
+            switch store.projectSaveState {
+            case .failed(let message):
+                Label("Project not saved", systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.red)
+                    .help(message)
+                Button("Retry Save") { store.saveProject() }
+                Button("Save As…") { store.saveProject(saveAs: true) }
+            case .unsaved:
+                Label("Not saved", systemImage: "circle.fill")
                     .labelStyle(.titleAndIcon)
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(.orange)
                     .imageScale(.small)
+            case .pending:
+                Label("Unsaved changes", systemImage: "circle.fill")
+                    .foregroundStyle(.orange)
+            case .saved:
+                EmptyView()
             }
             Text("V0.4 LIBRARY + CULLING")
                 .font(.system(size: 10, weight: .semibold, design: .monospaced))
@@ -129,6 +144,14 @@ struct RootView: View {
         .padding(.horizontal, 14)
         .frame(height: 28)
         .background(Color(nsColor: .controlBackgroundColor))
+    }
+
+    private var saveStateColor: Color {
+        switch store.projectSaveState {
+        case .failed: .red
+        case .unsaved, .pending: .orange
+        case .saved: .green
+        }
     }
 }
 

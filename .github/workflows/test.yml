@@ -15,7 +15,9 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      - name: Install source review dependency
+        run: command -v rg || brew install ripgrep
       - name: Swift version
         run: swift --version
       - name: Test and build
-        run: ./scripts/test.sh
+        run: ./scripts/qa.sh

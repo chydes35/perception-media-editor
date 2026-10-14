@@ -51,6 +51,28 @@ struct PhotoComparisonView: View {
             if !isCropping, mode == .edited, store.isRetouchEditing, let edited {
                 RetouchEditingLayer(imageSize: edited.size)
             }
+            if !isCropping, mode == .edited, store.isPickingWhiteBalance, let edited {
+                WhiteBalancePickingLayer(imageSize: edited.size)
+            }
+            if !isCropping, mode == .edited, store.isPickingSubject, let edited {
+                if let overlay = store.subjectSelectionOverlay {
+                    fitted(overlay)
+                        .opacity(0.5)
+                        .allowsHitTesting(false)
+                }
+                SubjectPickingLayer(imageSize: edited.size)
+                if let id = store.highlightedSubjectID,
+                   let candidate = store.subjectAnalysis?.candidates.first(where: { $0.id == id }) {
+                    Text(candidate.name)
+                        .font(.caption.weight(.semibold))
+                        .padding(8)
+                        .background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 6))
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        .padding(16)
+                        .allowsHitTesting(false)
+                }
+            }
         }
         .clipped()
         .contentShape(Rectangle())
@@ -65,9 +87,19 @@ struct PhotoComparisonView: View {
                         onZoomRequest?(point)
                     }
             }
-            .allowsHitTesting(!isCropping && mode == .edited && onZoomRequest != nil && !store.isMaskEditing && !store.isRetouchEditing)
+            .allowsHitTesting(!isCropping && mode == .edited && onZoomRequest != nil
+                && !store.isMaskEditing && !store.isRetouchEditing && !store.isPickingWhiteBalance
+                && !store.isPickingSubject && !store.isAnalyzingSubjects && !store.isAnalyzingSky)
         }
         .accessibilityHint("Click the photo to view it at 100 percent.")
+        .onAppear { traceCanvas() }
+        .onChange(of: edited.map(ObjectIdentifier.init)) { _, _ in traceCanvas() }
+        .onChange(of: mode) { _, _ in traceCanvas() }
+        .onChange(of: store.maskOverlay.map(ObjectIdentifier.init)) { _, _ in traceCanvas() }
+    }
+
+    private func traceCanvas() {
+        PhotoPreviewDiagnostics.record("canvas mode=\(mode.rawValue) original=\(original != nil) edited=\(edited != nil) width=\(edited?.size.width ?? 0) height=\(edited?.size.height ?? 0) overlay=\(store.maskOverlay != nil) maskEditing=\(store.isMaskEditing) busy=\(store.isRenderingPreview)")
     }
 
     /// Where a click landed on the fitted photo, as 0–1 from its top-left; nil outside the photo.

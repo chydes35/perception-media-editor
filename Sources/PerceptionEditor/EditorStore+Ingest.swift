@@ -106,7 +106,25 @@ extension EditorStore {
     }
 
     func cancelIngest() {
+        ingestTask?.cancel()
+        ingestScanTask?.cancel()
         ingestWorker?.cancel()
+    }
+
+    /// Project replacement invalidates callbacks even when the same saved project is reopened.
+    func invalidateIngest() {
+        cancelIngest()
+        if let ingestWorker { retiringIngestWorker = ingestWorker }
+        ingestOperationID = nil
+        ingestTask = nil
+        ingestScanTask = nil
+        ingestWorker = nil
+        if ingest.isRunning { isShowingImportSheet = false }
+        ingest = .idle
+    }
+
+    func acceptsIngest(_ operation: UUID, generation: UUID) -> Bool {
+        ingestOperationID == operation && projectGeneration == generation
     }
 
     func startIngest(_ request: ImportRequest) {
@@ -146,13 +164,43 @@ extension EditorStore {
         let backupOriginals = request.backupRoot.map {
             ShootLayout.backupOriginals(backupRoot: $0, shootFolderName: shootFolderName)
         }
+        let operation = UUID()
+        let generation = projectGeneration
+        let scanner = ingestScanner
+        ingestOperationID = operation
 
-        Task { [weak self] in
-            let files = await Task.detached { IngestService.scan(source) }.value
+        ingestTask = Task { [weak self] in
             guard let self else { return }
+            guard acceptsIngest(operation, generation: generation) else { return }
+            if Task.isCancelled {
+                completeIngest(IngestResult(wasCancelled: true), shootFolder: shootFolder)
+                return
+            }
+            let scan = Task.detached { scanner(source) }
+            ingestScanTask = scan
+            let files = await scan.value
+            guard acceptsIngest(operation, generation: generation) else { return }
+            ingestScanTask = nil
+            if Task.isCancelled {
+                completeIngest(IngestResult(wasCancelled: true), shootFolder: shootFolder)
+                return
+            }
             guard !files.isEmpty else {
                 ingest = .failed("No photos or videos were found in \(source.lastPathComponent).")
+                clearIngestOperation()
                 return
+            }
+
+            // A replacement import must not remove or reuse a cancelled worker's partials
+            // before that worker has closed its file handles and finished cleaning up.
+            if let retiring = retiringIngestWorker {
+                _ = await retiring.value
+                guard acceptsIngest(operation, generation: generation) else { return }
+                retiringIngestWorker = nil
+                if Task.isCancelled {
+                    completeIngest(IngestResult(wasCancelled: true), shootFolder: shootFolder)
+                    return
+                }
             }
 
             let worker = Task.detached(priority: .userInitiated) { () -> Result<IngestResult, Error> in
@@ -162,11 +210,16 @@ extension EditorStore {
                         originals: originals,
                         backupOriginals: backupOriginals,
                         onFile: { file in
-                            Task { @MainActor in self.addIngestedFile(file) }
+                            Task { @MainActor in
+                                guard self.acceptsIngest(operation, generation: generation) else { return }
+                                self.addIngestedFile(file)
+                            }
                         },
                         progress: { progress in
                             Task { @MainActor in
-                                if self.ingest.isRunning { self.ingest = .copying(progress) }
+                                if self.acceptsIngest(operation, generation: generation), self.ingest.isRunning {
+                                    self.ingest = .copying(progress)
+                                }
                             }
                         }
                     )
@@ -174,13 +227,16 @@ extension EditorStore {
             }
             ingestWorker = worker
             let outcome = await worker.value
+            guard acceptsIngest(operation, generation: generation) else { return }
             ingestWorker = nil
 
             switch outcome {
             case .failure(let error):
                 ingest = .failed(error.localizedDescription)
-            case .success(let result):
-                finishIngest(result, shootFolder: shootFolder)
+                clearIngestOperation()
+            case .success(var result):
+                result.wasCancelled = result.wasCancelled || Task.isCancelled
+                completeIngest(result, shootFolder: shootFolder)
             }
         }
     }
@@ -193,9 +249,11 @@ extension EditorStore {
             try loadProject(from: projectFile)
         } else {
             resetToEmptyProject(named: name)
-            projectURL = projectFile
-            try document.save(project, to: projectFile)
-            lastSavedProject = project
+            guard saveProject(to: projectFile, announce: false) else {
+                throw CocoaError(.fileWriteUnknown, userInfo: [
+                    NSLocalizedDescriptionKey: projectSaveError ?? "The shoot project could not be saved."
+                ])
+            }
         }
     }
 
@@ -216,14 +274,31 @@ extension EditorStore {
             project.adjustmentsByAssetID[asset.id] = .neutral
         case .video, .audio:
             let assetID = asset.id
+            let generation = projectGeneration
             Task {
                 let metadata = await VideoMediaService.shared.metadata(for: file.destinationURL)
+                guard projectGeneration == generation else { return }
                 guard let index = project.media.firstIndex(where: { $0.id == assetID }) else { return }
                 project.media[index].durationSeconds = metadata.durationSeconds
                 project.media[index].pixelWidth = metadata.pixelWidth
                 project.media[index].pixelHeight = metadata.pixelHeight
             }
         }
+    }
+
+    private func clearIngestOperation() {
+        ingestOperationID = nil
+        ingestTask = nil
+        ingestScanTask = nil
+        ingestWorker = nil
+    }
+
+    private func completeIngest(_ result: IngestResult, shootFolder: URL) {
+        // onFile callbacks are independently queued on the main actor. Reconcile the complete
+        // result first so the final save includes every verified file, regardless of ordering.
+        for file in result.files { addIngestedFile(file) }
+        finishIngest(result, shootFolder: shootFolder)
+        clearIngestOperation()
     }
 
     private func finishIngest(_ result: IngestResult, shootFolder: URL) {

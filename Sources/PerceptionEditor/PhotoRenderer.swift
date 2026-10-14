@@ -202,8 +202,8 @@ enum PhotoSourceLoader {
 ///
 /// Editing works on a reduced-resolution "working" source (the longest edge is capped at
 /// `workingDimension`). Only a few working sources stay in memory at once, and full-resolution
-/// decodes happen only for export and for the 100% view, which keeps a 200-image RAW session
-/// inside an 8 GB Mac. Working sources live in GPU-shared pixel buffers, so a slider drag
+/// decodes happen only for export and for the 100% view. Render-context memory targets and
+/// lifecycle cleanup reduce shared-memory pressure. Working sources live in GPU-shared pixel buffers, so a slider drag
 /// re-renders from memory instead of re-running the RAW decode.
 actor PhotoRenderer {
     static let workingDimension: CGFloat = 2560
@@ -218,10 +218,9 @@ actor PhotoRenderer {
         var image: CIImage
     }
 
-    private let context = CIContext(options: [
-        .cacheIntermediates: false,
-        .useSoftwareRenderer: false
-    ])
+    private let context: CIContext
+    private let memoryTargetMB: Int?
+    private var repairContext: CIContext?
     private let workingColorSpace = CGColorSpace(name: CGColorSpace.extendedLinearSRGB)!
     private let displayColorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
     private let workingCacheLimit: Int
@@ -229,21 +228,51 @@ actor PhotoRenderer {
     private var fullResolution: WorkingEntry?
     private var rawInfoCache: [String: RawInfo?] = [:]
 
-    init(workingCacheLimit: Int = 4) {
-        self.workingCacheLimit = workingCacheLimit
+    /// The context budget controls temporary render allocations, not the entire process.
+    /// Half-float working precision is retained for RAW highlight recovery.
+    init(workingCacheLimit: Int = 4, memoryTargetMB: Int? = 256) {
+        self.workingCacheLimit = max(0, workingCacheLimit)
+        self.memoryTargetMB = memoryTargetMB
+        var options: [CIContextOption: Any] = [.cacheIntermediates: false, .useSoftwareRenderer: false]
+        if let memoryTargetMB { options[.memoryTarget] = max(1, memoryTargetMB) }
+        context = CIContext(options: options)
     }
 
-    /// The edited preview and its histogram for the selected photo.
-    func preview(url: URL, adjustments: PhotoAdjustments, overlayMaskID: UUID? = nil) -> PhotoPreviewResult? {
-        guard let source = workingSource(for: url, raw: adjustments.raw) else { return nil }
-        let edited = MediaColorRenderer.render(source, adjustments: adjustments, includesGeometry: true)
-        guard let image = bitmap(edited, maxDimension: Self.previewDimension) else { return nil }
+    /// Full-resolution healing needs more than 128 MiB for its color-matching blur.
+    /// Keep a bounded 256 MiB target, preserving the normal target for other edits.
+    private func fullResolutionContext(for adjustments: PhotoAdjustments) -> CIContext {
+        guard let memoryTargetMB, memoryTargetMB < 256,
+              adjustments.retouches.contains(where: {
+                  $0.kind == .heal && $0.isEnabled && $0.opacity > 0 && !$0.points.isEmpty
+              }) else { return context }
+        if let repairContext { return repairContext }
+        let newContext = CIContext(options: [
+            .cacheIntermediates: false, .useSoftwareRenderer: false, .memoryTarget: 256
+        ])
+        repairContext = newContext
+        return newContext
+    }
 
-        var overlay: RenderedImage?
-        if let overlayMaskID, let mask = adjustments.masks.first(where: { $0.id == overlayMaskID }) {
-            overlay = maskOverlay(for: mask, source: source, adjustments: adjustments)
+    func preview(url: URL, adjustments: PhotoAdjustments, overlayMaskID: UUID? = nil) -> PhotoPreviewResult? {
+        return autoreleasepool {
+            guard let source = workingSource(for: url, raw: adjustments.raw) else {
+                PhotoPreviewDiagnostics.record("renderer preview source unavailable")
+                return nil
+            }
+            let edited = MediaColorRenderer.render(source, adjustments: adjustments, includesGeometry: true)
+            guard let image = bitmap(edited, maxDimension: Self.previewDimension) else {
+                PhotoPreviewDiagnostics.record("renderer preview bitmap unavailable")
+                return nil
+            }
+
+            var overlay: RenderedImage?
+            if let overlayMaskID, let mask = adjustments.masks.first(where: { $0.id == overlayMaskID }) {
+                overlay = maskOverlay(for: mask, source: source, adjustments: adjustments)
+            }
+            let data = histogram(of: image.cgImage)
+            PhotoPreviewDiagnostics.record("renderer preview width=\(image.cgImage.width) height=\(image.cgImage.height) histogram=\(data.hasValues) nonzeroBins=\(data.red.filter { $0 > 0 }.count),\(data.green.filter { $0 > 0 }.count),\(data.blue.filter { $0 > 0 }.count) overlay=\(overlay != nil)")
+            return PhotoPreviewResult(edited: image, histogram: data, maskOverlay: overlay)
         }
-        return PhotoPreviewResult(edited: image, histogram: histogram(of: image.cgImage), maskOverlay: overlay)
     }
 
     /// A mask as a red tint over the finished picture: it follows the photo through rotation,
@@ -262,32 +291,50 @@ actor PhotoRenderer {
         return bitmap(tinted, maxDimension: Self.previewDimension)
     }
 
+    func subjectSelectionOverlay(url: URL, png: Data, adjustments: PhotoAdjustments) -> RenderedImage? {
+        guard let source = workingSource(for: url, raw: adjustments.raw) else { return nil }
+        let mask = LocalMask(shape: .subject(SubjectMask(png: png)))
+        return maskOverlay(for: mask, source: source, adjustments: adjustments)
+    }
+
     /// The photo as the RAW engine renders it with no edits, for before/after.
     func original(url: URL) -> RenderedImage? {
-        guard let source = workingSource(for: url, raw: RawSettings()) else { return nil }
-        return bitmap(source, maxDimension: Self.previewDimension)
+        return autoreleasepool {
+            guard let source = workingSource(for: url, raw: RawSettings()) else { return nil }
+            return bitmap(source, maxDimension: Self.previewDimension)
+        }
     }
 
     /// As-shot white balance and engine defaults, or nil for a file that is not RAW.
     func rawInfo(url: URL) -> RawInfo? {
-        let key = cacheKey(for: url)
-        if let cached = rawInfoCache[key] { return cached }
-        let info = PhotoSourceLoader.rawInfo(of: url)
-        rawInfoCache[key] = .some(info)
-        return info
+        return autoreleasepool {
+            let key = cacheKey(for: url)
+            if let cached = rawInfoCache[key] { return cached }
+            let info = PhotoSourceLoader.rawInfo(of: url)
+            rawInfoCache[key] = .some(info)
+            return info
+        }
     }
+
+    /// Uses the RAW decoder's native neutral-point calculation away from the UI thread.
+    func whiteBalance(at source: NormalizedPoint, url: URL) -> WhiteBalanceReading? {
+        WhiteBalanceEyedropper.sampleRaw(at: source, url: url)
+    }
+
 
     /// Thumbnails decode at thumbnail size and are never kept in the working cache.
     func thumbnail(url: URL, adjustments: PhotoAdjustments) -> RenderedImage? {
-        guard let source = PhotoSourceLoader.loadThumbnail(
-            url,
-            maxDimension: Self.thumbnailDimension,
-            raw: adjustments.raw
-        ) else {
-            return nil
+        return autoreleasepool {
+            guard let source = PhotoSourceLoader.loadThumbnail(
+                url,
+                maxDimension: Self.thumbnailDimension,
+                raw: adjustments.raw
+            ) else {
+                return nil
+            }
+            let edited = MediaColorRenderer.render(source, adjustments: adjustments, includesGeometry: true)
+            return bitmap(edited, maxDimension: Self.thumbnailDimension)
         }
-        let edited = MediaColorRenderer.render(source, adjustments: adjustments, includesGeometry: true)
-        return bitmap(edited, maxDimension: Self.thumbnailDimension)
     }
 
     func export(
@@ -295,27 +342,45 @@ actor PhotoRenderer {
         adjustments: PhotoAdjustments,
         to destination: URL,
         type: UTType,
-        quality: CGFloat = 0.92
+        quality: CGFloat = 0.92,
+        protectedOriginals: [URL] = [],
+        longEdgePixels: Int? = nil,
+        replaceExisting: Bool = true
     ) throws {
-        guard let source = PhotoSourceLoader.load(url, maxDimension: nil, raw: adjustments.raw) else {
-            throw PhotoRenderError.unreadableSource(url.lastPathComponent)
-        }
-        let image = MediaColorRenderer.render(source, adjustments: adjustments, includesGeometry: true)
+        defer { clearRenderCaches() }
+        try autoreleasepool {
+            let exportContext = fullResolutionContext(for: adjustments)
+            let originals = protectedOriginals + [url]
+            try ExportFileSafety.validate(destination, protecting: originals)
+            guard let source = PhotoSourceLoader.load(url, maxDimension: nil, raw: adjustments.raw) else {
+                throw PhotoRenderError.unreadableSource(url.lastPathComponent)
+            }
+            var image = MediaColorRenderer.render(source, adjustments: adjustments, includesGeometry: true)
+            if let longEdgePixels, longEdgePixels > 0 {
+                let currentLongEdge = max(image.extent.width, image.extent.height)
+                if currentLongEdge > CGFloat(longEdgePixels) {
+                    let resize = CIFilter.lanczosScaleTransform()
+                    resize.inputImage = image
+                    resize.scale = Float(CGFloat(longEdgePixels) / currentLongEdge)
+                    resize.aspectRatio = 1
+                    image = resize.outputImage ?? image
+                }
+            }
 
-        if type == .png {
-            try context.writePNGRepresentation(
-                of: image,
-                to: destination,
-                format: .RGBA8,
-                colorSpace: displayColorSpace
-            )
-        } else {
-            try context.writeJPEGRepresentation(
-                of: image,
-                to: destination,
-                colorSpace: displayColorSpace,
-                options: [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: quality]
-            )
+            try ExportFileSafety.writeAtomically(
+                to: destination, protecting: originals, replaceExisting: replaceExisting
+            ) { temporary in
+                if type == .png {
+                    try exportContext.writePNGRepresentation(
+                        of: image, to: temporary, format: .RGBA8, colorSpace: displayColorSpace
+                    )
+                } else {
+                    try exportContext.writeJPEGRepresentation(
+                        of: image, to: temporary, colorSpace: displayColorSpace,
+                        options: [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: quality]
+                    )
+                }
+            }
         }
     }
 
@@ -331,38 +396,54 @@ actor PhotoRenderer {
         center: CGPoint,
         viewportPixels: CGSize
     ) -> FocusRender? {
-        guard viewportPixels.width >= 1, viewportPixels.height >= 1,
-              let source = fullResolutionSource(for: url, raw: adjustments.raw)
-        else { return nil }
+        return autoreleasepool {
+            guard viewportPixels.width >= 1, viewportPixels.height >= 1,
+                  let source = fullResolutionSource(for: url, raw: adjustments.raw)
+            else { return nil }
 
-        let finished = MediaColorRenderer.render(source, adjustments: adjustments, includesGeometry: true)
-        let extent = finished.extent.integral
-        guard extent.width >= 1, extent.height >= 1 else { return nil }
+            let finished = MediaColorRenderer.render(source, adjustments: adjustments, includesGeometry: true)
+            let extent = finished.extent.integral
+            guard extent.width >= 1, extent.height >= 1 else { return nil }
 
-        let width = min(extent.width, viewportPixels.width.rounded())
-        let height = min(extent.height, viewportPixels.height.rounded())
-        let left = min(max(0, center.x * extent.width - width / 2), extent.width - width).rounded()
-        let top = min(max(0, center.y * extent.height - height / 2), extent.height - height).rounded()
-        // Core Image measures from the bottom-left corner.
-        let region = CGRect(x: extent.minX + left, y: extent.minY + extent.height - top - height, width: width, height: height)
+            let width = min(extent.width, viewportPixels.width.rounded())
+            let height = min(extent.height, viewportPixels.height.rounded())
+            let left = min(max(0, center.x * extent.width - width / 2), extent.width - width).rounded()
+            let top = min(max(0, center.y * extent.height - height / 2), extent.height - height).rounded()
+            // Core Image measures from the bottom-left corner.
+            let region = CGRect(x: extent.minX + left, y: extent.minY + extent.height - top - height, width: width, height: height)
 
-        guard let cgImage = context.createCGImage(
-            finished.cropped(to: region),
-            from: region,
-            format: .RGBA8,
-            colorSpace: displayColorSpace
-        ) else { return nil }
+            guard let cgImage = fullResolutionContext(for: adjustments).createCGImage(
+                finished.cropped(to: region),
+                from: region,
+                format: .RGBA8,
+                colorSpace: displayColorSpace
+            ) else { return nil }
 
-        return FocusRender(
-            image: RenderedImage(cgImage: cgImage),
-            fullSize: extent.size,
-            region: CGRect(x: left, y: top, width: width, height: height)
-        )
+            return FocusRender(
+                image: RenderedImage(cgImage: cgImage),
+                fullSize: extent.size,
+                region: CGRect(x: left, y: top, width: width, height: height)
+            )
+        }
     }
 
     /// Frees the full-resolution buffer once the 100% view is closed.
     func releaseFullResolution() {
         fullResolution = nil
+        clearRenderCaches()
+    }
+
+    func clearRenderCaches() {
+        context.clearCaches()
+        repairContext?.clearCaches()
+        repairContext = nil
+    }
+
+    func releaseMemoryUnderPressure() {
+        // Preserve only the most recent source(s), so the visible photo stays responsive.
+        if workingSources.count > 2 { workingSources.removeFirst(workingSources.count - 2) }
+        rawInfoCache.removeAll()
+        clearRenderCaches()
     }
 
     var hasFullResolution: Bool { fullResolution != nil }
@@ -398,6 +479,7 @@ actor PhotoRenderer {
         workingSources.removeAll()
         fullResolution = nil
         rawInfoCache.removeAll()
+        clearRenderCaches()
     }
 
     var cachedWorkingSourceCount: Int { workingSources.count }

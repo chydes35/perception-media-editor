@@ -139,10 +139,6 @@ final class EditorStore: ObservableObject {
     var ingestOperationID: UUID?
     let ingestScanner: @Sendable (URL) -> [SourceFile]
     private(set) var previewTask: Task<Void, Never>?
-    /// How long sliders must rest after a draft (approximated) preview before the exact one renders.
-    var draftSettleDelay: Duration = .milliseconds(350)
-    private var draftSettleTask: Task<Void, Never>?
-    private var exactPreviewRequested = false
     private var needsAnotherPreviewRender = false
     private var originalPreviewAssetID: UUID?
     private var pendingPhotoThumbnails: Set<UUID> = []
@@ -575,16 +571,6 @@ final class EditorStore: ObservableObject {
     /// render is in flight, further requests collapse into one follow-up render with the
     /// latest adjustments, so slider drags never queue up stale work.
     func refreshPreview() {
-        // New input supersedes any pending request for the exact render.
-        draftSettleTask?.cancel()
-        draftSettleTask = nil
-        exactPreviewRequested = false
-        refreshPreview(exact: false)
-    }
-
-    /// `exact` renders without white balance approximation; it follows a draft once the sliders rest.
-    private func refreshPreview(exact: Bool) {
-        if exact { exactPreviewRequested = true }
         if isPickingSubject { previewSubjectCandidate(highlightedSubjectID) }
         if isZoom100 { refreshFocus() }
         // Develop-quality renders (a full RAW decode) only run where they are shown.
@@ -616,8 +602,6 @@ final class EditorStore: ObservableObject {
     }
 
     private func startPreviewRender(for asset: MediaAsset) {
-        let allowsDraft = !exactPreviewRequested
-        exactPreviewRequested = false
         let url = asset.url
         let assetID = asset.id
         let generation = projectGeneration
@@ -638,7 +622,7 @@ final class EditorStore: ObservableObject {
             } else {
                 original = needsOriginal && !Task.isCancelled ? await renderer.original(url: url) : nil
                 result = !Task.isCancelled
-                    ? await renderer.preview(url: url, adjustments: adjustments, overlayMaskID: overlayID, allowsDraft: allowsDraft) : nil
+                    ? await renderer.preview(url: url, adjustments: adjustments, overlayMaskID: overlayID) : nil
             }
             self?.finishPreviewRender(
                 assetID: assetID,
@@ -649,19 +633,6 @@ final class EditorStore: ObservableObject {
                 original: original,
                 result: result
             )
-        }
-    }
-
-    /// After a draft preview, render the exact one once no new request has arrived for `draftSettleDelay`.
-    private func scheduleDraftSettle() {
-        draftSettleTask?.cancel()
-        let generation = projectGeneration
-        let delay = draftSettleDelay
-        draftSettleTask = Task { [weak self] in
-            try? await Task.sleep(for: delay)
-            guard !Task.isCancelled, let self, generation == self.projectGeneration else { return }
-            self.draftSettleTask = nil
-            self.refreshPreview(exact: true)
         }
     }
 
@@ -687,14 +658,13 @@ final class EditorStore: ObservableObject {
             renderedPreview = result.map { Self.nsImage($0.edited) }
             maskOverlay = result?.maskOverlay.map(Self.nsImage)
             histogram = result?.histogram ?? .empty
-            if result?.isDraft == true { scheduleDraftSettle() }
         } else {
             PhotoPreviewDiagnostics.record("store discard request=\(requestID) canceled=\(Task.isCancelled) generationMatches=\(projectGeneration == generation) assetMatches=\(selectedAssetID == assetID) sourceMatches=\(selectedAsset?.url == sourceURL)")
         }
 
         if needsAnotherPreviewRender {
             needsAnotherPreviewRender = false
-            if exactPreviewRequested { refreshPreview(exact: true) } else { refreshPreview() }
+            refreshPreview()
         }
     }
 
@@ -1006,9 +976,6 @@ final class EditorStore: ObservableObject {
         // Keep the worker slot until its completion drains. Starting a new render while
         // the old actor call finishes would queue unbounded work during repeated opens.
         previewTask?.cancel()
-        draftSettleTask?.cancel()
-        draftSettleTask = nil
-        exactPreviewRequested = false
         isRenderingPreview = false
         cancelAutoAdjustment()
         endMaskEditing()

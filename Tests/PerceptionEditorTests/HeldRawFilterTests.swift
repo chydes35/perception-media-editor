@@ -1,4 +1,5 @@
 import CoreGraphics
+import Darwin
 import Foundation
 import Testing
 @testable import PerceptionEditor
@@ -59,5 +60,36 @@ struct HeldRawFilterTests {
         let back = try #require(await held.preview(url: url, adjustments: at(temperatures[0])))
         let fresh = try #require(await PhotoRenderer().preview(url: url, adjustments: at(temperatures[0])))
         #expect(maxDiff(back.edited.cgImage, fresh.edited.cgImage) <= 1)
+    }
+
+    private func footprintMB() -> Double {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size)
+        let result = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count) }
+        }
+        return result == KERN_SUCCESS ? Double(info.phys_footprint) / 1_048_576 : -1
+    }
+
+    /// Footprint after many white balance ticks with and without the held filter.
+    @Test(.enabled(if: HeldRawFilterTests.path != nil)) func heldFilterFootprint() async throws {
+        let url = URL(fileURLWithPath: try #require(Self.path))
+        var out: [String] = []
+        for mode in (ProcessInfo.processInfo.environment["PME_ORDER"] == "held-first" ? ["held", "fresh-per-tick"] : ["fresh-per-tick", "held"]) {
+            let renderer = PhotoRenderer()
+            let info = try #require(await renderer.rawInfo(url: url))
+            let base = footprintMB()
+            var peak = base
+            for i in 0 ..< 40 {
+                let kelvin = info.asShotTemperature - 800 + Double(i % 16) * 110
+                if mode == "fresh-per-tick" { await renderer.evictAll() }
+                _ = try #require(await renderer.preview(url: url, adjustments: at(kelvin)))
+                peak = max(peak, footprintMB())
+            }
+            out.append("\(mode): start \(Int(base)) MB, peak \(Int(peak)) MB, end \(Int(footprintMB())) MB")
+            await renderer.evictAll()
+            out.append("\(mode) after evictAll: \(Int(footprintMB())) MB")
+        }
+        print("Footprint: " + out.joined(separator: " | "))
     }
 }

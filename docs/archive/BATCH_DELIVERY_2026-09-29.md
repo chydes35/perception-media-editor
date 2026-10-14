@@ -21,4 +21,4 @@ On the 8 GB M1 MacBook Air, added two distinct Lumix S5 RW2 files by reference, 
 
 ## Open acceptance
 
-This verifies the two-photo workflow and basic real-RAW output, not complete delivery readiness. The active [ExecPlan](../plans/active/batch-delivery-mvp.md) still requires a distinct 100–200-photo run with throughput and whole-app footprint measurements, broader preview/export color comparison, and mixed failure recovery. Persistent recipes, metadata/IPTC, watermark, sharpening, P3, and video export are later roadmap work.
+This verifies the two-photo workflow and basic real-RAW output, not complete delivery readiness. The active [ExecPlan](../../plans/active/batch-delivery-mvp.md) still requires a distinct 100–200-photo run with throughput and whole-app footprint measurements, broader preview/export color comparison, and mixed failure recovery. Persistent recipes, metadata/IPTC, watermark, sharpening, P3, and video export are later roadmap work.

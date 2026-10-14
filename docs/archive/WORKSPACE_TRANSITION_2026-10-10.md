@@ -13,7 +13,7 @@ Four focused checks cover deferred publication, rapid requests, direct navigatio
 | Picker-only traced release | **PASS / FAIL** — publication-during-update faults eliminated; fresh analysis/export/reopen/saved-mask sequence reproduces persistent black canvas despite a completed nonempty preview; a later baseline retry displays correctly |
 | Media/integrity | **PASS** — original/copy RAW inventory hashes and existing foreground fixture unchanged; schema 10, exact saved adjustments/media after reopen; UI JPEG fully decoded at 4000 × 6000 |
 | Performance thresholds | **NOT VERIFIED** — observe candidate; genuine full-shoot/agreed thresholds remain open |
-| Intermittent black-frame causal correction | **NOT VERIFIED** — keep [recovery plan](../plans/active/preview-reopen-recovery.md) active pending displayed evidence |
+| Intermittent black-frame causal correction | **NOT VERIFIED** — keep [recovery plan](../../plans/active/preview-reopen-recovery.md) active pending displayed evidence |
 
 Local fault metadata, disposable `.pmedit` projects and traces stay under `/private/tmp/` and `.build/workspace-transition-validation/`; private RAW data is not uploaded.
 

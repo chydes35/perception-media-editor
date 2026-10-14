@@ -27,7 +27,7 @@ The goal is a full Lightroom replacement for a single photographer's workflow. P
 - [x] Separate deterministic brush-cache checks from isolated timing benchmarks
 - [ ] Complete a real 100–200-distinct-photo UI workflow and combined process-memory profile
 
-See [Reliability Pass](RELIABILITY_PASS_2026-09-28.md) for verification evidence and remaining acceptance work.
+See [Reliability Pass](archive/RELIABILITY_PASS_2026-09-28.md) for verification evidence and remaining acceptance work.
 
 #### Memory follow-up — 2026-09-28
 
@@ -38,11 +38,11 @@ See [Reliability Pass](RELIABILITY_PASS_2026-09-28.md) for verification evidence
 - [x] Reclaim expendable caches on macOS memory pressure
 - [x] Add isolated RAM/latency/output-equivalence profiling with real RAW samples
 
-See [Memory Optimization](MEMORY_OPTIMIZATION_2026-09-28.md) for measurements and remaining whole-app acceptance work.
+See [Memory Optimization](archive/MEMORY_OPTIMIZATION_2026-09-28.md) for measurements and remaining whole-app acceptance work.
 
 #### Local integration — 2026-10-07
 
-The [integration plan](../plans/completed/photo-workflow-integration.md) combines GitHub main, the advanced local photo tools, and the preserved reliability/memory/batch-delivery work on `codex/photo-workflow-integration`. The candidate retains project schema 10. Automated integration checks do not close the open UI, image-quality, or 100–200-photo performance gates. The [target-Mac validation](WORKFLOW_VALIDATION_2026-10-07.md) adds displayed evidence from 100 distinct S5 photos across dated library folders and records the healing allocation defect/correction; genuine single-shoot, broad visual, and threshold-based acceptance remain open.
+The [integration plan](../plans/completed/photo-workflow-integration.md) combines GitHub main, the advanced local photo tools, and the preserved reliability/memory/batch-delivery work on `codex/photo-workflow-integration`. The candidate retains project schema 10. Automated integration checks do not close the open UI, image-quality, or 100–200-photo performance gates. The [target-Mac validation](archive/WORKFLOW_VALIDATION_2026-10-07.md) adds displayed evidence from 100 distinct S5 photos across dated library folders and records the healing allocation defect/correction; genuine single-shoot, broad visual, and threshold-based acceptance remain open.
 
 ### Phase 1 — Library and culling (complete, PR #2)
 
@@ -87,7 +87,7 @@ The [integration plan](../plans/completed/photo-workflow-integration.md) combine
 - [ ] Color and luminance range masks
 - [x] Spot healing and clone: paint soft repairs, adjust source points, and retain edits through crop, rotation, save, and export
 
-The [October 8 real-RAW selection pass](SELECTION_QUALITY_2026-10-08.md) records missing group candidates and missed sky gaps through fine branches. These quality gates remain open despite structural mask/export checks passing.
+The [October 8 real-RAW selection pass](archive/SELECTION_QUALITY_2026-10-08.md) records missing group candidates and missed sky gaps through fine branches. These quality gates remain open despite structural mask/export checks passing.
 
 ### Phase 4 — Delivery (in progress)
 
@@ -149,7 +149,7 @@ Video (V0.3 below) resumes after the photo phases. Lumix S5 10-bit 4:2:2 and V-L
 
 ## Later
 
-- Local generative remove/fill: deferred until the core photo editor is complete. The initial M1/PyTorch inpainting trial hit its five-minute limit at step 5 of 20 and increased system swap substantially; see [local trial notes](LOCAL_GENERATIVE_REMOVE_TRIAL.md).
+- Local generative remove/fill: deferred until the core photo editor is complete. The initial M1/PyTorch inpainting trial hit its five-minute limit at step 5 of 20 and increased system swap substantially; see [local trial notes](archive/LOCAL_GENERATIVE_REMOVE_TRIAL.md).
 - Keyframes and tracking
 - Multicam synchronization and angle editor
 - Optical-flow speed changes

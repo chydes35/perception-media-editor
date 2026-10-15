@@ -158,16 +158,20 @@ final class StudioOSController: ObservableObject {
         }
     }
 
-    func loadDestinations() async {
-        guard let connection else { return }
+    /// Returns true when the list was refreshed; false when it failed (the error is in `lastError`).
+    @discardableResult
+    func loadDestinations() async -> Bool {
+        guard let connection else { return false }
         do {
             destinations = try await makeAPI(connection).destinations()
+            return true
         } catch StudioOSError.notPaired {
             link = .unauthorized
             lastError = StudioOSError.notPaired.localizedDescription
         } catch {
             lastError = error.localizedDescription
         }
+        return false
     }
 
     // MARK: - Transfers

@@ -6,6 +6,7 @@ struct StudioOSPanel: View {
     @EnvironmentObject private var store: EditorStore
     @State private var showConnect = false
     @State private var showDestinations = false
+    @State private var isLoadingDestinations = false
 
     var body: some View {
         GroupBox("Studio OS") {
@@ -16,15 +17,19 @@ struct StudioOSPanel: View {
                         Button("Connect to Studio OS…") { showConnect = true }
                     } else {
                         Button {
+                            guard !isLoadingDestinations else { return }
+                            isLoadingDestinations = true
                             Task {
-                                await controller.loadDestinations()
-                                showDestinations = true
+                                // On failure the controller's error alert explains why; no empty sheet.
+                                let loaded = await controller.loadDestinations()
+                                isLoadingDestinations = false
+                                if loaded { showDestinations = true }
                             }
                         } label: {
                             Label("Send Selected to Studio OS…", systemImage: "paperplane")
                         }
                         .buttonStyle(.borderedProminent)
-                        .disabled(store.selectedPhotosForExport.isEmpty || store.isExporting || transferRunning)
+                        .disabled(store.selectedPhotosForExport.isEmpty || store.isExporting || transferRunning || isLoadingDestinations)
                         Button("Connection…") { showConnect = true }
                     }
                 }
@@ -149,7 +154,7 @@ struct StudioOSDestinationSheet: View {
         }
         // The last destination is a suggestion shown first, never applied automatically.
         guard let last = controller.lastDestinationID else { return matches }
-        return matches.sorted { ($0.galleryId == last ? 0 : 1) < ($1.galleryId == last ? 0 : 1) }
+        return matches.filter { $0.galleryId == last } + matches.filter { $0.galleryId != last }
     }
 
     private var chosen: StudioOSDestination? { controller.destinations.first { $0.galleryId == selection } }
@@ -261,27 +266,50 @@ struct StudioOSConnectSheet: View {
 }
 
 /// Shown when a `perceptionedit://pair` link arrives. Nothing is saved until the user agrees.
+/// Also surfaces `controller.lastError`, which no other view displays.
 struct StudioOSPairingAlert: ViewModifier {
     @ObservedObject var controller: StudioOSController
     @EnvironmentObject private var store: EditorStore
+    /// True while the Pair button runs, so the alert's dismissal setter cannot cancel the pairing it is confirming.
+    @State private var confirming = false
 
     func body(content: Content) -> some View {
-        content.alert(
-            "Pair with Studio OS?",
-            isPresented: Binding(
-                get: { controller.pendingPairing != nil },
-                set: { if !$0 { controller.cancelPendingPairing() } }
-            ),
-            actions: {
-                Button("Pair") {
-                    do { try controller.confirmPendingPairing() } catch { store.lastError = error.localizedDescription }
-                    Task { await controller.checkConnection() }
+        content
+            .alert(
+                "Pair with Studio OS?",
+                isPresented: Binding(
+                    get: { controller.pendingPairing != nil },
+                    set: { if !$0, !confirming, controller.pendingPairing != nil { controller.cancelPendingPairing() } }
+                ),
+                actions: {
+                    Button("Pair") {
+                        confirming = true
+                        do { try controller.confirmPendingPairing() } catch { store.lastError = error.localizedDescription }
+                        confirming = false
+                        Task { await controller.checkConnection() }
+                    }
+                    Button("Cancel", role: .cancel) { controller.cancelPendingPairing() }
+                },
+                message: {
+                    Text(pairingMessage)
                 }
-                Button("Cancel", role: .cancel) { controller.cancelPendingPairing() }
-            },
-            message: {
-                Text("Photos you send will go to \(controller.pendingPairing?.serverURL.absoluteString ?? "this server"). Only continue if you just started this from your own Studio OS.")
-            }
-        )
+            )
+            .alert(
+                "Studio OS",
+                isPresented: Binding(
+                    get: { controller.lastError != nil },
+                    set: { if !$0 { controller.lastError = nil } }
+                ),
+                actions: { Button("OK") { controller.lastError = nil } },
+                message: { Text(controller.lastError ?? "Unknown error") }
+            )
+    }
+
+    private var pairingMessage: String {
+        var text = "Photos you send will go to \(controller.pendingPairing?.serverURL.absoluteString ?? "this server"). Only continue if you just started this from your own Studio OS."
+        if let current = controller.connection?.serverURL.absoluteString {
+            text += " This replaces your current pairing with \(current)."
+        }
+        return text
     }
 }

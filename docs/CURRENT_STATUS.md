@@ -1,10 +1,10 @@
 # Current status
 
-Updated: 2026-10-14. Everything below is on `main` (PR #7 merged at `d9ccdb5`). Schema version **10**. Candidate build **16**; not yet signed or notarized for distribution. Long-form evidence from earlier passes is in [archive/](archive/README.md). The last full status snapshot is [archive/CURRENT_STATUS_2026-10-10.md](archive/CURRENT_STATUS_2026-10-10.md).
+Updated: 2026-10-15. Everything below is on `main` except Send to Studio OS, which is on branch `feat/send-to-studio-os` (PR #7 merged at `d9ccdb5`). Schema version **10**. Candidate build **16**; not yet signed or notarized for distribution. Long-form evidence from earlier passes is in [archive/](archive/README.md). The last full status snapshot is [archive/CURRENT_STATUS_2026-10-10.md](archive/CURRENT_STATUS_2026-10-10.md).
 
 ## What works
 
-Card import with verified copies, culling, RAW develop (white balance with eyedropper, noise reduction, tone curve, HSL, Auto tone and white balance), presets with copy/paste/sync and history, gradient/brush/subject/sky masks, heal and clone, single-photo JPEG/PNG export, and sequential batch JPEG delivery. Video is a V1/A1 timeline with color, waveform, and fades; it is deferred until the photo gates pass.
+Card import with verified copies, culling, RAW develop (white balance with eyedropper, noise reduction, tone curve, HSL, Auto tone and white balance), presets with copy/paste/sync and history, gradient/brush/subject/sky masks, heal and clone, single-photo JPEG/PNG export, and sequential batch JPEG delivery. On branch `feat/send-to-studio-os` (not merged): Send to Studio OS (pairing, resumable draft upload). Verified by unit tests with a fake server and by an automated run against a real local Studio OS test server using synthetic JPEGs: five photos arrive as ready drafts, cancel and resume across a restart lose or duplicate nothing, repeating a manifest is idempotent, and a revoked token pauses the transfer. The GUI, real RAW quality and hardware behavior are not verified (table below). Video is a V1/A1 timeline with color, waveform, and fades; it is deferred until the photo gates pass.
 
 ## Verification
 
@@ -15,6 +15,10 @@ Card import with verified copies, culling, RAW develop (white balance with eyedr
 | 100 distinct S5 RAWs on the M1/8 GB target (import, cull, edit, export) | PASS: 100/100 full-resolution JPEGs; all original hashes unchanged; whole-app peak 1.53 GiB |
 | Genuine single 100–200-photo shoot | NOT VERIFIED |
 | Agreed performance thresholds | NOT VERIFIED (observations only; see [PERFORMANCE_TARGETS](PERFORMANCE_TARGETS.md)) |
+| Send to Studio OS, automated (fake server + live local server, synthetic JPEGs) | PASS: 4/4 live tests; full suite 368 tests, 0 failed, 25 skipped (includes the 4 opt-in live tests, skipped without their env vars) |
+| Send to Studio OS GUI (pairing alert and link, panel, destination sheet, publish gate) | NOT VERIFIED |
+| Send to Studio OS genuine shoot (100-200 photos, color, orientation, order, RAW hashes) and M1/8 GB memory/throughput | NOT VERIFIED |
+| Send to Studio OS disk-full staging, API stop mid-batch, app quit mid-upload drills | NOT VERIFIED |
 | Distribution signing and notarization | NOT VERIFIED |
 
 ## Open problems

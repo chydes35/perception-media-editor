@@ -55,6 +55,18 @@ Develop preview completion is bound to the project generation, selected asset an
 
 Photo geometry is stored as optional normalized crop data for backward-compatible `.pmedit` loading. Preview zoom and pan are view state, while crop, straighten, and adjustment history remain non-destructive project edits.
 
+## Studio OS delivery
+
+Sending finished JPEGs to Studio OS is split so `EditorStore` only owns one `StudioOSController` and knows nothing else about connectivity, queues or uploads.
+
+- `StudioOSController` (`@MainActor`, `ObservableObject`): pairing state and confirmation, health/link status, destinations, the list of transfers, and the user actions (send, resume, cancel, retry, discard). It builds the render closure (`PhotoRenderer`) and starts one `TransferOrchestrator` task per transfer.
+- `StudioOSClient` (behind the `StudioOSAPI` protocol): the only code that speaks HTTP to Studio OS. Bearer token on API calls only; presigned uploads go to the storage host without it. Maps failures to `StudioOSError` (`unreachable`, `notPaired`, `rejected`, `invalidResponse`).
+- `TransferQueueStore` (actor): persists `TransferRecord`s to `StudioOSTransfers.json` beside, not inside, the project. See [DATA_MODEL](DATA_MODEL.md).
+- `TransferOrchestrator` (actor): runs one transfer: render one photo at a time to the staging folder, hash, create the idempotent manifest, upload at most two files, poll for previews. Every step is written to the store first, so a quit or crash resumes without duplicates or re-rendering. `run` never throws; its result is the stored status.
+- `StudioOSCredentialStore`, `StudioOSModels.swift`: Keychain token storage, pairing-link validation, wire types. `StudioOSViews.swift`: the Export workspace panel, destination sheet and pairing alert.
+
+Original media is never modified; only derived JPEGs are staged, and a staged file is removed only after the server reports its item ready.
+
 ## Autosave
 
 A project that has a file on disk saves itself 1.5 seconds after each change, and immediately before New, Open, or Quit. Only a project that has never been saved asks whether to save.

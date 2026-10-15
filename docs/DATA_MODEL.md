@@ -15,4 +15,20 @@ The schema version is defined in code. Check it before changing fields; do not a
 
 Thumbnails, waveforms, preview rasters, and brush rasters are disposable caches. Cache eviction must never remove edits or user source files. Undo/history is session state unless a feature explicitly changes that contract.
 
+## Studio OS transfer queue
+
+`StudioOSTransfers.json` is separate from `.pmedit` projects and is not part of them. **`.pmedit` schema 10 is unchanged.**
+
+- Location: `~/Library/Application Support/PerceptionMediaEditor/StudioOSTransfers.json`, replaced atomically on every change.
+- Format: `{ "version": 1, "transfers": [TransferRecord] }`.
+- `TransferRecord`: `id` (the client transfer id), `serverURL`, `webURL`, `galleryID`, `bookingID`, `destinationLabel`, `createdAt`, `jpegQuality`, `longEdgePixels`, `protectedOriginalPaths`, `stagingFolderPath`, `remoteTransferID`, `status` (running, paused, cancelled, completed), `pausedReason`, `items`.
+- `TransferItemRecord`: `id`, `position`, `sourcePath`, `adjustments` (a snapshot taken when Send was pressed), `displayName`, `uploadFileName`, `stagedPath`, `sizeBytes`, `sha256`, `remoteItemID`, `mediaID`, `putStarted`, `phase` (queued, rendered, processing, ready, failed), `message`.
+- The file contains no credentials and no signed URLs. Upload URLs are requested when needed and never stored.
+- A file that cannot be decoded is moved aside as `StudioOSTransfers.json.corrupt-<timestamp>`, the queue starts empty, and the panel shows a warning. It is never deleted.
+
+Other Studio OS state:
+
+- Keychain generic password, service `com.perceptionmedia.editor.studio-os`, account `device-token`: the device token.
+- `UserDefaults`: `studioOS.serverURL`, `studioOS.webURL`, `studioOS.stagingFolder`, `studioOS.lastDestinationGalleryID` (a suggestion only).
+
 See [ARCHITECTURE.md](ARCHITECTURE.md) for component ownership and [TESTING_STRATEGY.md](TESTING_STRATEGY.md) for compatibility gates.

@@ -379,4 +379,38 @@ struct TransferOrchestratorTests {
         #expect(done.status == .completed)
         #expect(recorder.calls.withLock { $0.count } == 3)   // nothing rendered twice
     }
+
+    @Test func aStagedPathIsClearedOnlyWhenItsFileWasActuallyRemoved() async throws {
+        // Deterministic form of the cleanup invariant: one ready item's file can be removed, the
+        // other's cannot (its folder is read-only). Only the removed one may lose its path;
+        // clearing "every ready item" would orphan the file that is still on disk.
+        let temp = try TempDirectory()
+        let store = makeStore(temp)
+        var record = sampleRecord(items: 2)
+        record.stagingFolderPath = temp.url.appendingPathComponent("staging").path
+        record.remoteTransferID = "tr-1"
+        let locked = temp.url.appendingPathComponent("locked")
+        try FileManager.default.createDirectory(atPath: record.stagingFolderPath, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: locked, withIntermediateDirectories: true)
+        let removable = (record.stagingFolderPath as NSString).appendingPathComponent("0000-A0.jpg")
+        let stuck = locked.appendingPathComponent("0001-A1.jpg").path
+        try Data("jpeg".utf8).write(to: URL(fileURLWithPath: removable))
+        try Data("jpeg".utf8).write(to: URL(fileURLWithPath: stuck))
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: locked.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: locked.path) }
+        for (index, path) in [removable, stuck].enumerated() {
+            record.items[index].stagedPath = path
+            record.items[index].remoteItemID = "ri-asset-\(index)"
+            record.items[index].phase = .ready
+        }
+        try await store.upsert(record)
+
+        await TransferOrchestrator(runtime(api: FakeStudioOS(), store: store, recorder: TransferRenderRecorder())).run(record.id)
+
+        let done = try #require(await store.record(id: record.id))
+        #expect(!FileManager.default.fileExists(atPath: removable))
+        #expect(done.items[0].stagedPath == nil)
+        #expect(FileManager.default.fileExists(atPath: stuck))
+        #expect(done.items[1].stagedPath == stuck)   // still tracked, so a later run can remove it
+    }
 }

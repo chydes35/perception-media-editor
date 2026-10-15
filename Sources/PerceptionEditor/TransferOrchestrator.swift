@@ -78,7 +78,7 @@ actor TransferOrchestrator {
     /// Re-queues photos that failed after the server manifest existed (upload rejection or preview
     /// failure). Photos that failed to render are not retried here: the manifest is fixed.
     func retryFailedItems(_ id: String) async {
-        _ = try? await runtime.store.update(id: id) { record in
+        let updated = try? await runtime.store.update(id: id) { record in
             for index in record.items.indices
             where record.items[index].phase == .failed && record.items[index].remoteItemID != nil
                 && record.items[index].stagedPath != nil {
@@ -86,6 +86,7 @@ actor TransferOrchestrator {
                 record.items[index].message = nil
             }
         }
+        if let updated { runtime.onChange(updated) }
     }
 
     // MARK: - Phases
@@ -143,7 +144,7 @@ actor TransferOrchestrator {
 
     private func createRemote(_ id: String) async throws {
         let record = try await current(id)
-        let sendable = record.items.filter { $0.phase != .queued && $0.phase != .failed || $0.remoteItemID != nil }
+        let sendable = record.items.filter { ($0.phase != .queued && $0.phase != .failed) || $0.remoteItemID != nil }
         guard !sendable.isEmpty else { throw TransferError.nothingToSend }
         if sendable.allSatisfy({ $0.remoteItemID != nil }) { return }
 
@@ -221,8 +222,10 @@ actor TransferOrchestrator {
             }
             let state = try await runtime.api.complete(transferID: remoteTransfer, itemID: remoteItem)
             try await applyRemote(id, itemID: itemID, remote: state)
-        } catch StudioOSError.rejected(let status, let message) {
+        } catch StudioOSError.rejected(let status, let message) where status < 500 && status != 429 {
             // The server read this photo and refused it; the rest of the batch continues.
+            // Server errors (5xx) and rate limiting (429) are not about this photo: they
+            // propagate so the whole run pauses with the photo still rendered.
             try await change(id) { record in
                 guard let index = record.items.firstIndex(where: { $0.id == itemID }) else { return }
                 record.items[index].phase = .failed
@@ -269,6 +272,8 @@ actor TransferOrchestrator {
     // MARK: - Helpers
 
     private func conclude(_ id: String) async {
+        // Repairs a run that stopped after an item became ready but before its file was removed.
+        await removeStagedFilesOfReadyItems(id)
         guard let record = await runtime.store.record(id: id) else { return }
         let failed = record.counts.failed
         if failed == 0, record.counts.ready == record.items.count {
@@ -310,17 +315,21 @@ actor TransferOrchestrator {
     /// Verified, finished outputs are deleted right away; failed or pending ones stay for retry.
     private func removeStagedFilesOfReadyItems(_ id: String) async {
         guard let record = await runtime.store.record(id: id) else { return }
-        var changed = false
+        var removed: Set<String> = []
         for item in record.items where item.phase == .ready {
-            if let path = item.stagedPath {
-                try? FileManager.default.removeItem(atPath: path)
-                changed = true
-            }
+            guard let path = item.stagedPath else { continue }
+            try? FileManager.default.removeItem(atPath: path)
+            if !FileManager.default.fileExists(atPath: path) { removed.insert(path) }
         }
-        guard changed else { return }
+        guard !removed.isEmpty else { return }
+        // Other uploads may have changed the record while the files were being removed, so
+        // clear only the paths this call actually removed, never "every ready item".
+        let paths = removed
         _ = try? await runtime.store.update(id: id) { record in
-            for index in record.items.indices where record.items[index].phase == .ready {
-                record.items[index].stagedPath = nil
+            for index in record.items.indices {
+                if let path = record.items[index].stagedPath, paths.contains(path) {
+                    record.items[index].stagedPath = nil
+                }
             }
         }
     }

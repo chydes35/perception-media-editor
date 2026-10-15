@@ -22,6 +22,8 @@ final class FakeStudioOS: StudioOSAPI, @unchecked Sendable {
         var lostAckOnceFor: Set<String> = []
         var rejectCompleteFor: [String: String] = [:]
         var failedPreviewFor: Set<String> = []
+        var uploadError: StudioOSError?
+        var completeReturnsReady = false
         var gate: AsyncStream<Void>.Continuation?
     }
     let state = Mutex(State())
@@ -50,6 +52,7 @@ final class FakeStudioOS: StudioOSAPI, @unchecked Sendable {
     func upload(file: URL, to target: StudioOSUploadTarget) async throws {
         let item = String(target.uploadUrl.split(separator: "/").last ?? "")
         try state.withLock { s in
+            if let error = s.uploadError { throw error }
             if s.forbidFirstPutFor.remove(item) != nil { throw StudioOSError.rejected(status: 403, message: "expired") }
             s.inFlight += 1
             s.maxInFlight = max(s.maxInFlight, s.inFlight)
@@ -77,7 +80,8 @@ final class FakeStudioOS: StudioOSAPI, @unchecked Sendable {
             }
             s.completed.insert(itemID)
         }
-        return remote().items.first { $0.itemId == itemID }!.with(status: .processing)
+        let ready = state.withLock { $0.completeReturnsReady }
+        return remote().items.first { $0.itemId == itemID }!.with(status: ready ? .ready : .processing)
     }
 
     func transferStatus(transferID: String) async throws -> StudioOSRemoteTransfer { remote() }
@@ -302,5 +306,77 @@ struct TransferOrchestratorTests {
         #expect(done.status == .completed)
         #expect(recorder.calls.withLock { $0.count } == 6)   // no photo rendered twice
         #expect(api.state.withLock { s in s.putCount.values.allSatisfy { $0 == 1 } })
+    }
+
+    @Test func concurrentUploadsLeaveNoStagedFilesBehind() async throws {
+        // Items become ready straight from `complete` while another upload is in flight, so
+        // cleanups interleave. Repeated to make the interleaving likely.
+        for _ in 0..<10 {
+            let temp = try TempDirectory()
+            let store = makeStore(temp)
+            let api = FakeStudioOS()
+            api.uploadDelay = .milliseconds(2)
+            api.state.withLock { $0.completeReturnsReady = true }
+            let record = try await seeded(store, temp, items: 6)
+
+            await TransferOrchestrator(runtime(api: api, store: store, recorder: TransferRenderRecorder())).run(record.id)
+
+            #expect(try #require(await store.record(id: record.id)).status == .completed)
+            let leftovers = (try? FileManager.default.contentsOfDirectory(atPath: record.stagingFolderPath)) ?? []
+            #expect(leftovers.isEmpty, "staged files left behind: \(leftovers)")
+        }
+    }
+
+    @Test func readyItemsStillHoldingStagedFilesAreCleanedUpOnResume() async throws {
+        // Simulates a crash after the server reported ready but before the staged file was removed.
+        let temp = try TempDirectory()
+        let store = makeStore(temp)
+        let api = FakeStudioOS()
+        let recorder = TransferRenderRecorder()
+        var record = sampleRecord(items: 2)
+        record.stagingFolderPath = temp.url.appendingPathComponent("staging").path
+        try FileManager.default.createDirectory(atPath: record.stagingFolderPath, withIntermediateDirectories: true)
+        record.remoteTransferID = "tr-1"
+        for index in record.items.indices {
+            let path = (record.stagingFolderPath as NSString).appendingPathComponent("leftover-\(index).jpg")
+            try Data("jpeg".utf8).write(to: URL(fileURLWithPath: path))
+            record.items[index].stagedPath = path
+            record.items[index].remoteItemID = "ri-asset-\(index)"
+            record.items[index].phase = .ready
+        }
+        try await store.upsert(record)
+
+        await TransferOrchestrator(runtime(api: api, store: store, recorder: recorder)).run(record.id)
+
+        let done = try #require(await store.record(id: record.id))
+        #expect(done.status == .completed)
+        #expect(done.items.allSatisfy { $0.stagedPath == nil })
+        for item in record.items { #expect(!FileManager.default.fileExists(atPath: item.stagedPath!)) }
+        #expect(!FileManager.default.fileExists(atPath: record.stagingFolderPath))
+        #expect(recorder.calls.withLock { $0.isEmpty })
+        #expect(api.state.withLock { $0.createCalls } == 0)
+    }
+
+    @Test func aServerOutagePausesTheRunInsteadOfFailingPhotos() async throws {
+        let temp = try TempDirectory()
+        let store = makeStore(temp)
+        let api = FakeStudioOS()
+        api.state.withLock { $0.uploadError = .rejected(status: 503, message: "Service Unavailable") }
+        let recorder = TransferRenderRecorder()
+        let record = try await seeded(store, temp, items: 3)
+        let orchestrator = TransferOrchestrator(runtime(api: api, store: store, recorder: recorder))
+
+        await orchestrator.run(record.id)
+        let paused = try #require(await store.record(id: record.id))
+        #expect(paused.status == .paused)
+        #expect(paused.pausedReason?.contains("503") == true)
+        #expect(paused.items.allSatisfy { $0.phase == .rendered })
+        #expect(paused.items.allSatisfy { FileManager.default.fileExists(atPath: $0.stagedPath ?? "") })
+
+        api.state.withLock { $0.uploadError = nil }
+        await orchestrator.run(record.id)
+        let done = try #require(await store.record(id: record.id))
+        #expect(done.status == .completed)
+        #expect(recorder.calls.withLock { $0.count } == 3)   // nothing rendered twice
     }
 }

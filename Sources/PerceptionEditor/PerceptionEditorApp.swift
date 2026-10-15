@@ -98,7 +98,21 @@ struct PerceptionEditorApp: App {
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    weak var store: EditorStore?
+    private var pendingURLs: [URL] = []
+    weak var store: EditorStore? {
+        didSet {
+            guard let store else { return }
+            for url in pendingURLs { store.studioOS.handlePairingURL(url) }
+            pendingURLs.removeAll()
+        }
+    }
+
+    /// Pairing links can arrive before the first window has attached its store.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls where url.scheme?.lowercased() == StudioOSPairing.scheme {
+            if let store { store.studioOS.handlePairingURL(url) } else { pendingURLs.append(url) }
+        }
+    }
     private var keyMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {

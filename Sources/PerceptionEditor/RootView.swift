@@ -22,6 +22,7 @@ struct RootView: View {
             actions: { Button("OK") { store.lastError = nil } },
             message: { Text(store.lastError ?? "Unknown error") }
         )
+        .modifier(StudioOSPairingAlert(controller: store.studioOS))
         .sheet(isPresented: $store.isShowingImportSheet) {
             ImportSheet()
                 .environmentObject(store)

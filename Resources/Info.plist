@@ -26,6 +26,17 @@
     <true/>
     <key>NSSupportsAutomaticGraphicsSwitching</key>
     <true/>
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>com.perceptionmedia.editor.pair</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>perceptionedit</string>
+            </array>
+        </dict>
+    </array>
     <key>UTExportedTypeDeclarations</key>
     <array>
         <dict>

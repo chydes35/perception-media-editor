@@ -113,13 +113,19 @@ final class PhotoMTKView: MTKView {
         let renderer = PhotoCanvasRenderer.shared
         guard let queue = renderer.queue,
               drawableSize.width >= 1, drawableSize.height >= 1,
-              let drawable = currentDrawable, let buffer = queue.makeCommandBuffer() else { return }
+              let drawable = currentDrawable, let buffer = queue.makeCommandBuffer() else {
+            PhotoPreviewDiagnostics.record("metal canvas skipped draw drawable=\(Int(drawableSize.width))x\(Int(drawableSize.height)) hasWindow=\(window != nil) image=\(ciImage != nil)")
+            return
+        }
 
         do {
             try renderer.draw(ciImage, into: drawable.texture,
                               colorSpace: (layer as? CAMetalLayer)?.colorspace, buffer: buffer)
         } catch {
             PhotoPreviewDiagnostics.record("metal canvas render failed: \(error.localizedDescription)")
+        }
+        buffer.addCompletedHandler { buffer in
+            PhotoPreviewDiagnostics.record("metal canvas buffer status=\(buffer.status.rawValue) error=\(buffer.error?.localizedDescription ?? "none")")
         }
         buffer.present(drawable)
         buffer.commit()

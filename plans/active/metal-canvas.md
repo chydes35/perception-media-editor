@@ -49,3 +49,9 @@ Real S5 RAW, release build, Apple M1 / 8 GB. The first runs were under load from
 Next: have a person judge how dragging feels with exact renders at about 100 ms; consider a coarser proxy or throttle only if it feels laggy. The probe tests live outside the repository.
 
 Caveat for the earlier measurements in this file: they were comparisons within a single run on the same machine, so the ratios should hold, but the absolute milliseconds may have been taken under some load.
+
+### Black canvas retest on main (2026-10-14)
+
+Release build of `main` (Metal canvas), `PME_PREVIEW_DIAGNOSTICS=1`, driven by computer use with `P1107138.RW2` added in place. Seven first-open attempts displayed the photo every time (the empty "Select a photo" frame is shown for about a second while the first render runs, then replaced): fresh launch → Add Files in Place → Photo; Library → Photo; Save → New → Open → Photo five times; one cold launch → Open → Photo. Each trace has renderer preview, store publish and `metal canvas drew ... image=true`. **Not reproduced**, so Metal neither confirmed nor ruled out as the cure.
+
+Tried and discarded: a redraw-on-layout hook and bounded retry on GPU failure. A test that moved the view into a window passed with the hook disabled, so AppKit already requests the redraw on resize and the hook was unproven; both were removed. Kept: trace lines for a skipped draw (drawable size, window presence) and the command buffer's final status/error. Next time the canvas goes black with diagnostics on, those lines say whether the draw never happened, errored, or completed.

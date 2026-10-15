@@ -107,7 +107,7 @@ struct StudioOSTransferRow: View {
                 if record.status == .paused || record.status == .cancelled {
                     Button("Resume") { controller.resume(record.id) }
                 }
-                if record.counts.failed > 0, record.status != .running {
+                if record.hasRetryableFailures, record.status != .running {
                     Button("Retry failed") { controller.retryFailed(record.id) }
                 }
                 if let url = controller.openURL(for: record) {

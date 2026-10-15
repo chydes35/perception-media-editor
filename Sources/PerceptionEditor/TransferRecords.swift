@@ -77,6 +77,12 @@ struct TransferRecord: Codable, Equatable, Identifiable, Sendable {
         items.isEmpty ? 0 : Double(counts.ready) / Double(items.count)
     }
 
+    /// True when "Retry failed" can do something: a failed photo the server manifest already
+    /// lists and whose staged JPEG is still tracked. Photos that failed to render cannot rejoin.
+    var hasRetryableFailures: Bool {
+        items.contains { $0.phase == .failed && $0.remoteItemID != nil && $0.stagedPath != nil }
+    }
+
     /// Anything not yet ready or definitively failed still needs a run.
     var hasUnfinishedWork: Bool {
         items.contains { $0.phase != .ready && $0.phase != .failed }

@@ -22,6 +22,8 @@ struct TransferRuntime: Sendable {
 
 enum TransferError: LocalizedError, Equatable {
     case insufficientSpace(needed: Int64, available: Int64)
+    case outOfSpace
+    case sourceUnavailable(name: String)
     case nothingToSend
     case stillProcessing
 
@@ -30,9 +32,23 @@ enum TransferError: LocalizedError, Equatable {
         case .insufficientSpace(let needed, let available):
             let format = ByteCountFormatter()
             return "Not enough free space to prepare these photos: about \(format.string(fromByteCount: needed)) needed, \(format.string(fromByteCount: available)) available. Choose a different staging folder or free up space."
+        case .outOfSpace:
+            return "The staging disk filled up while preparing photos. Free up space or choose a different staging folder, then press Resume."
+        case .sourceUnavailable(let name):
+            return "The original for \(name) is not available. Reconnect the card or drive and press Resume."
         case .nothingToSend: return "None of the selected photos could be prepared for upload."
         case .stillProcessing: return "Studio OS is still preparing previews. Resume to keep checking."
         }
+    }
+
+    /// A full disk is a condition of this Mac, not of the photo: the run pauses instead of failing it.
+    static func isOutOfSpace(_ error: Error) -> Bool {
+        if let posix = error as? POSIXError, posix.code == .ENOSPC { return true }
+        let nsError = error as NSError
+        if nsError.domain == NSCocoaErrorDomain, nsError.code == NSFileWriteOutOfSpaceError { return true }
+        if nsError.domain == NSPOSIXErrorDomain, nsError.code == Int(ENOSPC) { return true }
+        if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? Error { return isOutOfSpace(underlying) }
+        return false
     }
 }
 
@@ -115,6 +131,11 @@ actor TransferOrchestrator {
 
         for item in pending {
             try Task.checkCancellation()
+            // A card or drive that was unplugged is not the photo's fault: pause with the item
+            // still queued so Resume renders it once the original is back.
+            guard FileManager.default.fileExists(atPath: item.sourcePath) else {
+                throw TransferError.sourceUnavailable(name: item.displayName)
+            }
             let destination = folder.appendingPathComponent(
                 String(format: "%04d-%@", item.position, Self.safeName(item.uploadFileName))
             )
@@ -132,11 +153,16 @@ actor TransferOrchestrator {
                 }
             } catch is CancellationError {
                 throw CancellationError()
+            } catch where TransferError.isOutOfSpace(error) {
+                try? FileManager.default.removeItem(at: destination)   // give back what the partial file took
+                throw TransferError.outOfSpace
             } catch {
+                // The server manifest is fixed once created, so this photo cannot join this
+                // transfer later; the user sends it again as a new transfer.
                 try await change(id) { record in
                     guard let index = record.items.firstIndex(where: { $0.id == item.id }) else { return }
                     record.items[index].phase = .failed
-                    record.items[index].message = "Could not prepare this photo: \(error.localizedDescription)"
+                    record.items[index].message = "Could not prepare this photo: \(error.localizedDescription) — select it in the Export workspace and send it again."
                 }
             }
         }

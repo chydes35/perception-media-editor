@@ -29,6 +29,13 @@ struct StudioOSControllerTests {
         return (controller, defaults)
     }
 
+    /// A disposable stand-in for an original on a card: a run pauses when the original is missing.
+    private func sourceFile(_ temp: TempDirectory, _ name: String) throws -> URL {
+        let url = temp.url.appendingPathComponent(name)
+        try Data("raw".utf8).write(to: url)
+        return url
+    }
+
     private func destination() -> StudioOSDestination {
         StudioOSDestination(galleryId: "gal_1", bookingId: "book_1", clientName: "Ada", shootType: "Wedding", scheduledAt: nil)
     }
@@ -114,7 +121,7 @@ struct StudioOSControllerTests {
         try controller.pair(server: "http://localhost:3001", web: "http://localhost:3000", token: token)
         var adjustments = PhotoAdjustments()
         adjustments.exposure = 0.5
-        let items = (0..<3).map { StudioOSSendItem(assetID: UUID(), source: URL(fileURLWithPath: "/Volumes/Card/IMG_\($0).RW2"), adjustments: adjustments) }
+        let items = try (0..<3).map { StudioOSSendItem(assetID: UUID(), source: try sourceFile(temp, "IMG_\($0).RW2"), adjustments: adjustments) }
 
         let id = try await controller.enqueue(
             items: items, destination: destination(), recipe: BatchExportRecipe(), protecting: items.map(\.source)
@@ -146,7 +153,7 @@ struct StudioOSControllerTests {
         let temp = try TempDirectory()
         let file = temp.url.appendingPathComponent("transfers.json")
         let seedStore = TransferQueueStore(fileURL: file)
-        var record = sampleRecord(items: 2)
+        var record = try withSourceFiles(sampleRecord(items: 2), in: temp.url)
         record.status = .running   // the app was quit mid-run
         record.stagingFolderPath = temp.url.appendingPathComponent("staging").path
         try await seedStore.upsert(record)
@@ -177,7 +184,7 @@ struct StudioOSControllerTests {
         defer { removeDefaults(temp) }
         let (controller, _) = makeController(temp)
         try controller.pair(server: "http://localhost:3001", web: nil, token: token)
-        let items = [StudioOSSendItem(assetID: UUID(), source: URL(fileURLWithPath: "/Volumes/Card/A.RW2"), adjustments: PhotoAdjustments())]
+        let items = [StudioOSSendItem(assetID: UUID(), source: try sourceFile(temp, "A.RW2"), adjustments: PhotoAdjustments())]
         let id = try await controller.enqueue(items: items, destination: destination(), recipe: BatchExportRecipe(), protecting: [])
         await controller.waitUntilIdle()
         await controller.discardLocal(id)

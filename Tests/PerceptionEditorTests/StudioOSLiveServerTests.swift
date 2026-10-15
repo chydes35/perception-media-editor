@@ -69,7 +69,7 @@ private final class RenderCounter: Sendable {
 }
 
 private func liveRecord(_ temp: TempDirectory, items: Int, id: String = "pme-live-\(UUID().uuidString.lowercased())") throws -> TransferRecord {
-    var record = sampleRecord(id: id, items: items)
+    var record = try withSourceFiles(sampleRecord(id: id, items: items), in: temp.url)
     record.serverURL = try Live.connection().serverURL
     record.webURL = nil
     record.galleryID = Live.galleryID

@@ -105,10 +105,21 @@ private extension StudioOSRemoteItem {
 
 /// A class, not a struct: `Mutex` is noncopyable, so it must live in a reference type.
 final class TransferRenderRecorder: Sendable {
+    enum Fault: Sendable { case outOfSpace, unreadable }
+    /// Successful renders only; a scripted fault throws before the call is recorded.
     let calls = Mutex<[String]>([])
     let seenExposure = Mutex<[Double]>([])
+    let faults = Mutex<[String: Fault]>([:])
     func render() -> @Sendable (TransferItemRecord, URL, TransferRecord) async throws -> Void {
         { item, destination, _ in
+            switch self.faults.withLock({ $0[item.id] }) {
+            case .outOfSpace?:
+                try Data("partial".utf8).write(to: destination)   // a half-written output, as on a full disk
+                throw CocoaError(.fileWriteOutOfSpace)
+            case .unreadable?:
+                throw CocoaError(.fileReadCorruptFile)
+            case nil: break
+            }
             self.calls.withLock { $0.append(item.id) }
             self.seenExposure.withLock { $0.append(item.adjustments.exposure) }
             try Data("jpeg-bytes-\(item.id)".utf8).write(to: destination)
@@ -132,7 +143,7 @@ private func makeStore(_ temp: TempDirectory) -> TransferQueueStore {
 }
 
 private func seeded(_ store: TransferQueueStore, _ temp: TempDirectory, items: Int) async throws -> TransferRecord {
-    var record = sampleRecord(items: items)
+    var record = try withSourceFiles(sampleRecord(items: items), in: temp.url)
     record.stagingFolderPath = temp.url.appendingPathComponent("staging").path
     try await store.upsert(record)
     return record
@@ -281,6 +292,89 @@ struct TransferOrchestratorTests {
         #expect(paused.pausedReason?.lowercased().contains("space") == true)
         #expect(recorder.calls.withLock { $0.isEmpty })
         #expect(paused.items.allSatisfy { $0.phase == .queued })
+    }
+
+    @Test func aMissingOriginalPausesTheRunAndResumeRendersItOnceItIsBack() async throws {
+        let temp = try TempDirectory()
+        let store = makeStore(temp)
+        let api = FakeStudioOS()
+        let recorder = TransferRenderRecorder()
+        let record = try await seeded(store, temp, items: 3)
+        let source = URL(fileURLWithPath: record.items[0].sourcePath)
+        let saved = try Data(contentsOf: source)
+        try FileManager.default.removeItem(at: source)   // the card was unplugged
+        let orchestrator = TransferOrchestrator(runtime(api: api, store: store, recorder: recorder))
+
+        await orchestrator.run(record.id)
+        let paused = try #require(await store.record(id: record.id))
+        #expect(paused.status == .paused)
+        #expect(paused.pausedReason?.contains("not available") == true)
+        #expect(paused.pausedReason?.contains("A0.RW2") == true)
+        #expect(paused.items.allSatisfy { $0.phase == .queued })
+        #expect(recorder.calls.withLock { $0.isEmpty })
+        #expect(api.state.withLock { $0.createCalls } == 0)
+
+        try saved.write(to: source)   // reconnected
+        await orchestrator.run(record.id)
+        let done = try #require(await store.record(id: record.id))
+        #expect(done.status == .completed)
+        #expect(recorder.calls.withLock { $0 } == ["asset-0", "asset-1", "asset-2"])
+    }
+
+    @Test func aFullDiskWhileRenderingPausesWithoutFailingThePhoto() async throws {
+        let temp = try TempDirectory()
+        let store = makeStore(temp)
+        let api = FakeStudioOS()
+        let recorder = TransferRenderRecorder()
+        recorder.faults.withLock { $0 = ["asset-1": .outOfSpace] }
+        let record = try await seeded(store, temp, items: 3)
+        let orchestrator = TransferOrchestrator(runtime(api: api, store: store, recorder: recorder))
+
+        await orchestrator.run(record.id)
+        let paused = try #require(await store.record(id: record.id))
+        #expect(paused.status == .paused)
+        #expect(paused.pausedReason?.lowercased().contains("space") == true)
+        #expect(paused.items.map(\.phase) == [.rendered, .queued, .queued])
+        #expect(api.state.withLock { $0.createCalls } == 0)
+        let staged = (try? FileManager.default.contentsOfDirectory(atPath: record.stagingFolderPath)) ?? []
+        #expect(staged.count == 1, "the partial output must be removed: \(staged)")
+
+        recorder.faults.withLock { $0 = [:] }   // space was freed
+        await orchestrator.run(record.id)
+        let done = try #require(await store.record(id: record.id))
+        #expect(done.status == .completed)
+        #expect(recorder.calls.withLock { $0 } == ["asset-0", "asset-1", "asset-2"])   // each rendered once
+    }
+
+    @Test func anUnreadablePhotoFailsAloneWithAdviceToSendItAgain() async throws {
+        let temp = try TempDirectory()
+        let store = makeStore(temp)
+        let api = FakeStudioOS()
+        let recorder = TransferRenderRecorder()
+        recorder.faults.withLock { $0 = ["asset-1": .unreadable] }
+        let record = try await seeded(store, temp, items: 3)
+
+        await TransferOrchestrator(runtime(api: api, store: store, recorder: recorder)).run(record.id)
+
+        let done = try #require(await store.record(id: record.id))
+        #expect(done.items.map(\.phase) == [.ready, .failed, .ready])
+        #expect(done.items[1].message?.hasSuffix("select it in the Export workspace and send it again.") == true)
+        #expect(done.status == .paused)
+        #expect(done.pausedReason?.contains("1 photo need") == true)
+        #expect(!done.hasRetryableFailures)   // not in the manifest, so "Retry failed" is hidden
+        #expect(api.state.withLock { $0.created?.items.map(\.clientItemId) } == ["asset-0", "asset-2"])
+    }
+
+    @Test func outOfSpaceIsRecognisedInItsCommonForms() {
+        #expect(TransferError.isOutOfSpace(CocoaError(.fileWriteOutOfSpace)))
+        #expect(TransferError.isOutOfSpace(POSIXError(.ENOSPC)))
+        #expect(TransferError.isOutOfSpace(NSError(domain: NSPOSIXErrorDomain, code: Int(ENOSPC))))
+        #expect(TransferError.isOutOfSpace(NSError(
+            domain: "PhotoRenderer", code: 1,
+            userInfo: [NSUnderlyingErrorKey: NSError(domain: NSCocoaErrorDomain, code: NSFileWriteOutOfSpaceError)]
+        )))
+        #expect(!TransferError.isOutOfSpace(CocoaError(.fileReadCorruptFile)))
+        #expect(!TransferError.isOutOfSpace(POSIXError(.EACCES)))
     }
 
     @Test func cancellingKeepsUploadedPhotosAndAllowsResume() async throws {

@@ -26,6 +26,19 @@ func sampleRecord(id: String = "pme-0001-aaaa", items: Int = 2) -> TransferRecor
     )
 }
 
+/// Points every item at a small disposable file, because a run pauses when an original is missing.
+func withSourceFiles(_ record: TransferRecord, in folder: URL) throws -> TransferRecord {
+    var record = record
+    let sources = folder.appendingPathComponent("sources", isDirectory: true)
+    try FileManager.default.createDirectory(at: sources, withIntermediateDirectories: true)
+    for index in record.items.indices {
+        let file = sources.appendingPathComponent(record.items[index].displayName)
+        try Data("raw-\(index)".utf8).write(to: file)
+        record.items[index].sourcePath = file.path
+    }
+    return record
+}
+
 struct TransferQueueStoreTests {
     @Test func persistsRecordsAcrossStoreInstances() async throws {
         let temp = try TempDirectory()
@@ -88,5 +101,21 @@ struct TransferQueueStoreTests {
         #expect(record.hasUnfinishedWork)
         record.items = record.items.map { var i = $0; i.phase = .ready; return i }
         #expect(!record.hasUnfinishedWork)
+    }
+
+    @Test func onlyFailuresAlreadyInTheManifestWithAStagedFileAreRetryable() {
+        var record = sampleRecord(items: 3)
+        #expect(!record.hasRetryableFailures)
+        record.items[0].phase = .failed                      // failed to render: never in the manifest
+        #expect(!record.hasRetryableFailures)
+        record.items[1].phase = .failed
+        record.items[1].remoteItemID = "ri-1"                // in the manifest, but its staged file is gone
+        #expect(!record.hasRetryableFailures)
+        record.items[2].phase = .ready
+        record.items[2].remoteItemID = "ri-2"
+        record.items[2].stagedPath = "/tmp/staging/2.jpg"    // has everything but has not failed
+        #expect(!record.hasRetryableFailures)
+        record.items[1].stagedPath = "/tmp/staging/1.jpg"
+        #expect(record.hasRetryableFailures)
     }
 }

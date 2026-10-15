@@ -33,7 +33,15 @@ struct SubjectEdgeProbeTests {
             context.render(scaled, toBitmap: &maskBytes, rowBytes: w * 4, bounds: source.extent, format: .RGBA8, colorSpace: nil)
             var mask = [Float](repeating: 0, count: w * h)
             for i in 0 ..< w * h { mask[i] = Float(maskBytes[i * 4]) / 255 }
+            var rgb = [Float](repeating: 0, count: w * h * 3)
+            for i in 0 ..< w * h {
+                for c in 0 ..< 3 { rgb[i * 3 + c] = Float(rgba[i * 4 + c]) / 255 }
+            }
+            let started = Date()
+            let matte = SubjectEdgeMatting.refine(mask: mask, rgb: rgb, width: w, height: h)
+            print("EDGE_PROBE matte seconds", name, Date().timeIntervalSince(started), "px", w * h)
             let variants: [(String, [Float])] = [
+                ("matte", matte),
                 ("base", mask),
                 ("r8e3", SkyEdgeRefiner.refine(mask: mask, guide: guide, width: w, height: h, radius: 8, epsilon: 1e-3)),
                 ("r16e3", SkyEdgeRefiner.refine(mask: mask, guide: guide, width: w, height: h, radius: 16, epsilon: 1e-3)),

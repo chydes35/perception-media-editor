@@ -125,6 +125,7 @@ enum SubjectAnalyzer {
         let recovered = try SubjectGroupRecovery.analyze(image: image, candidates: candidates,
                                                         labels: [personLabels, foregroundLabels])
         candidates.append(contentsOf: recovered.candidates)
+        candidates = refineEdges(of: candidates, image: image)
         candidates.sort { $0.pixelCount > $1.pixelCount }
         guard !candidates.isEmpty else { throw SubjectSelectionError.noSubjects }
         // The overview must contain exactly the candidates offered to the user, including
@@ -135,6 +136,18 @@ enum SubjectAnalyzer {
             personLabels: personLabels, foregroundLabels: foregroundLabels,
             supplementalLabels: recovered.labels
         )
+    }
+
+    /// Fits each candidate's edge to the photo (fine hair, spill). Falls back to the model's mask
+    /// when the source cannot be reduced; pixel counts and identities are unchanged.
+    private static func refineEdges(of candidates: [SubjectCandidate], image: CIImage) -> [SubjectCandidate] {
+        let context = CIContext(options: [.workingColorSpace: NSNull(), .outputColorSpace: NSNull(), .cacheIntermediates: false])
+        guard let source = SubjectEdgeMatting.Source(image: image, context: context) else { return candidates }
+        return candidates.map { candidate in
+            SubjectCandidate(id: candidate.id, kind: candidate.kind,
+                             png: SubjectEdgeMatting.refinePNG(candidate.png, source: source, context: context),
+                             pixelCount: candidate.pixelCount)
+        }
     }
 
     private static func pixelCounts(_ map: SubjectLabelMap) -> [UInt8: Int] {

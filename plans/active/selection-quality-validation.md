@@ -46,3 +46,19 @@ Hypothesis: the existing `SkyEdgeRefiner` guided filter (luminance guide, 1536 p
 Result: **hypothesis fails.** On hard fabric edges the base Vision mask is already tight; the filter adds a soft halo onto the carpet (radius 16 worst, radius 8 visible on zoom), which is more spill, not less. On hair, the base mask misses bright flyaway wisps at the top of the head; the filter recovers only a little of them, mostly at radius 16. Net: no integration. Fine hair and translucency need a different approach (a matting step against the image, or a model with alpha), not a luminance filter on the binary-ish mask. Production code is unchanged; no gate beyond the visual inspection was run, and this is two photos, not broad acceptance.
 
 Environment notes: after the October 15 macOS update (a) the RAW decoder asset was missing and its download fails inside `mobileassetd`/`nsurlsessiond`, so RAW cannot decode in any app until macOS is repaired; Adobe DNG Converter 18.7 was used for DNG copies; (b) Command Line Tools now default to the macOS 27 SDK, which lacks the SwiftUI macro plugin. Build and test with `SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk` and add `-Xswiftc -plugin-path -Xswiftc /Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing` to `./scripts/test.sh`.
+
+### Edge matting integrated — October 15
+
+`SubjectEdgeMatting` (new) refines each subject candidate mask after analysis: in a band of 10 px (1536 px working size) around certain foreground (weight >= 0.97), each pixel's opacity is its position on the color line between the nearby foreground and background colors; ambiguous (low color contrast) pixels keep the model weight, and pixels the model scored 0 are only raised when a lightly smoothed matte exceeds 0.5 (texture can fake a wisp). The refined matte is upscaled back to each candidate's PNG size; candidate ids, names, pixel counts and label maps are unchanged. Saved raster masks keep their format (schema 10).
+
+Evidence (nine S5 photos as DNG copies; inspected P1107144 portrait, P1107138 adult and child): hair wisps the model missed are recovered, the orange skirt edge stays tight with no carpet halo (the guided filter's failure), and faint spill below the adult's legs is reduced. A first variant that rescued every zero-weight pixel added carpet speckle, so the smoothed 0.5 floor was added. Five synthetic tests (`SubjectEdgeMattingTests`: wisp recovered, soft boundary snaps to the color edge, certain regions unchanged, similar colors keep the model mask, bad input unchanged) pass.
+
+| Gate | Result |
+| --- | --- |
+| Unit | PASS — 330 tests, 323 pass; 7 RAW-decode tests FAIL because macOS cannot decode RAW on this Mac (see environment note above), not because of this change |
+| Media quality | Visual PASS on 2 photos (hair, hard fabric edge, spill); NOT VERIFIED broadly — no ground truth, no translucency/fur/sunset cases |
+| Performance | Release build, one 1536 px candidate: 0.23 s (debug 16 s); memory about 40 MB working arrays. Whole-analysis latency/footprint NOT VERIFIED |
+| Runtime/UI | NOT VERIFIED — the app could not decode RAW; displayed selection, save/reopen and export not rechecked |
+| Causal | Not run: the synthetic wisp test fails with `rescueMissed` off |
+
+Remaining: UI/save/export recheck after RAW decoding works again, fur/translucent fabric controls, and the group and sky misses.

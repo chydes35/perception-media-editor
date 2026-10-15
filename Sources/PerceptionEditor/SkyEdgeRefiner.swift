@@ -26,7 +26,7 @@ enum SkyEdgeRefiner {
     }
 
     /// Two sliding-window passes, O(pixel count), with smaller windows at image borders.
-    private static func boxMean(_ values: [Float], width: Int, height: Int, radius: Int) -> [Float] {
+    static func boxMean(_ values: [Float], width: Int, height: Int, radius: Int) -> [Float] {
         let r = min(radius, max(width, height))
         var horizontal = [Float](repeating: 0, count: values.count)
         for y in 0 ..< height {

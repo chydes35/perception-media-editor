@@ -197,6 +197,8 @@ struct StudioOSDestinationSheet: View {
         }
         .padding(20)
         .frame(width: 480, height: 460)
+        // The pairing confirmation hangs off the root view; get out of its way.
+        .onChange(of: controller.pendingPairing) { _, new in if new != nil { dismiss() } }
     }
 }
 
@@ -253,6 +255,8 @@ struct StudioOSConnectSheet: View {
         }
         .padding(20)
         .frame(width: 520)
+        // The pairing confirmation hangs off the root view; get out of its way.
+        .onChange(of: controller.pendingPairing) { _, new in if new != nil { dismiss() } }
     }
 
     private func chooseStagingFolder() {

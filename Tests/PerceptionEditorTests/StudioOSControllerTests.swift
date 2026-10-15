@@ -93,6 +93,33 @@ struct StudioOSControllerTests {
         #expect(try credentials.loadToken() == nil)
     }
 
+    @Test func disconnectStopsRunningTransfersAndDropsAnUnconfirmedPairing() async throws {
+        let temp = try TempDirectory()
+        defer { removeDefaults(temp) }
+        let credentials = InMemoryCredentialStore()
+        let api = FakeStudioOS()
+        api.uploadDelay = .seconds(5)
+        let (controller, _) = makeController(temp, credentials: credentials, api: api)
+        try controller.pair(server: "http://localhost:3001", web: nil, token: token)
+        let items = try (0..<3).map { StudioOSSendItem(assetID: UUID(), source: try sourceFile(temp, "D_\($0).RW2"), adjustments: PhotoAdjustments()) }
+        let id = try await controller.enqueue(items: items, destination: destination(), recipe: BatchExportRecipe(), protecting: [])
+        controller.handlePairingURL(URL(string: "perceptionedit://pair?server=https%3A%2F%2Fother.example&token=\(token)")!)
+        #expect(controller.pendingPairing != nil)
+        // Let the run reach its slow uploads.
+        for _ in 0..<200 where api.state.withLock({ $0.inFlight }) == 0 { try await Task.sleep(for: .milliseconds(10)) }
+
+        let started = ContinuousClock.now
+        controller.disconnect()
+        await controller.waitUntilIdle()
+
+        #expect(ContinuousClock.now - started < .seconds(4))   // did not wait out the uploads
+        let record = try #require(controller.transfers.first { $0.id == id })
+        #expect(record.status == .cancelled || record.status == .paused)
+        #expect(controller.pendingPairing == nil)
+        #expect(controller.connection == nil)
+        #expect(try credentials.loadToken() == nil)
+    }
+
     @Test func connectionCheckDistinguishesStates() async throws {
         let temp = try TempDirectory()
         defer { removeDefaults(temp) }

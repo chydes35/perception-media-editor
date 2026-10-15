@@ -115,7 +115,11 @@ final class StudioOSController: ObservableObject {
         try save(StudioOSPairing.validate(server: server, web: web, token: token))
     }
 
+    /// Forgets the pairing. Running transfers are cancelled (they stay resumable after pairing
+    /// again) and an unconfirmed pairing link is dropped.
     func disconnect() {
+        for task in tasks.values { task.cancel() }
+        pendingPairing = nil
         try? credentials.deleteToken()
         defaults.removeObject(forKey: Key.server)
         defaults.removeObject(forKey: Key.web)

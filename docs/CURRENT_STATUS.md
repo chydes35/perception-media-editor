@@ -15,7 +15,7 @@ Card import with verified copies, culling, RAW develop (white balance with eyedr
 | 100 distinct S5 RAWs on the M1/8 GB target (import, cull, edit, export) | PASS: 100/100 full-resolution JPEGs; all original hashes unchanged; whole-app peak 1.53 GiB |
 | Genuine single 100–200-photo shoot | NOT VERIFIED |
 | Agreed performance thresholds | NOT VERIFIED (observations only; see [PERFORMANCE_TARGETS](PERFORMANCE_TARGETS.md)) |
-| Send to Studio OS, automated (fake server + live local server, synthetic JPEGs) | PASS: 4/4 live tests; full suite 368 tests, 0 failed, 25 skipped (includes the 4 opt-in live tests, skipped without their env vars) |
+| Send to Studio OS, automated (fake server + live local server, synthetic JPEGs) | PASS: 4/4 live tests (run at `95caada`, not re-run after the final review fixes); full suite 379 tests, 0 failed, 25 skipped (includes the 4 opt-in live tests, skipped without their env vars). Missing originals and a full staging disk pause the run with photos still queued; only photo-specific render errors fail a photo |
 | Send to Studio OS GUI (pairing alert and link, panel, destination sheet, publish gate) | NOT VERIFIED |
 | Send to Studio OS genuine shoot (100-200 photos, color, orientation, order, RAW hashes) and M1/8 GB memory/throughput | NOT VERIFIED |
 | Send to Studio OS disk-full staging, API stop mid-batch, app quit mid-upload drills | NOT VERIFIED |

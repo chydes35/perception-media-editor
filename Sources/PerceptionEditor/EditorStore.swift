@@ -108,6 +108,7 @@ final class EditorStore: ObservableObject {
     @Published var batchExportState = BatchExportState()
     var batchExportTask: Task<Void, Never>?
     let batchPhotoExporter: BatchPhotoExporter?
+    let studioOS: StudioOSController
     @Published private(set) var thumbnailRevision = 0
 
     var projectURL: URL?
@@ -161,12 +162,14 @@ final class EditorStore: ObservableObject {
         ingestScanner: @escaping @Sendable (URL) -> [SourceFile] = { IngestService.scan($0) },
         autoAdjustmentAnalyzer: (@Sendable (URL, PhotoAdjustments) async throws -> AutoAdjustmentSuggestion)? = nil,
         batchPhotoExporter: BatchPhotoExporter? = nil,
+        studioOS: StudioOSController? = nil,
         previewRenderOperation: (@Sendable (URL, PhotoAdjustments, UUID?, Bool) async
             -> (RenderedImage?, PhotoPreviewResult?))? = nil
     ) {
         self.ingestScanner = ingestScanner
         self.autoAdjustmentAnalyzer = autoAdjustmentAnalyzer
         self.batchPhotoExporter = batchPhotoExporter
+        self.studioOS = studioOS ?? StudioOSController()
         self.previewRenderOperation = previewRenderOperation
         userPresetRepository = presetRepository
         userPresets = presetRepository.load()

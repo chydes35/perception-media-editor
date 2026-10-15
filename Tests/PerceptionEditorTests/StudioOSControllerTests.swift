@@ -6,11 +6,17 @@ import Testing
 struct StudioOSControllerTests {
     private let token = "pme_" + String(repeating: "c", count: 43)
 
+    /// One defaults suite per temp directory, so each test can remove it again with `defer`.
+    private func suiteName(_ temp: TempDirectory) -> String { "studio-os-tests-\(temp.url.lastPathComponent)" }
+    private func removeDefaults(_ temp: TempDirectory) {
+        UserDefaults(suiteName: suiteName(temp))?.removePersistentDomain(forName: suiteName(temp))
+    }
+
     private func makeController(
         _ temp: TempDirectory, credentials: InMemoryCredentialStore = InMemoryCredentialStore(),
         api: FakeStudioOS = FakeStudioOS(), recorder: TransferRenderRecorder = TransferRenderRecorder()
     ) -> (StudioOSController, UserDefaults) {
-        let suite = "studio-os-tests-\(UUID().uuidString)"
+        let suite = suiteName(temp)
         let defaults = UserDefaults(suiteName: suite)!
         defaults.removePersistentDomain(forName: suite)
         let controller = StudioOSController(
@@ -29,6 +35,7 @@ struct StudioOSControllerTests {
 
     @Test func aPairingLinkNeverTakesEffectUntilConfirmed() throws {
         let temp = try TempDirectory()
+        defer { removeDefaults(temp) }
         let credentials = InMemoryCredentialStore()
         let (controller, _) = makeController(temp, credentials: credentials)
         let link = URL(string: "perceptionedit://pair?server=https%3A%2F%2Fevil.example&token=\(token)")!
@@ -50,6 +57,7 @@ struct StudioOSControllerTests {
 
     @Test func invalidLinksAreReportedNotQueued() throws {
         let temp = try TempDirectory()
+        defer { removeDefaults(temp) }
         let (controller, _) = makeController(temp)
         controller.handlePairingURL(URL(string: "perceptionedit://pair?server=http%3A%2F%2Fremote.example&token=\(token)")!)
         #expect(controller.pendingPairing == nil)
@@ -58,6 +66,7 @@ struct StudioOSControllerTests {
 
     @Test func pairingPersistsAcrossLaunchesAndDisconnectClearsTheCredential() async throws {
         let temp = try TempDirectory()
+        defer { removeDefaults(temp) }
         let credentials = InMemoryCredentialStore()
         let (controller, defaults) = makeController(temp, credentials: credentials)
         try controller.pair(server: "http://localhost:3001", web: "http://localhost:3000", token: token)
@@ -79,6 +88,7 @@ struct StudioOSControllerTests {
 
     @Test func connectionCheckDistinguishesStates() async throws {
         let temp = try TempDirectory()
+        defer { removeDefaults(temp) }
         let api = FakeStudioOS()
         let (controller, _) = makeController(temp, api: api)
         #expect(controller.link == .notPaired)
@@ -98,6 +108,7 @@ struct StudioOSControllerTests {
 
     @Test func enqueueSnapshotsAndRunsToCompletion() async throws {
         let temp = try TempDirectory()
+        defer { removeDefaults(temp) }
         let recorder = TransferRenderRecorder()
         let (controller, _) = makeController(temp, recorder: recorder)
         try controller.pair(server: "http://localhost:3001", web: "http://localhost:3000", token: token)
@@ -120,6 +131,7 @@ struct StudioOSControllerTests {
 
     @Test func enqueueRequiresAConnectionAndPhotos() async throws {
         let temp = try TempDirectory()
+        defer { removeDefaults(temp) }
         let (controller, _) = makeController(temp)
         await #expect(throws: StudioOSError.notPaired) {
             try await controller.enqueue(items: [], destination: destination(), recipe: BatchExportRecipe(), protecting: [])
@@ -141,8 +153,8 @@ struct StudioOSControllerTests {
 
         let credentials = InMemoryCredentialStore()
         try credentials.saveToken(token)
-        let suite = "studio-os-tests-\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suite)!
+        defer { removeDefaults(temp) }
+        let defaults = UserDefaults(suiteName: suiteName(temp))!
         defaults.set("http://localhost:3001", forKey: "studioOS.serverURL")
         let controller = StudioOSController(
             credentials: credentials, defaults: defaults, store: TransferQueueStore(fileURL: file),
@@ -162,6 +174,7 @@ struct StudioOSControllerTests {
 
     @Test func discardingRemovesLocalFilesAndTheRecordOnly() async throws {
         let temp = try TempDirectory()
+        defer { removeDefaults(temp) }
         let (controller, _) = makeController(temp)
         try controller.pair(server: "http://localhost:3001", web: nil, token: token)
         let items = [StudioOSSendItem(assetID: UUID(), source: URL(fileURLWithPath: "/Volumes/Card/A.RW2"), adjustments: PhotoAdjustments())]
@@ -169,5 +182,73 @@ struct StudioOSControllerTests {
         await controller.waitUntilIdle()
         await controller.discardLocal(id)
         #expect(controller.transfers.isEmpty)
+    }
+
+    @Test func discardNeverDeletesAFolderThatIsNotNamedAfterTheRecord() async throws {
+        let temp = try TempDirectory()
+        defer { removeDefaults(temp) }
+        let (controller, _) = makeController(temp)
+        try controller.pair(server: "http://localhost:3001", web: nil, token: token)
+        let victim = temp.url.appendingPathComponent("Card", isDirectory: true)
+        try FileManager.default.createDirectory(at: victim, withIntermediateDirectories: true)
+        let sentinel = victim.appendingPathComponent("IMG_0001.RW2")
+        try Data("x".utf8).write(to: sentinel)
+        var record = sampleRecord(id: "pme-tampered")
+        record.status = .completed
+        record.stagingFolderPath = victim.path
+        let store = TransferQueueStore(fileURL: temp.url.appendingPathComponent("transfers.json"))
+        try await store.upsert(record)
+        await controller.start()
+
+        await controller.discardLocal("pme-tampered")
+
+        #expect(FileManager.default.fileExists(atPath: sentinel.path))
+        #expect(controller.transfers.isEmpty)
+        #expect(controller.lastError?.contains("unsafe") == true)
+    }
+
+    @Test func discardNeverDeletesAnAncestorOfAnOriginal() async throws {
+        let temp = try TempDirectory()
+        defer { removeDefaults(temp) }
+        let (controller, _) = makeController(temp)
+        try controller.pair(server: "http://localhost:3001", web: nil, token: token)
+        let folder = temp.url.appendingPathComponent("pme-ancestor", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let original = folder.appendingPathComponent("A.RW2")
+        try Data("x".utf8).write(to: original)
+        var record = sampleRecord(id: "pme-ancestor")
+        record.status = .completed
+        record.stagingFolderPath = folder.path
+        record.protectedOriginalPaths = [original.path]
+        let store = TransferQueueStore(fileURL: temp.url.appendingPathComponent("transfers.json"))
+        try await store.upsert(record)
+        await controller.start()
+
+        await controller.discardLocal("pme-ancestor")
+
+        #expect(FileManager.default.fileExists(atPath: original.path))
+        #expect(controller.transfers.isEmpty)
+    }
+
+    @Test func discardRemovesTheStagingFolderNamedAfterTheRecord() async throws {
+        let temp = try TempDirectory()
+        defer { removeDefaults(temp) }
+        let (controller, _) = makeController(temp)
+        try controller.pair(server: "http://localhost:3001", web: nil, token: token)
+        let folder = temp.url.appendingPathComponent("elsewhere/pme-normal", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: folder.appendingPathComponent("A.jpg"))
+        var record = sampleRecord(id: "pme-normal")
+        record.status = .completed
+        record.stagingFolderPath = folder.path
+        let store = TransferQueueStore(fileURL: temp.url.appendingPathComponent("transfers.json"))
+        try await store.upsert(record)
+        await controller.start()
+
+        await controller.discardLocal("pme-normal")
+
+        #expect(!FileManager.default.fileExists(atPath: folder.path))
+        #expect(controller.transfers.isEmpty)
+        #expect(controller.lastError == nil)
     }
 }

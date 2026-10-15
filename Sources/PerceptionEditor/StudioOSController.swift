@@ -230,10 +230,34 @@ final class StudioOSController: ObservableObject {
         tasks[id]?.cancel()
         await tasks[id]?.value
         if let record = await store.record(id: id) {
-            try? FileManager.default.removeItem(atPath: record.stagingFolderPath)
+            let folder = URL(fileURLWithPath: record.stagingFolderPath, isDirectory: true)
+            if Self.isSafeToDelete(stagingFolder: folder, record: record) {
+                try? FileManager.default.removeItem(at: folder)
+            } else {
+                lastError = "The staging folder recorded for this transfer looks unsafe, so it was left in place."
+            }
         }
         try? await store.remove(id: id)
-        transfers.removeAll { $0.id == id }
+        await refreshTransfers()
+    }
+
+    /// The queue file is plain JSON, so a path read from it is not trusted. Only a folder this app
+    /// could have created (named after the record, never a symlink, never near the originals) is removed.
+    static func isSafeToDelete(stagingFolder: URL, record: TransferRecord) -> Bool {
+        guard record.id.hasPrefix("pme-"), record.id.count > 4 else { return false }
+        let standardized = stagingFolder.standardizedFileURL
+        guard standardized.lastPathComponent == record.id else { return false }
+        if (try? FileManager.default.destinationOfSymbolicLink(atPath: standardized.path)) != nil { return false }
+        let resolved = standardized.resolvingSymlinksInPath()
+        guard resolved.lastPathComponent == record.id else { return false }
+        let home = FileManager.default.homeDirectoryForCurrentUser.resolvingSymlinksInPath().path
+        guard resolved.path != "/", resolved.path != home else { return false }
+        let prefix = resolved.path + "/"
+        for original in record.protectedOriginalPaths {
+            let path = URL(fileURLWithPath: original).standardizedFileURL.resolvingSymlinksInPath().path
+            if path == resolved.path || path.hasPrefix(prefix) { return false }
+        }
+        return true
     }
 
     func openURL(for record: TransferRecord) -> URL? {

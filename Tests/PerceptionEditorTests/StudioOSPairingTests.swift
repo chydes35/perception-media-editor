@@ -15,15 +15,68 @@ struct StudioOSPairingTests {
     }
 
     @Test func rejectsLinksThatAreNotPairingLinks() {
-        for text in [
-            "https://example.com/pair?server=https://x.test&token=\(goodToken)",
-            "perceptionedit://other?server=https%3A%2F%2Fx.test&token=\(goodToken)",
-            "perceptionedit://pair",
+        for (text, expected) in [
+            ("https://example.com/pair?server=https://x.test&token=\(goodToken)", StudioOSPairingError.notAPairingLink),
+            ("perceptionedit://other?server=https%3A%2F%2Fx.test&token=\(goodToken)", .notAPairingLink),
+            ("perceptionedit://pair", .missingServer),
         ] {
-            #expect(throws: StudioOSPairingError.self) {
+            #expect(throws: expected, "\(text)") {
                 try StudioOSPairing.connection(from: URL(string: text)!)
             }
         }
+    }
+
+    @Test func rejectsServersThatCouldDisguiseTheirHost() {
+        for server in [
+            "https://localhost@evil.example",
+            "http://localhost@evil.example",
+            "https://localhost:3001@evil.example",
+            "https://user:secret@studio.example.com",
+            "https://evil.example?x=1",
+            "https://evil.example#frag",
+        ] {
+            #expect(throws: StudioOSPairingError.invalidServer, "\(server)") {
+                try StudioOSPairing.validate(server: server, web: nil, token: goodToken)
+            }
+        }
+        #expect(throws: StudioOSPairingError.insecureServer) {
+            try StudioOSPairing.validate(server: "http://localhost.evil.example", web: nil, token: goodToken)
+        }
+    }
+
+    @Test func aPairingLinkWithUserinfoInTheServerIsRefused() {
+        let link = URL(string:
+            "perceptionedit://pair?server=https%3A%2F%2Flocalhost%3A3001%40evil.example&token=\(goodToken)")!
+        #expect(throws: StudioOSPairingError.invalidServer) {
+            try StudioOSPairing.connection(from: link)
+        }
+    }
+
+    @Test func loopbackHostsAreMatchedCaseInsensitivelyAndIncludeSubdomainsOfLocalhost() throws {
+        _ = try StudioOSPairing.validate(server: "HTTP://LOCALHOST:3001", web: nil, token: goodToken)
+        _ = try StudioOSPairing.validate(server: "http://foo.localhost:3001", web: nil, token: goodToken)
+        _ = try StudioOSPairing.validate(server: "https://studio.example.com/api", web: nil, token: goodToken)   // a path is fine
+    }
+
+    @Test func anInsecureWebAddressIsRefusedEvenWithASecureServer() {
+        #expect(throws: StudioOSPairingError.insecureServer) {
+            try StudioOSPairing.validate(
+                server: "https://studio.example.com", web: "http://studio.example.com", token: goodToken
+            )
+        }
+        let link = URL(string:
+            "perceptionedit://pair?server=https%3A%2F%2Fstudio.example.com&web=http%3A%2F%2Fstudio.example.com&token=\(goodToken)")!
+        #expect(throws: StudioOSPairingError.insecureServer) {
+            try StudioOSPairing.connection(from: link)
+        }
+    }
+
+    @Test func displayOriginShowsOnlySchemeHostAndPort() {
+        #expect(StudioOSPairing.displayOrigin(URL(string: "http://localhost:3001")!) == "http://localhost:3001")
+        #expect(StudioOSPairing.displayOrigin(URL(string: "HTTPS://Studio.Example.com/api/v1")!) == "https://studio.example.com")
+        #expect(StudioOSPairing.displayOrigin(URL(string: "https://localhost:3001@evil.example")!) == "https://evil.example")
+        #expect(StudioOSPairing.displayOrigin(URL(string: "https://evil.example:8443/x?y=1#z")!) == "https://evil.example:8443")
+        #expect(StudioOSPairing.displayOrigin(URL(string: "http://[::1]:3001")!) == "http://[::1]:3001")
     }
 
     @Test func requiresHTTPSForRemoteServersButAllowsLoopbackHTTP() throws {

@@ -214,7 +214,7 @@ struct StudioOSConnectSheet: View {
             Text("Easiest: in Studio OS open Account → Pair a Mac and click the link it shows. Or enter the details by hand.")
                 .font(.callout).foregroundStyle(.secondary)
             if let connection = controller.connection {
-                Label("Paired with \(connection.serverURL.absoluteString)", systemImage: "checkmark.seal")
+                Label("Paired with \(StudioOSPairing.displayOrigin(connection.serverURL))", systemImage: "checkmark.seal")
             }
             TextField("API address (e.g. http://localhost:3001)", text: $server).textFieldStyle(.roundedBorder)
             TextField("Web address, optional (e.g. http://localhost:3000)", text: $web).textFieldStyle(.roundedBorder)
@@ -306,8 +306,9 @@ struct StudioOSPairingAlert: ViewModifier {
     }
 
     private var pairingMessage: String {
-        var text = "Photos you send will go to \(controller.pendingPairing?.serverURL.absoluteString ?? "this server"). Only continue if you just started this from your own Studio OS."
-        if let current = controller.connection?.serverURL.absoluteString {
+        let target = controller.pendingPairing.map { StudioOSPairing.displayOrigin($0.serverURL) } ?? "this server"
+        var text = "Photos you send will go to \(target). Only continue if you just started this from your own Studio OS."
+        if let current = controller.connection.map({ StudioOSPairing.displayOrigin($0.serverURL) }) {
             text += " This replaces your current pairing with \(current)."
         }
         return text

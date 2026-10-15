@@ -31,8 +31,10 @@ enum StudioOSPairing {
     static func connection(from link: URL) throws -> StudioOSConnection {
         guard link.scheme?.lowercased() == scheme,
               link.host?.lowercased() == "pair",
-              let items = URLComponents(url: link, resolvingAgainstBaseURL: false)?.queryItems
+              let components = URLComponents(url: link, resolvingAgainstBaseURL: false)
         else { throw StudioOSPairingError.notAPairingLink }
+        // A pairing link with no query at all is still a pairing link: it just names no server.
+        let items = components.queryItems ?? []
         func value(_ name: String) -> String? { items.first { $0.name == name }?.value }
         guard let server = value("server"), !server.isEmpty else { throw StudioOSPairingError.missingServer }
         return try validate(server: server, web: value("web"), token: value("token") ?? "")
@@ -64,8 +66,23 @@ enum StudioOSPairing {
               let scheme = url.scheme?.lowercased(), ["http", "https"].contains(scheme),
               let host = url.host, !host.isEmpty
         else { throw StudioOSPairingError.invalidServer }
+        // Userinfo can disguise the real host ("https://localhost:3001@evil.example"), and a
+        // query or fragment has no meaning in a base address, so all of them are refused.
+        guard url.user == nil, url.password == nil, url.query == nil, url.fragment == nil
+        else { throw StudioOSPairingError.invalidServer }
         if scheme == "http", !isLoopback(host) { throw StudioOSPairingError.insecureServer }
         return url
+    }
+
+    /// `scheme://host[:port]` built from the URL's parts, for showing the user where photos go.
+    /// Never the raw string, so nothing but the real host can appear in a confirmation.
+    static func displayOrigin(_ url: URL) -> String {
+        let scheme = url.scheme?.lowercased() ?? ""
+        var host = (url.host ?? "").lowercased()
+        if host.contains(":"), !host.hasPrefix("[") { host = "[\(host)]" }   // IPv6 literal
+        var origin = "\(scheme)://\(host)"
+        if let port = url.port { origin += ":\(port)" }
+        return origin
     }
 }
 

@@ -316,6 +316,9 @@ struct PhotoAdjustments: Codable, Equatable, Sendable {
     var masks: [LocalMask] = []
     /// Photo-specific repairs in original-image coordinates.
     var retouches: [RetouchStroke] = []
+    /// A creative LUT applied after the global adjustments (schema 11). It stays with its photo or
+    /// clip: presets, copy and paste, and sync leave it alone.
+    var lut: LUTApplication?
 
     static let neutral = PhotoAdjustments()
 
@@ -343,7 +346,7 @@ struct PhotoAdjustments: Codable, Equatable, Sendable {
 extension PhotoAdjustments {
     enum CodingKeys: String, CodingKey {
         case exposure, contrast, highlights, shadows, temperature, tint, vibrance, saturation
-        case sharpness, vignette, rotationQuarterTurns, cropAspect, cropRect, straightenDegrees, raw, curves, hsl, masks, retouches
+        case sharpness, vignette, rotationQuarterTurns, cropAspect, cropRect, straightenDegrees, raw, curves, hsl, masks, retouches, lut
     }
 
     /// Every field decodes with a default, so projects saved before a field existed still open.
@@ -368,6 +371,7 @@ extension PhotoAdjustments {
         hsl = try container.decodeIfPresent(HSLAdjustments.self, forKey: .hsl)
         masks = try container.decodeIfPresent([LocalMask].self, forKey: .masks) ?? []
         retouches = try container.decodeIfPresent([RetouchStroke].self, forKey: .retouches) ?? []
+        lut = try container.decodeIfPresent(LUTApplication.self, forKey: .lut)
     }
 }
 
@@ -490,6 +494,15 @@ struct EditorProject: Codable, Equatable {
             timelineClips[index].timelineStartFrame = cursor
             cursor += timelineFrames(of: timelineClips[index])
         }
+    }
+
+    /// Every LUT the project uses: creative LUTs on photos and clips, and source-color LUTs.
+    var referencedLUTs: Set<LUTReference> {
+        var references = Set<LUTReference>()
+        for adjustments in adjustmentsByAssetID.values { if let lut = adjustments.lut { references.insert(lut.reference) } }
+        for adjustments in videoAdjustmentsByClipID.values { if let lut = adjustments.lut { references.insert(lut.reference) } }
+        for input in colorInputByAssetID.values { if case .lut(let reference) = input { references.insert(reference) } }
+        return references
     }
 
     func colorInput(for assetID: UUID) -> ColorInputTransform {

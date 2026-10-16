@@ -45,12 +45,14 @@ struct SourceColorDescriptor: Codable, Hashable, Sendable {
 }
 
 /// How a source's code values become picture color. Set per media item, not per clip.
-/// The LUT (Task 6) and OCIO (Task 9) choices are added with those features.
+/// The OCIO choice (Task 9) is added with that feature.
 enum ColorInputTransform: Codable, Hashable, Sendable {
-    /// The descriptor decides.
+    /// The descriptor decides. Until OCIO exists, V-Log shows as it is recorded.
     case automatic
     /// Show code values as they are (flat-looking V-Log).
     case none
+    /// A LUT applied to the decoded code values, such as Panasonic's V-Log to V-709.
+    case lut(LUTReference)
 }
 
 struct CodedVideoFormat: Equatable, Sendable {

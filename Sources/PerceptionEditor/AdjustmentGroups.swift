@@ -119,6 +119,7 @@ extension PhotoAdjustments {
         note("Saturation", saturation != old.saturation)
         note("Sharpness", sharpness != old.sharpness)
         note("Vignette", vignette != old.vignette)
+        note("LUT", lut != old.lut)
         note("Tone Curve", curves != old.curves)
         note("HSL", hsl != old.hsl)
         note("Masks", masks != old.masks)

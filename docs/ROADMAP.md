@@ -135,6 +135,7 @@ Video (V0.3 below) resumes after the photo phases. Lumix S5 10-bit 4:2:2 and V-L
 - [x] AVMutableComposition sequence playback, scrubbing, and active-clip sync
 - [x] Shared color model for photos and video clips
 - [x] Waveform cache, clip volume, and fades
+- [x] Waveform and vectorscope (Metal, fed by the custom compositor; branch `plan/10bit-vlog-color`; G9 rate and cost PASS, in-app panel NOT VERIFIED)
 - [ ] Clip pan and advanced audio mixing
 - [ ] Titles, basic transitions, speed presets, and frame capture
 - [ ] 1080p and 4K export

@@ -146,5 +146,144 @@ enum MetalShaderSources {
         output.write(half4(0.0h, 0.0h, 0.0h, 1.0h), gid);
     }
 
+
+    // MARK: Scopes
+
+    /// Averages a 4×4 grid of bilinear taps over each output pixel's footprint, so a 4K frame
+    /// shrinks to scope size without skipping fine detail.
+    kernel void downsampleForScope(
+        texture2d<half, access::sample> source [[texture(0)]],
+        texture2d<half, access::write> output [[texture(1)]],
+        uint2 gid [[thread_position_in_grid]])
+    {
+        if (gid.x >= output.get_width() || gid.y >= output.get_height()) { return; }
+        float2 s = float2(source.get_width(), source.get_height());
+        float2 scale = s / float2(output.get_width(), output.get_height());
+        constexpr sampler bilinear(filter::linear, address::clamp_to_edge, coord::normalized);
+        float3 sum = float3(0.0);
+        for (int j = 0; j < 4; j++) {
+            for (int i = 0; i < 4; i++) {
+                float2 p = (float2(gid) + (float2(i, j) + 0.5) / 4.0) * scale;
+                sum += float3(source.sample(bilinear, p / s).rgb);
+            }
+        }
+        output.write(half4(half3(sum / 16.0), 1.0h), gid);
+    }
+
+    struct ScopeParameters {
+        float kr;
+        float kb;
+        uint columns;   // waveform columns, or the vectorscope's side
+        uint bins;      // waveform bins (code values 0…bins-1)
+        uint mode;      // 0 luma, 1 RGB parade
+    };
+
+    kernel void waveformAccumulate(
+        texture2d<half, access::read> image [[texture(0)]],
+        device atomic_uint *histogram [[buffer(0)]],
+        constant ScopeParameters &p [[buffer(1)]],
+        uint2 gid [[thread_position_in_grid]])
+    {
+        uint width = image.get_width();
+        if (gid.x >= width || gid.y >= image.get_height()) { return; }
+        float3 c = float3(image.read(gid).rgb);
+        float top = float(p.bins - 1);
+        if (p.mode == 0) {
+            float y = p.kr * c.r + (1.0 - p.kr - p.kb) * c.g + p.kb * c.b;
+            uint column = gid.x * p.columns / width;
+            uint bin = uint(clamp(round(y * top), 0.0, top));
+            atomic_fetch_add_explicit(&histogram[column * p.bins + bin], 1u, memory_order_relaxed);
+        } else {
+            uint panel = p.columns / 3;
+            uint column = gid.x * panel / width;
+            for (uint channel = 0; channel < 3; channel++) {
+                uint bin = uint(clamp(round(c[channel] * top), 0.0, top));
+                atomic_fetch_add_explicit(&histogram[(channel * panel + column) * p.bins + bin], 1u, memory_order_relaxed);
+            }
+        }
+    }
+
+    kernel void vectorscopeAccumulate(
+        texture2d<half, access::read> image [[texture(0)]],
+        device atomic_uint *grid [[buffer(0)]],
+        constant ScopeParameters &p [[buffer(1)]],
+        uint2 gid [[thread_position_in_grid]])
+    {
+        if (gid.x >= image.get_width() || gid.y >= image.get_height()) { return; }
+        float3 c = float3(image.read(gid).rgb);
+        float y = p.kr * c.r + (1.0 - p.kr - p.kb) * c.g + p.kb * c.b;
+        float cb = (c.b - y) / (2.0 * (1.0 - p.kb));
+        float cr = (c.r - y) / (2.0 * (1.0 - p.kr));
+        float top = float(p.columns - 1);
+        uint u = uint(clamp(round((cb + 0.5) * top), 0.0, top));
+        uint v = uint(clamp(round((0.5 - cr) * top), 0.0, top));
+        atomic_fetch_add_explicit(&grid[v * p.columns + u], 1u, memory_order_relaxed);
+    }
+
+    struct ScopeRenderParameters {
+        uint columns;
+        uint bins;
+        uint mode;
+        float gain;     // a count that shows at full brightness (log scale)
+    };
+
+    /// Columns become x; bins become y, highest code at the top. Guides at code values 0, 64, 512,
+    /// 940 and 1023 (black, video black, middle, video white, full scale).
+    kernel void renderWaveform(
+        device const uint *histogram [[buffer(0)]],
+        constant ScopeRenderParameters &p [[buffer(1)]],
+        texture2d<float, access::write> output [[texture(0)]],
+        uint2 gid [[thread_position_in_grid]])
+    {
+        uint height = output.get_height();
+        if (gid.x >= output.get_width() || gid.y >= height) { return; }
+        uint column = gid.x * p.columns / output.get_width();
+        uint binsPerRow = max(1u, p.bins / height);
+        uint low = (height - 1 - gid.y) * binsPerRow;
+        uint count = 0;
+        bool guide = false;
+        for (uint b = low; b < low + binsPerRow; b++) {
+            count += histogram[column * p.bins + b];
+            guide = guide || b == 0 || b == 64 || b == 512 || b == 940 || b == p.bins - 1;
+        }
+        float intensity = clamp(log2(1.0 + float(count)) / log2(1.0 + p.gain), 0.0, 1.0);
+        float3 tint = float3(1.0);
+        if (p.mode == 1) {
+            uint panel = column * 3 / p.columns;
+            tint = panel == 0 ? float3(1.0, 0.35, 0.3) : (panel == 1 ? float3(0.35, 1.0, 0.4) : float3(0.4, 0.55, 1.0));
+        }
+        float3 color = tint * intensity;
+        if (guide) { color = max(color, float3(0.28)); }
+        output.write(float4(color, 1.0), gid);
+    }
+
+    /// `targets` holds the 75% and 100% bar positions in bins; `skin` is the skin-tone direction.
+    kernel void renderVectorscope(
+        device const uint *grid [[buffer(0)]],
+        constant ScopeRenderParameters &p [[buffer(1)]],
+        constant float2 *targets [[buffer(2)]],
+        constant float2 &skin [[buffer(3)]],
+        texture2d<float, access::write> output [[texture(0)]],
+        uint2 gid [[thread_position_in_grid]])
+    {
+        uint size = p.columns;
+        if (gid.x >= size || gid.y >= size) { return; }
+        float intensity = clamp(log2(1.0 + float(grid[gid.y * size + gid.x])) / log2(1.0 + p.gain), 0.0, 1.0);
+        float3 color = float3(0.45, 1.0, 0.55) * intensity;
+        float2 pixel = float2(gid);
+        float2 center = float2(float(size - 1) * 0.5);
+        float2 offset = pixel - center;
+        float line = 0.0;
+        // Crosshair, the skin-tone line, and a box around each bar target.
+        if (abs(offset.x) < 0.5 || abs(offset.y) < 0.5) { line = 0.12; }
+        float along = dot(offset, skin);
+        if (along > 0.0 && length(offset - along * skin) < 0.7) { line = max(line, 0.3); }
+        for (int t = 0; t < 12; t++) {
+            float2 d = abs(pixel - targets[t]);
+            float half_ = t < 6 ? 5.0 : 7.0;
+            if (max(d.x, d.y) <= half_ && max(d.x, d.y) > half_ - 1.0) { line = max(line, t < 6 ? 0.5 : 0.3); }
+        }
+        output.write(float4(max(color, float3(line)), 1.0), gid);
+    }
     """
 }

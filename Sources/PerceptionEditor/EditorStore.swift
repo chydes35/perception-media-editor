@@ -105,6 +105,25 @@ final class EditorStore: ObservableObject {
             refreshPlaybackSources()
         }
     }
+    /// The scope panel. While it is open, playback always runs through the compositor (which
+    /// feeds the scopes), and the compositor captures preview frames.
+    @Published var scopesVisible = false {
+        didSet {
+            guard scopesVisible != oldValue else { return }
+            ScopeTap.shared.source = scopeSource
+            ScopeTap.shared.isEnabled = scopesVisible
+            if scopesVisible { scopeModel.start() } else { scopeModel.stop() }
+            refreshPlaybackSources()
+        }
+    }
+    @Published var scopeSource = ScopeTap.Source.output {
+        didSet {
+            ScopeTap.shared.source = scopeSource
+            // A paused frame is not rendered again on its own; rebuild so the new source is measured.
+            if scopesVisible, scopeSource != oldValue { refreshPlaybackSources() }
+        }
+    }
+    let scopeModel = ScopeModel()
     @Published private(set) var timelinePlaybackWarnings: [String] = []
     @Published private(set) var audioWaveforms: [UUID: [Float]] = [:]
     @Published var renderedPreview: NSImage?
@@ -1418,8 +1437,9 @@ final class EditorStore: ObservableObject {
         timelinePlaybackPositionSeconds = 0
 
         let url = playbackURL(for: asset)
-        if let inputLUT = resolvedInputLUTs().resolved[asset.id] {
-            // Source color needs the compositor, so the viewer plays a one-clip timeline.
+        let inputLUT = resolvedInputLUTs().resolved[asset.id]
+        if inputLUT != nil || scopesVisible {
+            // Source color and the scopes need the compositor, so the viewer plays a one-clip timeline.
             let player = AVPlayer()
             replaceVideoPlayer(player, timelineMode: false)
             let service = timelineCompositionService
@@ -1430,7 +1450,8 @@ final class EditorStore: ObservableObject {
                 guard let self else { return }
                 let result = await service.makePlayerItem(
                     clips: [clip], media: [asset], quality: .preview,
-                    proxyURLsByAssetID: proxy.map { [asset.id: $0] } ?? [:], inputLUTsByAssetID: [asset.id: inputLUT]
+                    proxyURLsByAssetID: proxy.map { [asset.id: $0] } ?? [:], renderingPath: .compositor,
+                    inputLUTsByAssetID: inputLUT.map { [asset.id: $0] } ?? [:]
                 )
                 guard !Task.isCancelled, playbackRequestID == requestID, videoPlayer === player else { return }
                 player.replaceCurrentItem(with: result.playerItem ?? AVPlayerItem(url: asset.url))
@@ -1554,6 +1575,7 @@ final class EditorStore: ObservableObject {
         let clips = project.timelineClips
         let sequenceRate = project.sequenceFrameRate
         let inputLUTs = resolvedInputLUTs()
+        let renderingPath: TimelineRenderingPath = scopesVisible ? .compositor : .automatic
         let media = project.media
         let adjustmentsByClipID = project.videoAdjustmentsByClipID
         let audioAdjustmentsByClipID = project.audioAdjustmentsByClipID
@@ -1574,6 +1596,7 @@ final class EditorStore: ObservableObject {
                 quality: .preview,
                 proxyURLsByAssetID: proxyURLs,
                 sequenceFrameRate: sequenceRate,
+                renderingPath: renderingPath,
                 inputLUTsByAssetID: inputLUTs.resolved
             )
             guard !Task.isCancelled, playbackRequestID == requestID else { return }

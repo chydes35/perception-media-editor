@@ -77,6 +77,8 @@ final class VideoCompositingEngine: @unchecked Sendable {
     struct FrameResources {
         var pooled: [MTLTexture] = []
         var owners: [CVMetalTexture] = []
+        /// A small copy for the scopes, to publish once the GPU has written it.
+        var scopeCapture: MTLTexture?
     }
 
     /// Encodes one frame onto `commandBuffer`: decode, fit and grade the source (or fill black when
@@ -84,7 +86,10 @@ final class VideoCompositingEngine: @unchecked Sendable {
     ///
     /// Intermediate frames are only as large as they must be: a neutral, upright clip already at the
     /// render size decodes straight into the output texture.
-    func encode(source: CVPixelBuffer?, recipe: ClipRenderRecipe?, output: CVPixelBuffer, commandBuffer: MTLCommandBuffer) throws -> FrameResources {
+    func encode(
+        source: CVPixelBuffer?, recipe: ClipRenderRecipe?, output: CVPixelBuffer, commandBuffer: MTLCommandBuffer,
+        compositionSeconds: Double? = nil
+    ) throws -> FrameResources {
         var resources = FrameResources()
         func temporary(_ width: Int, _ height: Int) -> MTLTexture {
             let texture = pool.acquire(width: width, height: height)
@@ -104,8 +109,12 @@ final class VideoCompositingEngine: @unchecked Sendable {
         }
 
         do {
+            // Only preview frames feed the scopes, and only while the scope panel is open.
+            let tap = outputFormat == kCVPixelFormatType_64RGBAHalf && ScopeTap.shared.shouldCapture(compositionSeconds: compositionSeconds)
+                ? ScopeTap.shared : nil
             guard let source, let recipe else {
                 try kernels.fillBlack(final, commandBuffer: commandBuffer)
+                if let tap { try capture(final, for: tap, commandBuffer: commandBuffer, resources: &resources) }
                 try finish(final, into: output, outputFormat: outputFormat, commandBuffer: commandBuffer, resources: &resources)
                 return resources
             }
@@ -131,12 +140,25 @@ final class VideoCompositingEngine: @unchecked Sendable {
                     }
                 }
             }
+            if let tap {
+                // "Source" shows the decoded code values (log footage as recorded), before any
+                // input LUT or grade; when nothing follows the decode, that is the output itself.
+                try capture(tap.source == .source ? decoded : final, for: tap, commandBuffer: commandBuffer, resources: &resources)
+            }
             try finish(final, into: output, outputFormat: outputFormat, commandBuffer: commandBuffer, resources: &resources)
             return resources
         } catch {
             release(resources)
             throw error
         }
+    }
+
+    private func capture(_ frame: MTLTexture, for tap: ScopeTap, commandBuffer: MTLCommandBuffer, resources: inout FrameResources) throws {
+        let width = ScopeTap.captureWidth // A fixed width, so the waveform columns mean the same at any render size.
+        let height = max(1, Int((Double(frame.height) * Double(width) / Double(frame.width)).rounded()))
+        guard let target = tap.captureTexture(device: kernels.runtime.device, width: width, height: height) else { return }
+        try kernels.downsampleForScope(frame, into: target, commandBuffer: commandBuffer)
+        resources.scopeCapture = target
     }
 
     func release(_ resources: FrameResources) {
@@ -280,7 +302,10 @@ class TimelineVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable
         do {
             // A clip whose frame is missing shows black rather than stopping playback.
             let resources = try autoreleasepool {
-                try engine.encode(source: source, recipe: source == nil ? nil : instruction.recipe, output: output, commandBuffer: commandBuffer)
+                try engine.encode(
+                    source: source, recipe: source == nil ? nil : instruction.recipe, output: output, commandBuffer: commandBuffer,
+                    compositionSeconds: request.compositionTime.seconds
+                )
             }
             CompositorStatisticsStore.shared.update(key) {
                 $0.inFlight += 1
@@ -295,6 +320,7 @@ class TimelineVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable
                 if currentGeneration() != expected {
                     answer(box.value, key: key, .cancelled)
                 } else if buffer.status == .completed {
+                    if let capture = held.value.2.scopeCapture { ScopeTap.shared.publish(capture) }
                     answer(box.value, key: key, .frame(held.value.1))
                 } else {
                     answer(box.value, key: key, .failure(buffer.error ?? VideoColorError.noMetalDevice))

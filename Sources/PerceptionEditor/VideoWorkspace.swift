@@ -124,6 +124,11 @@ struct VideoWorkspace: View {
                         in: Capsule()
                     )
                 Spacer()
+                Toggle(isOn: $store.scopesVisible) {
+                    Label("Scopes", systemImage: "waveform.path.ecg.rectangle")
+                }
+                .toggleStyle(.button)
+                .help("Waveform and vectorscope of the picture in the viewer")
                 if !store.isTimelinePlayback, !store.project.timelineClips.isEmpty {
                     Button("Preview Timeline", systemImage: "play.rectangle.on.rectangle") {
                         store.previewTimeline()
@@ -156,6 +161,12 @@ struct VideoWorkspace: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            if store.scopesVisible {
+                Divider()
+                ScopePanel(model: store.scopeModel)
+                    .frame(height: 200)
+            }
 
             if store.isTimelinePlayback {
                 timelineTransport

@@ -34,6 +34,16 @@ Lumix S5 `P1107157.MOV`, a 10 s UHD V-Log passthrough trim, `RealVideoCompositor
 
 The grade is the heavy test chain (exposure, contrast, highlights, shadows, temperature, tint, vibrance, saturation, curves, HSL, sharpness, vignette). It costs about 20–30 ms per 4K frame, so graded 4K originals sit at or below real time; playback should use proxies. Graded 4K adds about 770–860 MB over idle, above G7's 600 MB export budget; the likely cause is Core Image's half-float intermediates at 4K. The decoder process (`VTDecoderXPCService`, about 250 MB) is not included. Both are open work for Tasks 5 and 11.
 
+## Scopes (branch `plan/10bit-vlog-color`)
+
+Gate G9, `RealVideoScopeTests` with `PME_VLOG_SHORT=P1107158.MOV`, release, 8 GB M1, frames pulled at 24 fps through the compositor. Target: at least 10 updates a second, at most 2 ms GPU per update at 1080p.
+
+| Measure | Result |
+|---|---|
+| Update rate during playback | 14.6 Hz (every second frame) |
+| Analysis (waveform + vectorscope, 512 × 288 capture) | 0.67 ms GPU median |
+| Capture downsample in the compositor | 0.43 ms at 1080p, 1.46 ms at UHD |
+
 ## Acceptance workload
 
 Run a distinct 100–200-photo shoot through import, culling, Develop, masks, focus, export, save/reopen, and cache release on the target Mac. Record hardware and OS, sample count, file sizes, cold/warm cull latency, slider/mask response, first focus decode, export time, peak process footprint, and footprint after leaving focus/export. Check output pixels and failure recovery. `scripts/profile-memory.sh` is an isolated renderer diagnostic, not a full SwiftUI app measurement.

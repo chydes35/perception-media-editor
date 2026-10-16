@@ -209,6 +209,16 @@ final class VideoColorKernels: @unchecked Sendable {
         encoder.endEncoding()
     }
 
+    /// Box-averages `source` down to `output` for the scopes (4×4 bilinear taps per output pixel).
+    func downsampleForScope(_ source: MTLTexture, into output: MTLTexture, commandBuffer: MTLCommandBuffer) throws {
+        guard let encoder = commandBuffer.makeComputeCommandEncoder() else { throw VideoColorError.noMetalDevice }
+        encoder.setComputePipelineState(try runtime.pipeline(named: "downsampleForScope"))
+        encoder.setTexture(source, index: 0)
+        encoder.setTexture(output, index: 1)
+        dispatch(encoder, width: output.width, height: output.height)
+        encoder.endEncoding()
+    }
+
     func fillBlack(_ output: MTLTexture, commandBuffer: MTLCommandBuffer) throws {
         guard let encoder = commandBuffer.makeComputeCommandEncoder() else { throw VideoColorError.noMetalDevice }
         encoder.setComputePipelineState(try runtime.pipeline(named: "fillBlack"))

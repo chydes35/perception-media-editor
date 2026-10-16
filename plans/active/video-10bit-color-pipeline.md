@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task by task. Steps use checkbox (`- [ ]`) syntax for tracking. Task 0 is a measurement spike whose results can change Tasks 3–4. Do not skip it.
 
-Status: active (Tasks 0–6 done 2026-10-16 (G5 visual part and LUT UI walkthrough open); see the [compositor](../../docs/decisions/2026-10-16-10bit-compositor.md) and [timing](../../docs/decisions/2026-10-16-frame-exact-timing.md) decision records. Task 7 next. Task 13, Apple Log, is blocked on a real iPhone 15 Pro clip)
+Status: active (Tasks 0–7 done 2026-10-16 (G5 visual part, LUT and scope UI walkthroughs, and G9's black level open); see the [compositor](../../docs/decisions/2026-10-16-10bit-compositor.md) and [timing](../../docs/decisions/2026-10-16-frame-exact-timing.md) decision records. Task 8 next. Task 13, Apple Log, is blocked on a real iPhone 15 Pro clip)
 Roadmap sources: [V0.2 — LUT import and intensity control](../../docs/ROADMAP.md), [V0.3 — 1080p and 4K export](../../docs/ROADMAP.md). The 10-bit compositor, frame-exact timing, OCIO and scopes are new V0.3 work and must be added to the roadmap (Task 12).
 Builds on: [video-proxy-pipeline.md](video-proxy-pipeline.md) (branch `feat/video-proxies`: `MediaQuality`, proxy-aware `TimelineCompositionService`)
 Owner: video engine
@@ -280,14 +280,14 @@ Root cause: the 48³ trilinear cube interpolates a function with a hue discontin
 
 ### Task 7: Waveform and vectorscope (Metal)
 
-- [ ] Tap: on preview requests, and only while the scope panel is visible, the compositor encodes a `downsampleForScope` kernel into the same command buffer. It writes the output frame to a 512 × 288 `rgba16Float` texture in a single-slot mailbox (an atomic swap; latest wins; never blocks the compositor). It runs at most every second frame during playback, and once on seek or pause.
-- [ ] `ScopeRenderer` (an actor with its own command queue):
+- [x] Tap: on preview requests, and only while the scope panel is visible, the compositor encodes a `downsampleForScope` kernel into the same command buffer. It writes the output frame to a 512 × 288 `rgba16Float` texture in a single-slot mailbox (an atomic swap; latest wins; never blocks the compositor). It runs at most every second frame during playback, and once on seek or pause.
+- [x] `ScopeRenderer` (an actor with its own command queue):
   - Waveform: luma, or an RGB parade, in 512 columns × 1 024 bins of `atomic_uint`, then a normalize/log-gain kernel into a `bgra8Unorm` texture. Guides at 0, 64, 512, 940 and 1023 code values (IRE labels optional).
   - Vectorscope: a 512 × 512 bin grid in BT.709 Cb/Cr, with targets for 75% and 100% bars and a skin-tone line.
   - Display: `ScopeView` (an `NSViewRepresentable` `MTKView`, `isPaused = true`, `enableSetNeedsDisplay`), like `MetalPhotoCanvas`.
-- [ ] The scopes measure the graded output in display encoding. A "Source" toggle measures the decoded code values before the input transform, which is useful for exposing V-Log (grey at about 433).
-- [ ] Tests (`ScopeRendererTests`): synthetic 75% bars give waveform peaks at the expected code values ± 1 bin and vectorscope peaks in the target boxes. A flat grey frame puts all its vectorscope counts in the center bin. The tap never holds more than one texture. With the panel hidden, no scope work is encoded (a counter).
-- [ ] Real gate **G9**.
+- [x] The scopes measure the graded output in display encoding. A "Source" toggle measures the decoded code values before the input transform, which is useful for exposing V-Log (grey at about 433).
+- [x] Tests (`ScopeRendererTests`): synthetic 75% bars give waveform peaks at the expected code values ± 1 bin and vectorscope peaks in the target boxes. A flat grey frame puts all its vectorscope counts in the center bin. The tap never holds more than one texture. With the panel hidden, no scope work is encoded (a counter).
+- [x] Real gate **G9**: rate and GPU cost PASS; the black-level check is NOT VERIFIED (the clip has no black). Done 2026-10-16 with three deviations (a ring of three captures, layer-backed `CGImage` display, a timeline-time throttle); see the [compositor decision record](../../docs/decisions/2026-10-16-10bit-compositor.md).
 
 ### Task 8: 10-bit timeline export
 

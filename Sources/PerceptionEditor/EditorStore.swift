@@ -90,6 +90,16 @@ final class EditorStore: ObservableObject {
     @Published private(set) var isVideoPlaying = false
     @Published private(set) var timelinePlaybackPositionSeconds = 0.0
     @Published private(set) var timelinePlaybackDurationSeconds = 0.0
+    static let useProxiesKey = "perceptionEditor.useProxies"
+    let proxyStore: ProxyStore
+    private let proxyDefaults: UserDefaults
+    @Published private(set) var timelineUsedProxyCount = 0
+    @Published var usesProxiesForPlayback = true {
+        didSet {
+            proxyDefaults.set(usesProxiesForPlayback, forKey: Self.useProxiesKey)
+            refreshPlaybackSources()
+        }
+    }
     @Published private(set) var timelinePlaybackWarnings: [String] = []
     @Published private(set) var audioWaveforms: [UUID: [Float]] = [:]
     @Published var renderedPreview: NSImage?
@@ -162,8 +172,13 @@ final class EditorStore: ObservableObject {
         autoAdjustmentAnalyzer: (@Sendable (URL, PhotoAdjustments) async throws -> AutoAdjustmentSuggestion)? = nil,
         batchPhotoExporter: BatchPhotoExporter? = nil,
         previewRenderOperation: (@Sendable (URL, PhotoAdjustments, UUID?, Bool) async
-            -> (RenderedImage?, PhotoPreviewResult?))? = nil
+            -> (RenderedImage?, PhotoPreviewResult?))? = nil,
+        proxyStore: ProxyStore = ProxyStore(),
+        proxyDefaults: UserDefaults = .standard
     ) {
+        self.proxyStore = proxyStore
+        self.proxyDefaults = proxyDefaults
+        usesProxiesForPlayback = proxyDefaults.object(forKey: Self.useProxiesKey) as? Bool ?? true
         self.ingestScanner = ingestScanner
         self.autoAdjustmentAnalyzer = autoAdjustmentAnalyzer
         self.batchPhotoExporter = batchPhotoExporter
@@ -186,6 +201,11 @@ final class EditorStore: ObservableObject {
             .sink { [weak self] _ in
                 MainActor.assumeIsolated { self?.autosaveIfNeeded() }
             }
+            .store(in: &cancellables)
+
+        proxyStore.onReady = { [weak self] id in self?.proxyBecameReady(id) }
+        proxyStore.objectWillChange
+            .sink { [weak self] _ in self?.objectWillChange.send() }
             .store(in: &cancellables)
     }
 
@@ -308,6 +328,7 @@ final class EditorStore: ObservableObject {
                     pixelHeight: metadata.pixelHeight
                 )
                 project.media.append(asset)
+                proxyStore.enqueue([asset])
                 selectedVideoAssetID = asset.id
                 requestAudioWaveform(for: asset)
                 if kind == .video {
@@ -753,6 +774,7 @@ final class EditorStore: ObservableObject {
         invalidateIngest()
         invalidateBatchExport()
         projectGeneration = UUID()
+        proxyStore.cancelAll()
         projectSaveError = nil
         project = EditorProject(name: name)
         lastSavedProject = project
@@ -821,6 +843,7 @@ final class EditorStore: ObservableObject {
         invalidateIngest()
         invalidateBatchExport()
         projectGeneration = UUID()
+        proxyStore.cancelAll()
         projectSaveError = nil
         project = loaded
         lastSavedProject = project
@@ -838,6 +861,7 @@ final class EditorStore: ObservableObject {
         for asset in project.media where asset.kind == .video || asset.kind == .audio {
             requestAudioWaveform(for: asset)
         }
+        proxyStore.enqueue(project.media, prioritized: Set(project.timelineClips.map(\.assetID)))
         if let first = allPhotos.first {
             selectedAssetID = first.id
             selectedAssetIDs = [first.id]
@@ -1103,6 +1127,8 @@ final class EditorStore: ObservableObject {
                 project.media[currentIndex].durationSeconds = metadata.durationSeconds
                 project.media[currentIndex].pixelWidth = metadata.pixelWidth
                 project.media[currentIndex].pixelHeight = metadata.pixelHeight
+                proxyStore.invalidate(assetID: target.id)
+                proxyStore.enqueue([project.media[currentIndex]])
                 if project.timelineClips.contains(where: { $0.assetID == target.id }) {
                     rebuildTimelinePlayback()
                 }
@@ -1331,7 +1357,31 @@ final class EditorStore: ObservableObject {
         timelinePlaybackWarnings = []
         timelinePlaybackDurationSeconds = 0
         timelinePlaybackPositionSeconds = 0
-        replaceVideoPlayer(AVPlayer(url: asset.url), timelineMode: false)
+        replaceVideoPlayer(AVPlayer(url: playbackURL(for: asset)), timelineMode: false)
+    }
+
+    private func playbackURL(for asset: MediaAsset) -> URL {
+        guard usesProxiesForPlayback, let proxy = proxyStore.readyURL(for: asset.id),
+              FileManager.default.fileExists(atPath: proxy.path) else { return asset.url }
+        return proxy
+    }
+
+    private func proxyBecameReady(_ assetID: UUID) {
+        guard usesProxiesForPlayback else { return }
+        if project.timelineClips.contains(where: { $0.assetID == assetID }) {
+            rebuildTimelinePlayback() // Keeps position and play state.
+        } else if !isTimelinePlayback, selectedVideoAssetID == assetID, !isVideoPlaying,
+                  let asset = project.media.first(where: { $0.id == assetID }) {
+            showSourceVideo(asset)
+        }
+    }
+
+    private func refreshPlaybackSources() {
+        if isTimelinePlayback {
+            rebuildTimelinePlayback()
+        } else if let asset = selectedVideoAsset {
+            showSourceVideo(asset)
+        }
     }
 
     private func showTimelinePlayback(at seconds: Double, autoplay: Bool = false) {
@@ -1355,6 +1405,7 @@ final class EditorStore: ObservableObject {
             timelinePlaybackDurationSeconds = 0
             timelinePlaybackPositionSeconds = 0
             timelinePlaybackWarnings = []
+            timelineUsedProxyCount = 0
             statusMessage = "Timeline is empty"
             return
         }
@@ -1368,6 +1419,7 @@ final class EditorStore: ObservableObject {
         let media = project.media
         let adjustmentsByClipID = project.videoAdjustmentsByClipID
         let audioAdjustmentsByClipID = project.audioAdjustmentsByClipID
+        let proxyURLs = usesProxiesForPlayback ? proxyStore.readyURLs : [:]
         let requestID = UUID()
         playbackRequestID = requestID
         compositionRebuildTask?.cancel()
@@ -1379,11 +1431,13 @@ final class EditorStore: ObservableObject {
                 clips: clips,
                 media: media,
                 adjustmentsByClipID: adjustmentsByClipID,
-                audioAdjustmentsByClipID: audioAdjustmentsByClipID
+                audioAdjustmentsByClipID: audioAdjustmentsByClipID,
+                proxyURLsByAssetID: proxyURLs
             )
             guard !Task.isCancelled, playbackRequestID == requestID else { return }
 
             timelinePlaybackWarnings = result.warnings
+            timelineUsedProxyCount = result.usedProxyCount
             guard let playerItem = result.playerItem else {
                 replaceVideoPlayer(nil, timelineMode: false)
                 timelinePlaybackDurationSeconds = 0

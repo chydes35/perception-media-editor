@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task by task. Steps use checkbox (`- [ ]`) syntax for tracking. Task 0 is a measurement spike whose results can change Tasks 3–4. Do not skip it.
 
-Status: active (Tasks 0–4 done 2026-10-16; see the [compositor](../../docs/decisions/2026-10-16-10bit-compositor.md) and [timing](../../docs/decisions/2026-10-16-frame-exact-timing.md) decision records. Task 5 next. Task 13, Apple Log, is blocked on a real iPhone 15 Pro clip)
+Status: active (Tasks 0–5 done 2026-10-16 (G5 visual part open); see the [compositor](../../docs/decisions/2026-10-16-10bit-compositor.md) and [timing](../../docs/decisions/2026-10-16-frame-exact-timing.md) decision records. Task 6 next. Task 13, Apple Log, is blocked on a real iPhone 15 Pro clip)
 Roadmap sources: [V0.2 — LUT import and intensity control](../../docs/ROADMAP.md), [V0.3 — 1080p and 4K export](../../docs/ROADMAP.md). The 10-bit compositor, frame-exact timing, OCIO and scopes are new V0.3 work and must be added to the roadmap (Task 12).
 Builds on: [video-proxy-pipeline.md](video-proxy-pipeline.md) (branch `feat/video-proxies`: `MediaQuality`, proxy-aware `TimelineCompositionService`)
 Owner: video engine
@@ -241,18 +241,25 @@ enum ColorInputTransform: Codable, Hashable, Sendable {
 
 ### Task 5: Banding — HSL and curves at 10-bit precision
 
+**Done 2026-10-16** except G5's visual part. See the decision record's "Task 5 result". Differences from the sketch below:
+- The cube's defect was its interpolation error, not adjacent-pixel steps (continuous in half float), so the red tests measure error against the exact function: random colors 37 → 0.001 of 1023, graded sky 4.1 → 0.0005.
+- HSL is a Core Image **color kernel** in kernel language, not a Metal compute function in a `CIImageProcessorKernel`. The processor kernel ran on Core Image's command buffer and read compositor frames before the decode had written them.
+- The fallback cube stays at **48³**; 64³ measured worse (8.8 against 4.5).
+- Curves at 1024 samples: 0.43 → 0.25 of 1023.
+- Test sizes were reduced for debug-build speed: 16 384 random colors and a 4000-pixel sky, not 129³ + 10⁶. Photo and video share the kernel through `MediaColorRenderer`, so there is no separate photo-vs-video test.
+
 Root cause: the 48³ trilinear cube interpolates a function with a hue discontinuity and a chroma-gated strength. The cube's error budget was set in 8-bit levels, and the output is clamped to 0…1.
 
-- [ ] Port `ColorGrading.applyHSL` (with `rgbToHSL`, `hslToRGB`, band blend and smoothstep) to a Metal function `applyHSL`, evaluated **per pixel, analytically**. The band table goes in a constant buffer (8 × 3 floats). The cube is gone from the video path.
-- [ ] Photos: `MetalColorKernel` (`CIImageProcessorKernel`, `outputFormat = .RGBAh`) runs the same shader, so photo and video HSL are the same code. `MediaColorRenderer` uses it in place of `CIColorCubeWithColorSpace` for HSL. It runs in the sRGB-encoded domain like today: convert in, run, convert out with `CIFilter.linearToSRGBToneCurve`/`sRGBToneCurveToLinear`, which are unclamped. Keep `hslCube` behind a fallback for devices where the kernel fails. Raise its default dimension to 64 and drop its comment's 8-bit claim.
-- [ ] Curves: `curveData(samples:)` defaults to 1 024 samples.
-- [ ] Tests (extend `ColorGradingTests`):
+- [x] Port `ColorGrading.applyHSL` (with `rgbToHSL`, `hslToRGB`, band blend and smoothstep) to a Metal function `applyHSL`, evaluated **per pixel, analytically**. The band table goes in a constant buffer (8 × 3 floats). The cube is gone from the video path.
+- [x] Photos: `MetalColorKernel` (`CIImageProcessorKernel`, `outputFormat = .RGBAh`) runs the same shader, so photo and video HSL are the same code. `MediaColorRenderer` uses it in place of `CIColorCubeWithColorSpace` for HSL. It runs in the sRGB-encoded domain like today: convert in, run, convert out with `CIFilter.linearToSRGBToneCurve`/`sRGBToneCurveToLinear`, which are unclamped. Keep `hslCube` behind a fallback for devices where the kernel fails. Raise its default dimension to 64 and drop its comment's 8-bit claim.
+- [x] Curves: `curveData(samples:)` defaults to 1 024 samples.
+- [x] Tests (extend `ColorGradingTests`):
   - Over a 129³ grid plus 10⁶ seeded random colors, the GPU `applyHSL` matches the Double reference within 1/1023 (max) and 0.25/1023 (mean).
   - A 1 024-step grey ramp with HSL saturation +1 on all bands stays monotonic, with no step > 2/1023.
   - A synthetic sky gradient (hue 200–230°, 4 000 px wide, 10-bit) with Blue saturation +0.6 and luminance −0.4 has no adjacent-pixel step > 2/1023, while today's cube path is shown to exceed it (red first).
   - Photo vs video HSL agree within 1/1023.
   - The cube fallback at 64³ stays within 2/1023.
-- [ ] Real gate **G5**.
+- [ ] Real gate **G5**: precision part PASS on `P1107210`; the visual part needs a clip with a clear blue sky and the owner's review.
 
 ### Task 6: `.cube` LUT import and intensity (Phase A, roadmap V0.2)
 

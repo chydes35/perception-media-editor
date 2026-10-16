@@ -268,19 +268,34 @@ struct TimelineVideoCompositorTests {
 
     // MARK: Look
 
+    /// Every stage of the color chain except HSL, against the old CIFilter handler: the pipeline
+    /// itself (decode, color spaces, Core Image) must not change the look.
     @Test func gradedFrameMatchesTheOldCoreImagePath() async throws {
         let temp = try TempDirectory()
         let asset = try await patternAsset(temp)
         let clip = TimelineClip(assetID: asset.id, durationFrames: 12)
-        let (item, result) = try await compose([clip], [asset], adjustments: [clip.id: goldenGradeAdjustments()])
+        var adjustments = goldenGradeAdjustments()
+        adjustments.hsl = nil
+        let (item, result) = try await compose([clip], [asset], adjustments: [clip.id: adjustments])
         #expect(result.warnings.isEmpty)
         let shown = try await image(from: item, at: CMTime(value: 3 * 1001, timescale: 24000))
-        let drift = try difference(shown, try goldenImage("old-ci-path-graded"))
-        print("Graded vs old CIFilter path: mean \(drift.mean) / 255, max \(drift.max) / 255")
-        // Measured: mean 0.31, max 16 of 255. The largest differences are on the sharp wedge edges of the
-        // aggressive HSL setting, where an 8-bit and a half-float input are amplified. Tagging the frames with
-        // plain ITU-R 709 instead of CoreMedia709 measured a mean of 10.
+        let drift = try difference(shown, try goldenImage("old-ci-path-graded-no-hsl"))
+        print("Graded (no HSL) vs old CIFilter path: mean \(drift.mean) / 255, max \(drift.max) / 255")
+        // Tagging the frames with plain ITU-R 709 instead of CoreMedia709 measured a mean of 10.
         #expect(drift.mean <= 0.6 && drift.max <= 24, "Mean \(drift.mean), max \(drift.max) of 255")
+    }
+
+    /// With HSL, the old path used a 48³ cube whose interpolation error was up to 37 of 1023 levels
+    /// on strong settings; the exact kernel removes it, so this frame differs by about that much.
+    @Test func gradedFrameWithHSLStaysCloseToTheOldPath() async throws {
+        let temp = try TempDirectory()
+        let asset = try await patternAsset(temp)
+        let clip = TimelineClip(assetID: asset.id, durationFrames: 12)
+        let (item, _) = try await compose([clip], [asset], adjustments: [clip.id: goldenGradeAdjustments()])
+        let shown = try await image(from: item, at: CMTime(value: 3 * 1001, timescale: 24000))
+        let drift = try difference(shown, try goldenImage("old-ci-path-graded"))
+        print("Graded (with HSL) vs old CIFilter path: mean \(drift.mean) / 255, max \(drift.max) / 255")
+        #expect(drift.mean <= 2.0 && drift.max <= 24, "Mean \(drift.mean), max \(drift.max) of 255")
     }
 
     @Test func neutralFrameMatchesAVFoundationsOwnDecode() async throws {

@@ -145,5 +145,6 @@ enum MetalShaderSources {
         if (gid.x >= output.get_width() || gid.y >= output.get_height()) { return; }
         output.write(half4(0.0h, 0.0h, 0.0h, 1.0h), gid);
     }
+
     """
 }

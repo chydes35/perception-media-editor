@@ -60,13 +60,7 @@ enum MediaColorRenderer {
         }
 
         if let hsl = adjustments.hsl, !hsl.isNeutral {
-            let cube = CIFilter.colorCubeWithColorSpace()
-            cube.inputImage = image
-            cube.cubeDimension = Float(ColorGrading.cubeDimension)
-            cube.cubeData = ColorGrading.hslCube(hsl)
-            cube.colorSpace = Self.encodingSpace
-            cube.extrapolate = true
-            image = cube.outputImage ?? image
+            image = applyHSL(hsl, to: image)
         }
 
         // Local adjustments come after the global ones, as in Lightroom. Video clips have no masks.

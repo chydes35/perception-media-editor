@@ -287,7 +287,7 @@ struct GradingRenderTests {
         #expect(abs(result.r - base.r) <= 2 && abs(result.g - base.g) <= 2)
     }
 
-    @Test func theCubeAppliedByCoreImageMatchesTheMath() {
+    @Test func theHSLAppliedByCoreImageMatchesTheMath() {
         var hsl = HSLAdjustments()
         hsl.orange = HSLBandAdjustment(hue: -0.4, saturation: 0.5, luminance: 0.2)
         hsl.green = HSLBandAdjustment(hue: 0.6, saturation: -0.5, luminance: -0.2)
@@ -312,8 +312,8 @@ struct GradingRenderTests {
             )
             worst = max(worst, Int(difference.rounded()))
         }
-        // A 33-point cube interpolates between nodes, so allow a few levels of error.
-        #expect(worst <= 8, "worst channel error was \(worst) levels")
+        // The exact kernel (software renderer here); only 8-bit rounding is left.
+        #expect(worst <= 1, "worst channel error was \(worst) levels")
     }
 
     @Test func aNeutralHSLLeavesTheImageUntouched() {

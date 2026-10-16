@@ -1,6 +1,7 @@
 // Tests/PerceptionEditorTests/ProxyGeneratorTests.swift
 @preconcurrency import AVFoundation
 import Foundation
+import Synchronization
 import Testing
 @testable import PerceptionEditor
 
@@ -153,6 +154,70 @@ struct ProxyGeneratorTests {
         case .timedOut:
             Issue.record("12 concurrent generations hung for 30 s: the cooperative pool is starved")
         }
+    }
+
+    /// Runs a generation that is cancelled if it has not finished by `deadline`; a cancellation
+    /// therefore means the job hung.
+    private func generate(
+        _ source: URL, to destination: URL, faults: ProxyGenerationFaults, deadline: Duration = .seconds(8)
+    ) async -> (error: (any Error)?, seconds: Double) {
+        let clock = ContinuousClock()
+        let started = clock.now
+        let job = Task {
+            try await ProxyGenerator.generate(
+                source: source, destination: destination, maximumSize: CGSize(width: 320, height: 180), faults: faults
+            )
+        }
+        let watchdog = Task { try await Task.sleep(for: deadline); job.cancel() }
+        defer { watchdog.cancel() }
+        do {
+            _ = try await job.value
+            return (nil, (clock.now - started) / .seconds(1))
+        } catch {
+            return (error, (clock.now - started) / .seconds(1))
+        }
+    }
+
+    private func leftovers(_ temp: TempDirectory) throws -> [String] {
+        try FileManager.default.contentsOfDirectory(atPath: temp.url.path).filter { $0.hasPrefix("proxy") }
+    }
+
+    /// The loop stops when the input stops asking for data; if the writer failed meanwhile, nothing
+    /// would ever call back. The status check after the loop must end the job.
+    @Test func writerFailureWhenTheLoopStopsFailsTheJob() async throws {
+        let temp = try TempDirectory()
+        let source = try await writeTestMovie(to: temp.url.appendingPathComponent("S.MOV"), frames: 48)
+        let faults = ProxyGenerationFaults(
+            stallAfterFrames: 1, watchdogInterval: nil, pipelineFailure: { .writeFailed("injected") }
+        )
+        let outcome = await generate(source, to: temp.url.appendingPathComponent("proxy.mov"), faults: faults)
+        #expect(outcome.error as? ProxyError == .writeFailed("injected"), "Got \(String(describing: outcome.error))")
+        #expect(outcome.seconds < 5)
+        #expect(try leftovers(temp).isEmpty, "No partial file may be left behind")
+    }
+
+    /// If the writer fails after the loop has already yielded, only the watchdog can notice.
+    @Test func watchdogFailsAJobWhoseWriterFailedWhileStalled() async throws {
+        let temp = try TempDirectory()
+        let source = try await writeTestMovie(to: temp.url.appendingPathComponent("S.MOV"), frames: 48)
+        let checks = Mutex(0)
+        let faults = ProxyGenerationFaults(stallAfterFrames: 1, pipelineFailure: {
+            // Healthy when the loop stops; failed by the time the watchdog looks.
+            checks.withLock { count in count += 1; return count == 1 ? nil : .writeFailed("injected") }
+        })
+        let outcome = await generate(source, to: temp.url.appendingPathComponent("proxy.mov"), faults: faults)
+        #expect(outcome.error as? ProxyError == .writeFailed("injected"), "Got \(String(describing: outcome.error))")
+        #expect(outcome.seconds < 5)
+        #expect(try leftovers(temp).isEmpty, "No partial file may be left behind")
+    }
+
+    @Test func pipelineFailureReportsTheFailedSide() {
+        let error = NSError(domain: "test", code: 1, userInfo: [NSLocalizedDescriptionKey: "boom"])
+        #expect(ProxyGenerator.pipelineFailure(readerStatus: .reading, readerError: nil, writerStatus: .writing, writerError: nil) == nil)
+        #expect(ProxyGenerator.pipelineFailure(readerStatus: .reading, readerError: nil, writerStatus: .failed, writerError: error)
+            == .writeFailed("boom"))
+        #expect(ProxyGenerator.pipelineFailure(readerStatus: .failed, readerError: error, writerStatus: .writing, writerError: nil)
+            == .readFailed("boom"))
     }
 
     @Test func fileWithoutVideoIsRejected() async throws {

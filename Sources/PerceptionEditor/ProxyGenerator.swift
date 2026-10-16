@@ -29,6 +29,20 @@ enum ProxyError: LocalizedError, Equatable {
     }
 }
 
+/// Fault injection for the sample loop, used only by tests. AVFoundation offers no reliable way to make a
+/// writer fail while the input has stopped asking for data, so tests simulate that stall here.
+struct ProxyGenerationFaults: Sendable {
+    /// After this many appended frames the loop stops pulling and ignores further callbacks, as if
+    /// the input had stopped asking for data.
+    var stallAfterFrames: Int?
+    /// How often a running job rechecks reader and writer health; nil turns the watchdog off.
+    var watchdogInterval: DispatchTimeInterval? = .seconds(1)
+    /// Replaces the real reader/writer status check.
+    var pipelineFailure: (@Sendable () -> ProxyError?)?
+
+    static let none = ProxyGenerationFaults()
+}
+
 /// Transcodes one original into a ProRes 422 Proxy for editing. Frames are read as 10-bit 4:2:2;
 /// asking the decoder for BGRA cut throughput to a quarter on the target M1 (12 fps vs 45 fps).
 enum ProxyGenerator {
@@ -54,6 +68,7 @@ enum ProxyGenerator {
         source: URL,
         destination: URL,
         maximumSize: CGSize = defaultMaximumSize,
+        faults: ProxyGenerationFaults = .none,
         progress: @Sendable (Double) -> Void = { _ in }
     ) async throws -> ProxyInfo {
         let fileManager = FileManager.default
@@ -112,7 +127,7 @@ enum ProxyGenerator {
         // the cooperative pool; parallel jobs would otherwise starve every pool thread.
         let job = SampleCopyJob(
             reader: reader, output: output, writer: writer, input: input,
-            start: timeRange.start, total: max(timeRange.duration.seconds, 0.001)
+            start: timeRange.start, total: max(timeRange.duration.seconds, 0.001), faults: faults
         )
         let written = try await withoutActuallyEscaping(progress) { progress in
             // Only the job holds `progress`, and `finish` drops it before resuming, so it never outlives this call.
@@ -145,6 +160,16 @@ enum ProxyGenerator {
         try fileManager.moveItem(at: partial, to: destination)
         progress(1)
         return ProxyInfo(url: destination, frameCount: written, pixelWidth: Int(size.width), pixelHeight: Int(size.height))
+    }
+
+    /// The error a running job must stop with, if either side of the pipeline has failed.
+    static func pipelineFailure(
+        readerStatus: AVAssetReader.Status, readerError: (any Error)?,
+        writerStatus: AVAssetWriter.Status, writerError: (any Error)?
+    ) -> ProxyError? {
+        if writerStatus == .failed { return .writeFailed(writerError?.localizedDescription ?? "unknown error") }
+        if readerStatus == .failed { return .readFailed(readerError?.localizedDescription ?? "unknown error") }
+        return nil
     }
 
     /// Counts frames without decoding them.
@@ -191,19 +216,24 @@ private final class SampleCopyJob: @unchecked Sendable {
     private let input: AVAssetWriterInput
     private let start: CMTime
     private let total: Double
+    private let faults: ProxyGenerationFaults
     private var continuation: CheckedContinuation<Int, any Error>?
     private var progress: (@Sendable (Double) -> Void)?
     private var written = 0
     private var finished = false
+    /// Rechecks reader and writer health while the job runs. If the writer fails while the input is not
+    /// asking for data, AVFoundation never calls `pump` again and nothing else would end the job.
+    private var watchdog: (any DispatchSourceTimer)?
 
     init(reader: AVAssetReader, output: AVAssetReaderTrackOutput, writer: AVAssetWriter,
-         input: AVAssetWriterInput, start: CMTime, total: Double) {
+         input: AVAssetWriterInput, start: CMTime, total: Double, faults: ProxyGenerationFaults) {
         self.reader = reader
         self.output = output
         self.writer = writer
         self.input = input
         self.start = start
         self.total = total
+        self.faults = faults
     }
 
     /// Called once from `generate` before `begin` is dispatched; that `queue.async` orders this write before any queue access.
@@ -215,6 +245,13 @@ private final class SampleCopyJob: @unchecked Sendable {
     func begin(_ continuation: CheckedContinuation<Int, any Error>) {
         self.continuation = continuation
         if cancelled.load(ordering: .acquiring) { return finish(.failure(CancellationError())) }
+        if let interval = faults.watchdogInterval {
+            let timer = DispatchSource.makeTimerSource(queue: queue)
+            timer.schedule(deadline: .now() + interval, repeating: interval)
+            timer.setEventHandler { [weak self] in self?.failIfPipelineFailed() }
+            timer.resume()
+            watchdog = timer
+        }
         input.requestMediaDataWhenReady(on: queue) { [self] in pump() }
     }
 
@@ -229,7 +266,7 @@ private final class SampleCopyJob: @unchecked Sendable {
 
     /// On `queue`.
     private func pump() {
-        guard !finished else { return }
+        guard !finished, !isStalled else { return }
         while input.isReadyForMoreMediaData {
             if isCancelled { return finish(.failure(CancellationError())) }
             guard let sample = output.copyNextSampleBuffer() else {
@@ -245,14 +282,33 @@ private final class SampleCopyJob: @unchecked Sendable {
             }
             written += 1
             progress?(min(1, (sample.presentationTimeStamp - start).seconds / total))
+            if isStalled { break }
         }
+        // The input stopped asking for data. If that is because the writer (or reader) failed,
+        // no further callback will come, so end the job now.
+        failIfPipelineFailed()
     }
+
+    /// On `queue`.
+    private func failIfPipelineFailed() {
+        guard !finished else { return }
+        let failure = faults.pipelineFailure.map { $0() } ?? ProxyGenerator.pipelineFailure(
+            readerStatus: reader.status, readerError: reader.error,
+            writerStatus: writer.status, writerError: writer.error
+        )
+        if let failure { finish(.failure(failure)) }
+    }
+
+    /// Test fault: the input has (apparently) stopped asking for data.
+    private var isStalled: Bool { faults.stallAfterFrames.map { written >= $0 } ?? false }
 
     /// On `queue`. Resumes the continuation at most once; later calls (a queued cancel after success,
     /// a late media-data callback) do nothing.
     private func finish(_ result: Result<Int, any Error>) {
         guard !finished, let continuation else { return }
         finished = true
+        watchdog?.cancel()
+        watchdog = nil
         self.continuation = nil
         progress = nil // Releases the caller's non-escaping closure before `generate` continues.
         switch result {

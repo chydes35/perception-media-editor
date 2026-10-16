@@ -20,7 +20,7 @@ struct PhotoWorkflowIntegrationTests {
         let document = ProjectDocument()
         let asset = MediaAsset(url: URL(fileURLWithPath: "/fixture/photo.RW2"))
         var project = EditorProject(name: "Integrated", media: [asset], adjustmentsByAssetID: [asset.id: integratedEdits()])
-        #expect(EditorProject.currentSchemaVersion == 10)
+        #expect(EditorProject.currentSchemaVersion == 11)
         let loaded = try document.project(from: document.data(for: project))
         #expect(loaded.adjustmentsByAssetID == project.adjustmentsByAssetID)
         for version in 6...9 {
@@ -44,7 +44,7 @@ struct PhotoWorkflowIntegrationTests {
             #expect(older.media.first?.id == asset.id)
             #expect(older.adjustmentsByAssetID[asset.id] == edits)
             let resaved = try document.project(from: document.data(for: older))
-            #expect(resaved.schemaVersion == 10 && resaved.adjustmentsByAssetID[asset.id] == edits)
+            #expect(resaved.schemaVersion == EditorProject.currentSchemaVersion && resaved.adjustmentsByAssetID[asset.id] == edits)
         }
     }
 

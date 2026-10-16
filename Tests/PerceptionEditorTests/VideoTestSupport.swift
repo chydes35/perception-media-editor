@@ -18,6 +18,7 @@ func writeTestMovie(
     withAudio: Bool = false
 ) async throws -> URL {
     let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+    writer.movieTimeScale = 24000
     let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
         AVVideoCodecKey: AVVideoCodecType.proRes422,
         AVVideoWidthKey: width,
@@ -29,6 +30,8 @@ func writeTestMovie(
         ]
     ])
     input.expectsMediaDataInRealTime = false
+    // Lumix files keep 1001/24000 frame times exactly; the writer's default 600 would round them.
+    input.mediaTimeScale = 24000
     input.transform = transform
     let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [
         kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
@@ -155,6 +158,7 @@ func writeFullRangeTestMovie(to url: URL, frames: Int = 6, width: Int = 640, hei
     for (format, profile) in candidates {
         try? FileManager.default.removeItem(at: url)
         let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+        writer.movieTimeScale = 24000
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
             AVVideoCodecKey: AVVideoCodecType.hevc,
             AVVideoWidthKey: width,
@@ -167,6 +171,8 @@ func writeFullRangeTestMovie(to url: URL, frames: Int = 6, width: Int = 640, hei
             ]
         ])
         input.expectsMediaDataInRealTime = false
+        // Lumix files keep 1001/24000 frame times exactly; the writer's default 600 would round them.
+        input.mediaTimeScale = 24000
         let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [
             kCVPixelBufferPixelFormatTypeKey as String: format,
             kCVPixelBufferWidthKey as String: width,
@@ -276,4 +282,86 @@ func decodedRGBCellMeans(_ url: URL, columns: Int = 16, rows: Int = 9) async thr
         }
     }
     return zip(sums, counts).map { $0 / $1 }
+}
+
+/// Writes a movie whose every frame shows its own index as 8 vertical bars (bit 7 on the left,
+/// white = 1), at 23.976 fps, so a test can tell exactly which source frame a composition showed.
+@discardableResult
+func writeFrameNumberedMovie(to url: URL, frames: Int = 240, width: Int = 160, height: Int = 90) async throws -> URL {
+    let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+    writer.movieTimeScale = 24000
+    let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
+        AVVideoCodecKey: AVVideoCodecType.proRes422,
+        AVVideoWidthKey: width,
+        AVVideoHeightKey: height
+    ])
+    input.expectsMediaDataInRealTime = false
+    // Lumix files keep 1001/24000 frame times exactly; the writer's default 600 would round them.
+    input.mediaTimeScale = 24000
+    let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [
+        kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+        kCVPixelBufferWidthKey as String: width,
+        kCVPixelBufferHeightKey as String: height
+    ])
+    writer.add(input)
+    guard writer.startWriting() else { throw writer.error ?? CocoaError(.fileWriteUnknown) }
+    writer.startSession(atSourceTime: .zero)
+    for index in 0 ..< frames {
+        while !input.isReadyForMoreMediaData { try await Task.sleep(for: .milliseconds(1)) }
+        guard let pool = adaptor.pixelBufferPool else { throw CocoaError(.fileWriteUnknown) }
+        var created: CVPixelBuffer?
+        CVPixelBufferPoolCreatePixelBuffer(nil, pool, &created)
+        guard let buffer = created else { throw CocoaError(.fileWriteUnknown) }
+        CVPixelBufferLockBaseAddress(buffer, [])
+        let base = CVPixelBufferGetBaseAddress(buffer)!.assumingMemoryBound(to: UInt8.self)
+        let stride = CVPixelBufferGetBytesPerRow(buffer)
+        for y in 0 ..< height {
+            for x in 0 ..< width {
+                let bit = (index >> (7 - x * 8 / width)) & 1
+                let value: UInt8 = bit == 1 ? 255 : 0
+                let pixel = base + y * stride + x * 4
+                pixel[0] = value; pixel[1] = value; pixel[2] = value; pixel[3] = 255
+            }
+        }
+        CVPixelBufferUnlockBaseAddress(buffer, [])
+        guard adaptor.append(buffer, withPresentationTime: CMTime(value: CMTimeValue(index) * 1001, timescale: 24000)) else {
+            throw writer.error ?? CocoaError(.fileWriteUnknown)
+        }
+    }
+    input.markAsFinished()
+    await writer.finishWriting()
+    guard writer.status == .completed else { throw writer.error ?? CocoaError(.fileWriteUnknown) }
+    return url
+}
+
+/// The frame index drawn by `writeFrameNumberedMovie`, read from a decoded image.
+func frameNumber(in image: CGImage) -> Int {
+    let width = image.width, height = image.height
+    var gray = [UInt8](repeating: 0, count: width * height)
+    let context = CGContext(
+        data: &gray, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width,
+        space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue
+    )!
+    context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+    var value = 0
+    for bit in 0 ..< 8 {
+        let x = bit * width / 8 + width / 16
+        value = value << 1 | (gray[(height / 2) * width + x] > 127 ? 1 : 0)
+    }
+    return value
+}
+
+/// Every frame a player item would show at the composition's frame times, decoded with zero tolerance.
+@MainActor
+func shownFrameNumbers(_ item: AVPlayerItem, frames: Int, frameDuration: CMTime = CMTime(value: 1001, timescale: 24000)) async throws -> [Int] {
+    let generator = AVAssetImageGenerator(asset: item.asset)
+    generator.videoComposition = item.videoComposition
+    generator.requestedTimeToleranceBefore = .zero
+    generator.requestedTimeToleranceAfter = .zero
+    var shown: [Int] = []
+    for index in 0 ..< frames {
+        let (image, _) = try await generator.image(at: CMTimeMultiply(frameDuration, multiplier: Int32(index)))
+        shown.append(frameNumber(in: image))
+    }
+    return shown
 }

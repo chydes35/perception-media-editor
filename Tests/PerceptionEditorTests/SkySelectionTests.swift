@@ -81,7 +81,7 @@ struct SkySelectionTests {
         photo.masks = [LocalMask(shape: .sky(sky))]
         project.adjustmentsByAssetID[asset.id] = photo
         let decoded = try ProjectDocument().project(from: ProjectDocument().data(for: project))
-        #expect(decoded.schemaVersion == 10)
+        #expect(decoded.schemaVersion == EditorProject.currentSchemaVersion)
         #expect(decoded.adjustmentsByAssetID[asset.id]?.masks == photo.masks)
         #expect(PhotoAdjustments().applying(photo, groups: [.masks]).masks.isEmpty)
     }

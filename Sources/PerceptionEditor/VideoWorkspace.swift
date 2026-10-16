@@ -223,7 +223,7 @@ struct VideoWorkspace: View {
 
                 if let clip = store.selectedTimelineClip {
                     inspectorSection("TIMELINE CLIP") {
-                        metadataRow("Start", formatTime(clip.timelineStartSeconds))
+                        metadataRow("Start", formatTime(store.project.timelineStartSeconds(of: clip)))
                         metadataRow("Source In", formatTime(clip.sourceStartSeconds))
                         metadataRow("Duration", formatTime(clip.durationSeconds))
 
@@ -616,9 +616,10 @@ private struct EditorTimelineView: View {
 
         for clip in store.project.timelineClips {
             let width = timelineClipWidth(clip)
-            let clipEnd = clip.timelineStartSeconds + clip.durationSeconds
+            let clipStart = store.project.timelineStartSeconds(of: clip)
+            let clipEnd = clipStart + clip.durationSeconds
             if position <= clipEnd {
-                let elapsed = max(0, position - clip.timelineStartSeconds)
+                let elapsed = max(0, position - clipStart)
                 let fraction = clip.durationSeconds > 0 ? min(1, elapsed / clip.durationSeconds) : 0
                 return cursor + width * CGFloat(fraction)
             }

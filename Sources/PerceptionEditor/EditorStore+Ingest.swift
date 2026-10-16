@@ -279,9 +279,7 @@ extension EditorStore {
                 let metadata = await VideoMediaService.shared.metadata(for: file.destinationURL)
                 guard projectGeneration == generation else { return }
                 guard let index = project.media.firstIndex(where: { $0.id == assetID }) else { return }
-                project.media[index].durationSeconds = metadata.durationSeconds
-                project.media[index].pixelWidth = metadata.pixelWidth
-                project.media[index].pixelHeight = metadata.pixelHeight
+                project.media[index].apply(metadata)
                 proxyStore.enqueue([project.media[index]])
             }
         }

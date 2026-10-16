@@ -247,7 +247,7 @@ final class EditorStore: ObservableObject {
     }
 
     var timelineDurationSeconds: Double {
-        project.timelineClips.map { $0.timelineStartSeconds + $0.durationSeconds }.max() ?? 0
+        project.sequenceFrameRate.seconds(ofFrames: project.timelineDurationFrames)
     }
 
     var selectedAdjustments: PhotoAdjustments {
@@ -324,13 +324,8 @@ final class EditorStore: ObservableObject {
             case .video, .audio:
                 let metadata = await videoMediaService.metadata(for: url)
                 guard projectGeneration == generation else { return }
-                let asset = MediaAsset(
-                    url: url,
-                    kind: kind,
-                    durationSeconds: metadata.durationSeconds,
-                    pixelWidth: metadata.pixelWidth,
-                    pixelHeight: metadata.pixelHeight
-                )
+                var asset = MediaAsset(url: url, kind: kind)
+                asset.apply(metadata)
                 project.media.append(asset)
                 proxyStore.enqueue([asset])
                 selectedVideoAssetID = asset.id
@@ -864,6 +859,7 @@ final class EditorStore: ObservableObject {
         pendingAudioWaveforms = []
         clearAdjustmentHistory()
         backfillPhotoDimensions()
+        migrateClipTimingIfNeeded()
         for asset in project.media where asset.kind == .video || asset.kind == .audio {
             requestAudioWaveform(for: asset)
         }
@@ -1034,6 +1030,32 @@ final class EditorStore: ObservableObject {
         }
     }
 
+    /// Projects saved before schema 11 stored clip times in seconds and no frame rates. This reads
+    /// each available video's rate and converts its clips to exact frames. The saved snapshot is
+    /// converted the same way, so this alone does not mark the project edited.
+    func migrateClipTimingIfNeeded() {
+        let legacyAssets = Set(project.timelineClips.filter { $0.legacyTiming != nil }.map(\.assetID))
+        let targets = project.media
+            .filter { $0.kind == .video && ($0.frameRate == nil || legacyAssets.contains($0.id)) }
+            .filter { FileManager.default.fileExists(atPath: $0.url.path) }
+            .map { ($0.id, $0.url) }
+        guard !targets.isEmpty else { return }
+        let projectID = project.id
+        let service = videoMediaService
+
+        Task {
+            var found: [UUID: VideoMetadata] = [:]
+            for (id, url) in targets {
+                let metadata = await service.metadata(for: url)
+                if metadata.frameRate != nil { found[id] = metadata }
+            }
+            guard project.id == projectID, !found.isEmpty else { return }
+            let changed = project.adoptFrameMetadata(found)
+            lastSavedProject.adoptFrameMetadata(found)
+            if changed { rebuildTimelinePlayback() }
+        }
+    }
+
     /// Projects saved before photo dimensions were recorded get them from file metadata.
     /// The saved snapshot is updated too, so this alone does not mark the project edited.
     private func backfillPhotoDimensions() {
@@ -1132,9 +1154,8 @@ final class EditorStore: ObservableObject {
                 guard let currentIndex = project.media.firstIndex(where: { $0.id == target.id }) else {
                     return
                 }
-                project.media[currentIndex].durationSeconds = metadata.durationSeconds
-                project.media[currentIndex].pixelWidth = metadata.pixelWidth
-                project.media[currentIndex].pixelHeight = metadata.pixelHeight
+                project.media[currentIndex].apply(metadata)
+                project.adoptFrameMetadata([target.id: metadata]) // Converts clips left in seconds while offline.
                 proxyStore.enqueue([project.media[currentIndex]])
                 if project.timelineClips.contains(where: { $0.assetID == target.id }) {
                     rebuildTimelinePlayback()
@@ -1151,12 +1172,13 @@ final class EditorStore: ObservableObject {
             return
         }
 
-        let duration = max(0.25, asset.durationSeconds ?? 5)
-        let clip = TimelineClip(assetID: asset.id, durationSeconds: duration)
+        let rate = asset.frameRate ?? .ntsc23976
+        let frames = max(TimelineClip.minimumFrames, asset.availableFrames ?? rate.nearestFrame(toSeconds: 5))
+        let clip = TimelineClip(assetID: asset.id, frameRate: rate, durationFrames: frames)
         project.timelineClips.append(clip)
         normalizePrimaryTimeline()
         selectedTimelineClipID = clip.id
-        rebuildTimelinePlayback(seekTo: clip.timelineStartSeconds)
+        rebuildTimelinePlayback(seekTo: timelineStartSeconds(ofClip: clip.id))
     }
 
     func selectTimelineClip(_ clip: TimelineClip) {
@@ -1164,12 +1186,17 @@ final class EditorStore: ObservableObject {
         if let asset = project.media.first(where: { $0.id == clip.assetID }) {
             selectedVideoAssetID = asset.id
         }
-        showTimelinePlayback(at: clip.timelineStartSeconds)
+        showTimelinePlayback(at: project.timelineStartSeconds(of: clip))
     }
 
     func playSelectedTimelineClip() {
         guard let clip = selectedTimelineClip else { return }
-        showTimelinePlayback(at: clip.timelineStartSeconds, autoplay: true)
+        showTimelinePlayback(at: project.timelineStartSeconds(of: clip), autoplay: true)
+    }
+
+    /// Where a clip starts once the timeline has been re-packed.
+    private func timelineStartSeconds(ofClip id: UUID) -> Double {
+        project.timelineClips.first(where: { $0.id == id }).map(project.timelineStartSeconds(of:)) ?? 0
     }
 
     func removeSelectedTimelineClip() {
@@ -1190,7 +1217,7 @@ final class EditorStore: ObservableObject {
         guard destination != index else { return }
         project.timelineClips.swapAt(index, destination)
         normalizePrimaryTimeline()
-        rebuildTimelinePlayback(seekTo: project.timelineClips[destination].timelineStartSeconds)
+        rebuildTimelinePlayback(seekTo: project.timelineStartSeconds(of: project.timelineClips[destination]))
     }
 
     func canMoveSelectedTimelineClip(by offset: Int) -> Bool {
@@ -1200,53 +1227,59 @@ final class EditorStore: ObservableObject {
         return project.timelineClips.indices.contains(index + offset)
     }
 
+    /// Moves the clip's in point by about `delta` seconds, in whole frames of the clip's rate.
     func trimSelectedClipStart(by delta: Double) {
         guard let selectedTimelineClipID,
               let index = project.timelineClips.firstIndex(where: { $0.id == selectedTimelineClipID }),
               let asset = project.media.first(where: { $0.id == project.timelineClips[index].assetID })
         else { return }
 
-        let originalDuration = max(0.25, asset.durationSeconds ?? 5)
         let clip = project.timelineClips[index]
-        let newStart = min(max(0, clip.sourceStartSeconds + delta), originalDuration - 0.25)
-        let end = min(originalDuration, clip.sourceStartSeconds + clip.durationSeconds)
-        project.timelineClips[index].sourceStartSeconds = newStart
-        project.timelineClips[index].durationSeconds = max(0.25, end - newStart)
+        let minimum = TimelineClip.minimumFrames
+        let available = max(minimum, asset.availableFrames ?? clip.sourceStartFrame + clip.durationFrames)
+        let end = min(available, clip.sourceStartFrame + clip.durationFrames)
+        let deltaFrames = clip.frameRate.nearestFrame(toSeconds: delta)
+        let newStart = min(max(0, clip.sourceStartFrame + deltaFrames), max(0, end - minimum))
+        project.timelineClips[index].sourceStartFrame = newStart
+        project.timelineClips[index].durationFrames = max(minimum, end - newStart)
         normalizePrimaryTimeline()
         rebuildTimelinePlayback()
     }
 
+    /// Moves the clip's out point by about `delta` seconds, in whole frames of the clip's rate.
     func trimSelectedClipEnd(by delta: Double) {
         guard let selectedTimelineClipID,
               let index = project.timelineClips.firstIndex(where: { $0.id == selectedTimelineClipID }),
               let asset = project.media.first(where: { $0.id == project.timelineClips[index].assetID })
         else { return }
 
-        let originalDuration = max(0.25, asset.durationSeconds ?? 5)
-        let maximum = max(0.25, originalDuration - project.timelineClips[index].sourceStartSeconds)
-        project.timelineClips[index].durationSeconds = min(
-            maximum,
-            max(0.25, project.timelineClips[index].durationSeconds + delta)
-        )
+        let clip = project.timelineClips[index]
+        let minimum = TimelineClip.minimumFrames
+        let available = asset.availableFrames ?? clip.sourceStartFrame + clip.durationFrames
+        let maximum = max(minimum, available - clip.sourceStartFrame)
+        let deltaFrames = clip.frameRate.nearestFrame(toSeconds: delta)
+        project.timelineClips[index].durationFrames = min(maximum, max(minimum, clip.durationFrames + deltaFrames))
         normalizePrimaryTimeline()
         rebuildTimelinePlayback()
     }
 
+    /// Splits the selected clip at its middle frame.
     func splitSelectedClip() {
         guard let selectedTimelineClipID,
               let index = project.timelineClips.firstIndex(where: { $0.id == selectedTimelineClipID })
         else { return }
         let original = project.timelineClips[index]
-        guard original.durationSeconds >= 0.5 else { return }
+        guard original.durationFrames >= 2 * TimelineClip.minimumFrames else { return }
 
-        let firstDuration = original.durationSeconds / 2
-        project.timelineClips[index].durationSeconds = firstDuration
+        let firstFrames = original.durationFrames / 2
+        project.timelineClips[index].durationFrames = firstFrames
         let second = TimelineClip(
             assetID: original.assetID,
             videoTrack: original.videoTrack,
             audioTrack: original.audioTrack,
-            sourceStartSeconds: original.sourceStartSeconds + firstDuration,
-            durationSeconds: original.durationSeconds - firstDuration,
+            frameRate: original.frameRate,
+            sourceStartFrame: original.sourceStartFrame + firstFrames,
+            durationFrames: original.durationFrames - firstFrames,
             isEnabled: original.isEnabled,
             isMuted: original.isMuted
         )
@@ -1266,7 +1299,7 @@ final class EditorStore: ObservableObject {
         }
         self.selectedTimelineClipID = second.id
         normalizePrimaryTimeline()
-        rebuildTimelinePlayback(seekTo: second.timelineStartSeconds)
+        rebuildTimelinePlayback(seekTo: timelineStartSeconds(ofClip: second.id))
     }
 
     func toggleSelectedClipMute() {
@@ -1302,18 +1335,18 @@ final class EditorStore: ObservableObject {
         }
     }
 
+    /// Seeks to the start of the frame nearest `seconds`, so the playhead always shows a whole frame.
     func seekTimeline(to seconds: Double) {
-        let clamped = min(max(0, seconds), timelinePlaybackDurationSeconds)
+        let rate = project.sequenceFrameRate
+        let lastFrame = max(0, rate.nearestFrame(toSeconds: timelinePlaybackDurationSeconds) - 1)
+        let frame = min(max(0, rate.nearestFrame(toSeconds: seconds)), lastFrame)
+        let clamped = min(rate.seconds(ofFrames: frame), max(0, timelinePlaybackDurationSeconds))
         guard isTimelinePlayback, let videoPlayer else {
             showTimelinePlayback(at: clamped)
             return
         }
         timelinePlaybackPositionSeconds = clamped
-        videoPlayer.seek(
-            to: CMTime(seconds: clamped, preferredTimescale: 600),
-            toleranceBefore: .zero,
-            toleranceAfter: .zero
-        )
+        videoPlayer.seek(to: rate.time(ofFrame: frame), toleranceBefore: .zero, toleranceAfter: .zero)
         synchronizeTimelineSelection(at: clamped)
     }
 
@@ -1482,6 +1515,7 @@ final class EditorStore: ObservableObject {
         let position = requestedPosition ?? (isTimelinePlayback ? retainedPosition : 0)
         let shouldAutoplay = autoplay || (isTimelinePlayback && isVideoPlaying)
         let clips = project.timelineClips
+        let sequenceRate = project.sequenceFrameRate
         let media = project.media
         let adjustmentsByClipID = project.videoAdjustmentsByClipID
         let audioAdjustmentsByClipID = project.audioAdjustmentsByClipID
@@ -1500,7 +1534,8 @@ final class EditorStore: ObservableObject {
                 adjustmentsByClipID: adjustmentsByClipID,
                 audioAdjustmentsByClipID: audioAdjustmentsByClipID,
                 quality: .preview,
-                proxyURLsByAssetID: proxyURLs
+                proxyURLsByAssetID: proxyURLs,
+                sequenceFrameRate: sequenceRate
             )
             guard !Task.isCancelled, playbackRequestID == requestID else { return }
 
@@ -1556,11 +1591,12 @@ final class EditorStore: ObservableObject {
 
     private func synchronizeTimelineSelection(at seconds: Double) {
         guard isTimelinePlayback else { return }
-        let tolerance = 0.001
+        // The frame on screen; the small allowance keeps a time exactly on a frame start in that frame.
+        let rate = project.sequenceFrameRate
+        let frame = Int64((seconds / rate.frameSeconds + 0.001).rounded(.down))
         let clip = project.timelineClips.first {
-            seconds + tolerance >= $0.timelineStartSeconds &&
-                seconds < $0.timelineStartSeconds + $0.durationSeconds - tolerance
-        } ?? (seconds >= timelineDurationSeconds - tolerance ? project.timelineClips.last : nil)
+            frame >= $0.timelineStartFrame && frame < $0.timelineStartFrame + project.timelineFrames(of: $0)
+        } ?? (frame >= project.timelineDurationFrames ? project.timelineClips.last : nil)
 
         guard let clip else { return }
         if selectedTimelineClipID != clip.id {
@@ -1572,10 +1608,6 @@ final class EditorStore: ObservableObject {
     }
 
     private func normalizePrimaryTimeline() {
-        var cursor = 0.0
-        for index in project.timelineClips.indices {
-            project.timelineClips[index].timelineStartSeconds = cursor
-            cursor += project.timelineClips[index].durationSeconds
-        }
+        project.packTimeline()
     }
 }

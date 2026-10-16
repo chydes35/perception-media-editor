@@ -35,7 +35,7 @@ struct TimelineProxyCompositionTests {
     @Test func previewPlaysProxyAndExportUsesOriginal() async throws {
         let temp = try TempDirectory()
         let (asset, proxy) = try await fixture(temp, "A")
-        let clip = TimelineClip(assetID: asset.id, durationSeconds: 1.0)
+        let clip = TimelineClip(assetID: asset.id, durationFrames: 24)
         let service = TimelineCompositionService.shared
 
         let preview = await service.makePlayerItem(clips: [clip], media: [asset], quality: .preview, proxyURLsByAssetID: [asset.id: proxy])
@@ -54,7 +54,7 @@ struct TimelineProxyCompositionTests {
         let (asset, proxy) = try await fixture(temp, "A")
         try FileManager.default.removeItem(at: proxy)
         let result = await TimelineCompositionService.shared.makePlayerItem(
-            clips: [TimelineClip(assetID: asset.id, durationSeconds: 1.0)],
+            clips: [TimelineClip(assetID: asset.id, durationFrames: 24)],
             media: [asset],
             quality: .preview,
             proxyURLsByAssetID: [asset.id: proxy]
@@ -71,8 +71,8 @@ struct TimelineProxyCompositionTests {
             kind: .video
         )
         let clips = [
-            TimelineClip(assetID: a.id, timelineStartSeconds: 0, durationSeconds: 1.0),
-            TimelineClip(assetID: b.id, timelineStartSeconds: 1.0, durationSeconds: 1.0)
+            TimelineClip(assetID: a.id, timelineStartFrame: 0, durationFrames: 24),
+            TimelineClip(assetID: b.id, timelineStartFrame: 24, durationFrames: 24)
         ]
         let result = await TimelineCompositionService.shared.makePlayerItem(
             clips: clips, media: [a, b], quality: .preview, proxyURLsByAssetID: [a.id: proxyA]
@@ -102,7 +102,7 @@ struct TimelineProxyCompositionTests {
         ).url
         let asset = MediaAsset(url: original, kind: .video, durationSeconds: 48 * 1001 / 24000.0)
         let result = await TimelineCompositionService.shared.makePlayerItem(
-            clips: [TimelineClip(assetID: asset.id, durationSeconds: 1.0)],
+            clips: [TimelineClip(assetID: asset.id, durationFrames: 24)],
             media: [asset],
             quality: .preview,
             proxyURLsByAssetID: [asset.id: proxy]

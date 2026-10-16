@@ -23,19 +23,14 @@ struct ClipSourceURLs: Equatable, Sendable {
     var usesProxy: Bool
 }
 
+/// Segments are exact `CMTimeRange`s built from frames, so a frame on a cut belongs to exactly one clip.
 private struct TimelineColorSegment: Sendable {
-    var startSeconds: Double
-    var durationSeconds: Double
+    var range: CMTimeRange
     var adjustments: PhotoAdjustments
-
-    func contains(_ seconds: Double) -> Bool {
-        seconds >= startSeconds && seconds < startSeconds + durationSeconds
-    }
 }
 
 private struct TimelineAudioSegment: Sendable {
-    var startSeconds: Double
-    var durationSeconds: Double
+    var range: CMTimeRange
     var adjustments: ClipAudioAdjustments
 }
 
@@ -48,6 +43,9 @@ final class TimelineCompositionService {
     static let shared = TimelineCompositionService()
 
     private init() {}
+
+    nonisolated static let mixedRateWarning =
+        "Clips with a different frame rate from the first clip are fitted to whole frames of the timeline's rate."
 
     /// Proxies are video-only, so audio always comes from the original. A proxy URL whose file
     /// has gone (the cache was cleared) falls back to the original without a warning.
@@ -94,15 +92,18 @@ final class TimelineCompositionService {
     }
 
     /// `quality` has no default: a caller that renders deliverables must say `.export` explicitly
-    /// rather than silently inheriting proxies.
+    /// rather than silently inheriting proxies. Clip positions are frames in `sequenceFrameRate`
+    /// (by default the first clip's rate), and every time is built exactly from frames.
     func makePlayerItem(
         clips: [TimelineClip],
         media: [MediaAsset],
         adjustmentsByClipID: [UUID: PhotoAdjustments] = [:],
         audioAdjustmentsByClipID: [UUID: ClipAudioAdjustments] = [:],
         quality: MediaQuality,
-        proxyURLsByAssetID: [UUID: URL] = [:]
+        proxyURLsByAssetID: [UUID: URL] = [:],
+        sequenceFrameRate: FrameRate? = nil
     ) async -> TimelineCompositionResult {
+        let sequenceRate = sequenceFrameRate ?? clips.first?.frameRate ?? .ntsc23976
         let composition = AVMutableComposition()
         guard let compositionVideoTrack = composition.addMutableTrack(
             withMediaType: .video,
@@ -121,10 +122,14 @@ final class TimelineCompositionService {
             withMediaType: .audio,
             preferredTrackID: kCMPersistentTrackID_Invalid
         )
+        // The default track timescale (600) cannot hold 1001/24000 frame times, so it rounded every
+        // source frame and the player showed the previous frame at some times.
+        compositionVideoTrack.naturalTimeScale = sequenceRate.timescale
+        compositionAudioTrack?.naturalTimeScale = sequenceRate.timescale
         let assetsByID = Dictionary(uniqueKeysWithValues: media.map { ($0.id, $0) })
         let orderedClips = clips
             .filter(\.isEnabled)
-            .sorted { $0.timelineStartSeconds < $1.timelineStartSeconds }
+            .sorted { $0.timelineStartFrame < $1.timelineStartFrame }
 
         var insertedClipIDs: [UUID] = []
         var colorSegments: [TimelineColorSegment] = []
@@ -151,31 +156,38 @@ final class TimelineCompositionService {
             let sources = Self.sourceURLs(for: mediaAsset, quality: quality, proxyURL: proxyURL)
             let sourceAsset = AVURLAsset(url: sources.video)
             let audioAsset = sources.audio == sources.video ? sourceAsset : AVURLAsset(url: sources.audio)
-            guard let assetDuration = try? await sourceAsset.load(.duration) else {
-                warnings.append("Skipped unreadable media: \(mediaAsset.filename)")
-                continue
-            }
             guard let sourceVideoTrack = (try? await sourceAsset.loadTracks(withMediaType: .video))?.first else {
                 warnings.append("Skipped media without a video track: \(mediaAsset.filename)")
                 continue
             }
-
-            let sourceStartSeconds = max(0, clip.sourceStartSeconds)
-            let availableSeconds = max(0, assetDuration.seconds - sourceStartSeconds)
-            let insertedDurationSeconds = min(clip.durationSeconds, availableSeconds)
-            guard insertedDurationSeconds > 0 else {
-                warnings.append("Skipped an empty clip: \(mediaAsset.filename)")
+            guard let trackRange = try? await sourceVideoTrack.load(.timeRange) else {
+                warnings.append("Skipped unreadable media: \(mediaAsset.filename)")
                 continue
             }
 
+            // Frames count from the track's first frame (proxies keep the original's first timestamp).
+            let rate = clip.frameRate
+            let sourceStartFrame = max(0, clip.sourceStartFrame)
+            let availableFrames = max(0, rate.frame(containing: trackRange.end, origin: trackRange.start) - sourceStartFrame)
+            let insertedFrames = min(clip.durationFrames, availableFrames)
+            guard insertedFrames > 0 else {
+                warnings.append("Skipped an empty clip: \(mediaAsset.filename)")
+                continue
+            }
+            if rate != sequenceRate, !warnings.contains(Self.mixedRateWarning) {
+                warnings.append(Self.mixedRateWarning)
+            }
+
+            // A clip in another rate fills whole sequence frames; its source is cut to that slot.
+            let slot = CMTimeRange(
+                start: sequenceRate.time(ofFrame: max(0, clip.timelineStartFrame)),
+                duration: sequenceRate.time(ofFrame: rate.frames(insertedFrames, in: sequenceRate))
+            )
             let sourceRange = CMTimeRange(
-                start: CMTime(seconds: sourceStartSeconds, preferredTimescale: 600),
-                duration: CMTime(seconds: insertedDurationSeconds, preferredTimescale: 600)
+                start: rate.time(ofFrame: sourceStartFrame, origin: trackRange.start),
+                duration: CMTimeMinimum(rate.time(ofFrame: insertedFrames), slot.duration)
             )
-            let insertionTime = CMTime(
-                seconds: max(0, clip.timelineStartSeconds),
-                preferredTimescale: 600
-            )
+            let insertionTime = slot.start
 
             do {
                 try compositionVideoTrack.insertTimeRange(
@@ -215,11 +227,7 @@ final class TimelineCompositionService {
                         at: insertionTime
                     )
                     audioSegments.append(
-                        TimelineAudioSegment(
-                            startSeconds: max(0, clip.timelineStartSeconds),
-                            durationSeconds: insertedDurationSeconds,
-                            adjustments: audioAdjustmentsByClipID[clip.id] ?? .neutral
-                        )
+                        TimelineAudioSegment(range: slot, adjustments: audioAdjustmentsByClipID[clip.id] ?? .neutral)
                     )
                 } catch {
                     warnings.append("Video inserted without audio: \(mediaAsset.filename)")
@@ -228,11 +236,7 @@ final class TimelineCompositionService {
 
             insertedClipIDs.append(clip.id)
             colorSegments.append(
-                TimelineColorSegment(
-                    startSeconds: max(0, clip.timelineStartSeconds),
-                    durationSeconds: insertedDurationSeconds,
-                    adjustments: adjustmentsByClipID[clip.id] ?? .neutral
-                )
+                TimelineColorSegment(range: slot, adjustments: adjustmentsByClipID[clip.id] ?? .neutral)
             )
         }
 
@@ -250,39 +254,33 @@ final class TimelineCompositionService {
         let playerItem = AVPlayerItem(asset: composition)
         if let compositionAudioTrack, !audioSegments.isEmpty {
             let audioParameters = AVMutableAudioMixInputParameters(track: compositionAudioTrack)
+            // Fades are durations, not edit points, so they stay in seconds at the sequence timescale.
+            let fadeScale = sequenceRate.timescale
             for segment in audioSegments {
                 let volume = Float(min(1, max(0, segment.adjustments.volume)))
-                let maximumFade = max(0, segment.durationSeconds / 2)
+                let maximumFade = max(0, segment.range.duration.seconds / 2)
                 let fadeIn = min(maximumFade, max(0, segment.adjustments.fadeInSeconds))
                 let fadeOut = min(maximumFade, max(0, segment.adjustments.fadeOutSeconds))
-                let start = CMTime(seconds: segment.startSeconds, preferredTimescale: 600)
+                let start = segment.range.start
 
                 if fadeIn > 0 {
                     audioParameters.setVolumeRamp(
                         fromStartVolume: 0,
                         toEndVolume: volume,
-                        timeRange: CMTimeRange(
-                            start: start,
-                            duration: CMTime(seconds: fadeIn, preferredTimescale: 600)
-                        )
+                        timeRange: CMTimeRange(start: start, duration: CMTime(seconds: fadeIn, preferredTimescale: fadeScale))
                     )
                 } else {
                     audioParameters.setVolume(volume, at: start)
                 }
 
                 if fadeOut > 0 {
-                    let fadeStart = CMTime(
-                        seconds: segment.startSeconds + segment.durationSeconds - fadeOut,
-                        preferredTimescale: 600
-                    )
+                    let fadeDuration = CMTime(seconds: fadeOut, preferredTimescale: fadeScale)
+                    let fadeStart = CMTimeSubtract(segment.range.end, fadeDuration)
                     audioParameters.setVolume(volume, at: fadeStart)
                     audioParameters.setVolumeRamp(
                         fromStartVolume: volume,
                         toEndVolume: 0,
-                        timeRange: CMTimeRange(
-                            start: fadeStart,
-                            duration: CMTime(seconds: fadeOut, preferredTimescale: 600)
-                        )
+                        timeRange: CMTimeRange(start: fadeStart, duration: fadeDuration)
                     )
                 }
             }
@@ -299,8 +297,8 @@ final class TimelineCompositionService {
                 AVVideoComposition.videoComposition(
                     with: composition,
                     applyingCIFiltersWithHandler: { request in
-                        let seconds = request.compositionTime.seconds
-                        let adjustments = renderSegments.first(where: { $0.contains(seconds) })?.adjustments
+                        let time = request.compositionTime
+                        let adjustments = renderSegments.first(where: { $0.range.containsTime(time) })?.adjustments
                             ?? .neutral
                         var source = request.sourceImage
                         if let renderSize, source.extent.size != renderSize {
@@ -326,8 +324,10 @@ final class TimelineCompositionService {
                 )
             }
             if let videoComposition = videoCompositionResult.value {
-                if let renderSize, let mutable = videoComposition.mutableCopy() as? AVMutableVideoComposition {
-                    mutable.renderSize = renderSize
+                if let mutable = videoComposition.mutableCopy() as? AVMutableVideoComposition {
+                    if let renderSize { mutable.renderSize = renderSize }
+                    // Render exactly once per sequence frame.
+                    mutable.frameDuration = sequenceRate.frameTime
                     playerItem.videoComposition = mutable
                 } else {
                     playerItem.videoComposition = videoComposition

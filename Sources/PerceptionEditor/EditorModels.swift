@@ -58,6 +58,10 @@ struct MediaAsset: Identifiable, Codable, Equatable {
     var durationSeconds: Double?
     var pixelWidth: Int?
     var pixelHeight: Int?
+    /// Video only (schema 11): the track's exact frame rate and frame count, filled in on import
+    /// or when an older project opens.
+    var frameRate: FrameRate?
+    var frameCount: Int64?
 
     init(
         id: UUID = UUID(),
@@ -71,7 +75,9 @@ struct MediaAsset: Identifiable, Codable, Equatable {
         captureDate: Date? = nil,
         durationSeconds: Double? = nil,
         pixelWidth: Int? = nil,
-        pixelHeight: Int? = nil
+        pixelHeight: Int? = nil,
+        frameRate: FrameRate? = nil,
+        frameCount: Int64? = nil
     ) {
         self.id = id
         self.url = url
@@ -85,11 +91,13 @@ struct MediaAsset: Identifiable, Codable, Equatable {
         self.durationSeconds = durationSeconds
         self.pixelWidth = pixelWidth
         self.pixelHeight = pixelHeight
+        self.frameRate = frameRate
+        self.frameCount = frameCount
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, url, kind, importedAt, rating, isFavorite, flag, colorLabel, captureDate
-        case durationSeconds, pixelWidth, pixelHeight
+        case durationSeconds, pixelWidth, pixelHeight, frameRate, frameCount
     }
 
     /// Fields added after schema 1 decode with defaults so older projects keep opening.
@@ -107,30 +115,51 @@ struct MediaAsset: Identifiable, Codable, Equatable {
         durationSeconds = try container.decodeIfPresent(Double.self, forKey: .durationSeconds)
         pixelWidth = try container.decodeIfPresent(Int.self, forKey: .pixelWidth)
         pixelHeight = try container.decodeIfPresent(Int.self, forKey: .pixelHeight)
+        frameRate = try container.decodeIfPresent(FrameRate.self, forKey: .frameRate)
+        frameCount = try container.decodeIfPresent(Int64.self, forKey: .frameCount)
+    }
+
+    /// Frames in the source: the recorded count, or one derived from the duration for files whose
+    /// metadata has not been read yet.
+    var availableFrames: Int64? {
+        if let frameCount { return frameCount }
+        guard let durationSeconds, durationSeconds > 0 else { return nil }
+        return (frameRate ?? .ntsc23976).nearestFrame(toSeconds: durationSeconds)
     }
 
     var filename: String { url.lastPathComponent }
 }
 
+/// One clip on the timeline. Edit points are whole frames (schema 11): `sourceStartFrame` and
+/// `durationFrames` count in the clip's own `frameRate`; `timelineStartFrame` counts in the
+/// project's sequence rate (`EditorProject.sequenceFrameRate`).
 struct TimelineClip: Identifiable, Codable, Equatable, Sendable {
+    /// The shortest clip a trim leaves (a quarter second at 23.976 fps).
+    static let minimumFrames: Int64 = 6
+
     let id: UUID
     var assetID: UUID
     var videoTrack: Int
     var audioTrack: Int
-    var timelineStartSeconds: Double
-    var sourceStartSeconds: Double
-    var durationSeconds: Double
+    var frameRate: FrameRate
+    var timelineStartFrame: Int64
+    var sourceStartFrame: Int64
+    var durationFrames: Int64
     var isEnabled: Bool
     var isMuted: Bool
+    /// Seconds from a schema-10 project whose source has not been read yet. While set, the frame
+    /// fields are a provisional 23.976 fps conversion; it is cleared once the real rate is known.
+    var legacyTiming: LegacyClipTiming?
 
     init(
         id: UUID = UUID(),
         assetID: UUID,
         videoTrack: Int = 0,
         audioTrack: Int = 0,
-        timelineStartSeconds: Double = 0,
-        sourceStartSeconds: Double = 0,
-        durationSeconds: Double,
+        frameRate: FrameRate = .ntsc23976,
+        timelineStartFrame: Int64 = 0,
+        sourceStartFrame: Int64 = 0,
+        durationFrames: Int64,
         isEnabled: Bool = true,
         isMuted: Bool = false
     ) {
@@ -138,11 +167,81 @@ struct TimelineClip: Identifiable, Codable, Equatable, Sendable {
         self.assetID = assetID
         self.videoTrack = videoTrack
         self.audioTrack = audioTrack
-        self.timelineStartSeconds = timelineStartSeconds
-        self.sourceStartSeconds = sourceStartSeconds
-        self.durationSeconds = durationSeconds
+        self.frameRate = frameRate
+        self.timelineStartFrame = timelineStartFrame
+        self.sourceStartFrame = sourceStartFrame
+        self.durationFrames = durationFrames
         self.isEnabled = isEnabled
         self.isMuted = isMuted
+    }
+
+    var sourceStartSeconds: Double { frameRate.seconds(ofFrames: sourceStartFrame) }
+    var durationSeconds: Double { frameRate.seconds(ofFrames: durationFrames) }
+
+    /// Converts a schema-10 clip once its source's real frame rate is known.
+    mutating func adoptFrameRate(_ rate: FrameRate) {
+        guard let legacy = legacyTiming else { return }
+        setFrames(from: legacy, rate: rate)
+        legacyTiming = nil
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, assetID, videoTrack, audioTrack, isEnabled, isMuted
+        case frameRate, timelineStartFrame, sourceStartFrame, durationFrames, legacyTiming
+        // Schema 10 and earlier.
+        case timelineStartSeconds, sourceStartSeconds, durationSeconds
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        assetID = try container.decode(UUID.self, forKey: .assetID)
+        videoTrack = try container.decodeIfPresent(Int.self, forKey: .videoTrack) ?? 0
+        audioTrack = try container.decodeIfPresent(Int.self, forKey: .audioTrack) ?? 0
+        isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
+        isMuted = try container.decodeIfPresent(Bool.self, forKey: .isMuted) ?? false
+        if let frames = try container.decodeIfPresent(Int64.self, forKey: .durationFrames) {
+            frameRate = try container.decode(FrameRate.self, forKey: .frameRate)
+            durationFrames = frames
+            sourceStartFrame = try container.decode(Int64.self, forKey: .sourceStartFrame)
+            timelineStartFrame = try container.decode(Int64.self, forKey: .timelineStartFrame)
+            legacyTiming = try container.decodeIfPresent(LegacyClipTiming.self, forKey: .legacyTiming)
+        } else {
+            let legacy = LegacyClipTiming(
+                timelineStartSeconds: try container.decodeIfPresent(Double.self, forKey: .timelineStartSeconds) ?? 0,
+                sourceStartSeconds: try container.decodeIfPresent(Double.self, forKey: .sourceStartSeconds) ?? 0,
+                durationSeconds: try container.decode(Double.self, forKey: .durationSeconds)
+            )
+            frameRate = .ntsc23976
+            timelineStartFrame = 0
+            sourceStartFrame = 0
+            durationFrames = 1
+            legacyTiming = legacy
+            setFrames(from: legacy, rate: .ntsc23976)
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(assetID, forKey: .assetID)
+        try container.encode(videoTrack, forKey: .videoTrack)
+        try container.encode(audioTrack, forKey: .audioTrack)
+        try container.encode(isEnabled, forKey: .isEnabled)
+        try container.encode(isMuted, forKey: .isMuted)
+        try container.encode(frameRate, forKey: .frameRate)
+        try container.encode(timelineStartFrame, forKey: .timelineStartFrame)
+        try container.encode(sourceStartFrame, forKey: .sourceStartFrame)
+        try container.encode(durationFrames, forKey: .durationFrames)
+        // Unconverted clips keep their original seconds, so nothing is rounded twice.
+        try container.encodeIfPresent(legacyTiming, forKey: .legacyTiming)
+    }
+
+    private mutating func setFrames(from legacy: LegacyClipTiming, rate: FrameRate) {
+        frameRate = rate
+        sourceStartFrame = max(0, rate.nearestFrame(toSeconds: legacy.sourceStartSeconds))
+        durationFrames = max(1, rate.nearestFrame(toSeconds: legacy.durationSeconds))
+        timelineStartFrame = max(0, rate.nearestFrame(toSeconds: legacy.timelineStartSeconds))
     }
 }
 
@@ -349,7 +448,7 @@ struct PhotoPreset: Identifiable, Codable, Equatable, Sendable {
 }
 
 struct EditorProject: Codable, Equatable {
-    static let currentSchemaVersion = 10
+    static let currentSchemaVersion = 11
 
     var schemaVersion = currentSchemaVersion
     var id = UUID()
@@ -363,6 +462,32 @@ struct EditorProject: Codable, Equatable {
     var timelineClips: [TimelineClip] = []
 
     static let starter = EditorProject(name: "Untitled Project")
+
+    /// The rate timeline positions count in: the first clip's rate. Every edit re-packs the
+    /// timeline in this rate, so it stays consistent when the first clip changes.
+    var sequenceFrameRate: FrameRate { timelineClips.first?.frameRate ?? .ntsc23976 }
+
+    /// How many sequence frames a clip occupies.
+    func timelineFrames(of clip: TimelineClip) -> Int64 {
+        clip.frameRate.frames(clip.durationFrames, in: sequenceFrameRate)
+    }
+
+    func timelineStartSeconds(of clip: TimelineClip) -> Double {
+        sequenceFrameRate.seconds(ofFrames: clip.timelineStartFrame)
+    }
+
+    /// Packs the clips end to end in sequence frames.
+    mutating func packTimeline() {
+        var cursor: Int64 = 0
+        for index in timelineClips.indices {
+            timelineClips[index].timelineStartFrame = cursor
+            cursor += timelineFrames(of: timelineClips[index])
+        }
+    }
+
+    var timelineDurationFrames: Int64 {
+        timelineClips.map { $0.timelineStartFrame + timelineFrames(of: $0) }.max() ?? 0
+    }
 
     init(
         schemaVersion: Int = currentSchemaVersion,

@@ -24,7 +24,7 @@ struct ProjectDocumentTests {
             cropRect: CropRect(x: 0.1, y: 0.12, width: 0.72, height: 0.68),
             straightenDegrees: -2.4
         )
-        let clip = TimelineClip(assetID: assetID, durationSeconds: 12.5)
+        let clip = TimelineClip(assetID: assetID, sourceStartFrame: 48, durationFrames: 300)
         let project = EditorProject(
             name: "Documentary",
             media: [asset],

@@ -42,7 +42,9 @@ final class MetalPipelineCache: @unchecked Sendable {
     init(device: MTLDevice? = MTLCreateSystemDefaultDevice()) throws {
         guard let device, let queue = device.makeCommandQueue() else { throw VideoColorError.noMetalDevice }
         var cache: CVMetalTextureCache?
-        guard CVMetalTextureCacheCreate(nil, nil, device, nil, &cache) == kCVReturnSuccess, let cache else {
+        // Output frames are written by compute kernels, so the wrapped textures must say so.
+        let attributes = [kCVMetalTextureUsage as String: NSNumber(value: MTLTextureUsage([.shaderRead, .shaderWrite]).rawValue)]
+        guard CVMetalTextureCacheCreate(nil, nil, device, attributes as CFDictionary, &cache) == kCVReturnSuccess, let cache else {
             throw VideoColorError.noMetalDevice
         }
         self.device = device
@@ -52,7 +54,7 @@ final class MetalPipelineCache: @unchecked Sendable {
 
     /// Compiles the library and every kernel now, so the first frame does not.
     func prepare() throws {
-        for name in ["decodeYCbCr", "encodeLuma", "encodeChroma422", "fitToRenderSize"] { _ = try pipeline(named: name) }
+        for name in ["decodeYCbCr", "encodeLuma", "encodeChroma422", "fitToRenderSize", "fillBlack"] { _ = try pipeline(named: name) }
     }
 
     func pipeline(named name: String) throws -> MTLComputePipelineState {
@@ -70,11 +72,12 @@ final class MetalPipelineCache: @unchecked Sendable {
     /// `CVMetalTexture` must stay alive until the GPU has finished with the texture.
     func texture(for buffer: CVPixelBuffer, plane: Int, format: MTLPixelFormat) throws -> (texture: MTLTexture, owner: CVMetalTexture) {
         var created: CVMetalTexture?
+        // Non-planar buffers (such as 64RGBAHalf) report no plane sizes.
+        let planar = CVPixelBufferIsPlanar(buffer)
+        let width = planar ? CVPixelBufferGetWidthOfPlane(buffer, plane) : CVPixelBufferGetWidth(buffer)
+        let height = planar ? CVPixelBufferGetHeightOfPlane(buffer, plane) : CVPixelBufferGetHeight(buffer)
         lock.lock()
-        let status = CVMetalTextureCacheCreateTextureFromImage(
-            nil, textureCache, buffer, nil, format,
-            CVPixelBufferGetWidthOfPlane(buffer, plane), CVPixelBufferGetHeightOfPlane(buffer, plane), plane, &created
-        )
+        let status = CVMetalTextureCacheCreateTextureFromImage(nil, textureCache, buffer, nil, format, width, height, plane, &created)
         lock.unlock()
         guard status == kCVReturnSuccess, let created, let texture = CVMetalTextureGetTexture(created) else {
             throw VideoColorError.textureCreationFailed(status)

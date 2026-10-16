@@ -122,6 +122,35 @@ struct ProxyGeneratorTests {
         #expect(CMFormatDescriptionGetExtension(format, extensionKey: kCMFormatDescriptionExtension_FullRangeVideo) as? Bool != true)
     }
 
+    /// Frame times are 1001/24000 s. A writer at its default media timescale of 600 rounds them to a whole
+    /// tick (25.025 -> 25), so a proxy frame starts up to 0.4 ms off, and a player asking for a frame's
+    /// exact time shows the frame before it. Every proxy frame must start exactly when its original did.
+    @Test func proxyFramesStartExactlyWhenTheOriginalsDo() async throws {
+        let temp = try TempDirectory()
+        let source = try await writeFrameNumberedMovie(to: temp.url.appendingPathComponent("N.MOV"), frames: 240)
+        let destination = temp.url.appendingPathComponent("proxy.mov")
+        _ = try await ProxyGenerator.generate(source: source, destination: destination, maximumSize: CGSize(width: 128, height: 72))
+
+        func presentationTimes(_ url: URL) async throws -> [CMTime] {
+            let asset = AVURLAsset(url: url)
+            let track = try #require(try await asset.loadTracks(withMediaType: .video).first)
+            let reader = try AVAssetReader(asset: asset)
+            // Decoded frames, one per sample: passthrough buffers can group samples.
+            let output = AVAssetReaderTrackOutput(track: track, outputSettings: [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
+            ])
+            reader.add(output)
+            #expect(reader.startReading())
+            var times: [CMTime] = []
+            while let sample = output.copyNextSampleBuffer() { times.append(sample.presentationTimeStamp) }
+            return times
+        }
+        let original = try await presentationTimes(source), proxy = try await presentationTimes(destination)
+        #expect(original.count == 240 && proxy.count == 240, "\(original.count) original and \(proxy.count) proxy frames")
+        let wrong = zip(original, proxy).enumerated().filter { CMTimeCompare($0.element.0, $0.element.1) != 0 }
+        #expect(wrong.isEmpty, "\(wrong.count) proxy frames start off their original's time, e.g. \(wrong.prefix(3).map { ($0.offset, $0.element.0.seconds, $0.element.1.seconds) })")
+    }
+
     @Test func cancellationLeavesNoFiles() async throws {
         let temp = try TempDirectory()
         let source = try await writeTestMovie(to: temp.url.appendingPathComponent("P1.MOV"), frames: 24, width: 160, height: 90)

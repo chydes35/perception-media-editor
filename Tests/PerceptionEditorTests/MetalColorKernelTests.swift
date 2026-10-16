@@ -337,8 +337,8 @@ struct MetalColorKernelTests {
         let square = try kernels.makeWorkingTexture(width: 40, height: 40)
         let same = try kernels.makeWorkingTexture(width: 40, height: 20)
         let commandBuffer = try #require(kernels.runtime.queue.makeCommandBuffer())
-        kernels.fit(source, into: square, commandBuffer: commandBuffer)
-        kernels.fit(source, into: same, commandBuffer: commandBuffer)
+        try kernels.fit(source, into: square, commandBuffer: commandBuffer)
+        try kernels.fit(source, into: same, commandBuffer: commandBuffer)
         commandBuffer.commit()
         commandBuffer.waitUntilCompleted()
 

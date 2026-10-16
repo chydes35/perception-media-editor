@@ -106,22 +106,44 @@ enum MetalShaderSources {
         chroma.write(float4(code * p.unormPerCode, 0.0, 1.0), gid);
     }
 
-    /// Scales the image to fit the output with its aspect ratio kept, on black.
+    struct FitParameters {
+        float a;              // upright point p -> stored point (a*p.x + c*p.y + tx, b*p.x + d*p.y + ty)
+        float b;
+        float c;
+        float d;
+        float tx;
+        float ty;
+        float orientedWidth;  // size of the upright frame, in stored pixels
+        float orientedHeight;
+    };
+
+    /// Turns the image upright and scales it to fit the output with its aspect ratio kept, on black.
     kernel void fitToRenderSize(
         texture2d<half, access::sample> source [[texture(0)]],
         texture2d<half, access::write> output [[texture(1)]],
+        constant FitParameters &p [[buffer(0)]],
         uint2 gid [[thread_position_in_grid]])
     {
         if (gid.x >= output.get_width() || gid.y >= output.get_height()) { return; }
         float2 s = float2(source.get_width(), source.get_height());
+        float2 o = float2(p.orientedWidth, p.orientedHeight);
         float2 d = float2(output.get_width(), output.get_height());
-        float scale = min(d.x / s.x, d.y / s.y);
-        float2 origin = (d - s * scale) * 0.5;
-        float2 position = (float2(gid) + 0.5 - origin) / scale;
-        bool inside = all(position >= float2(0.0)) && all(position <= s);
+        float scale = min(d.x / o.x, d.y / o.y);
+        float2 origin = (d - o * scale) * 0.5;
+        float2 upright = (float2(gid) + 0.5 - origin) / scale;
+        bool inside = all(upright >= float2(0.0)) && all(upright <= o);
+        float2 stored = float2(p.a * upright.x + p.c * upright.y + p.tx, p.b * upright.x + p.d * upright.y + p.ty);
         constexpr sampler bilinear(filter::linear, address::clamp_to_edge, coord::normalized);
-        half4 color = inside ? source.sample(bilinear, position / s) : half4(0.0h, 0.0h, 0.0h, 1.0h);
+        half4 color = inside ? source.sample(bilinear, stored / s) : half4(0.0h, 0.0h, 0.0h, 1.0h);
         output.write(color, gid);
+    }
+
+    kernel void fillBlack(
+        texture2d<half, access::write> output [[texture(0)]],
+        uint2 gid [[thread_position_in_grid]])
+    {
+        if (gid.x >= output.get_width() || gid.y >= output.get_height()) { return; }
+        output.write(half4(0.0h, 0.0h, 0.0h, 1.0h), gid);
     }
     """
 }

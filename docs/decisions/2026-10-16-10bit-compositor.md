@@ -79,6 +79,17 @@ Probes: [`scripts/video-probes/`](../../scripts/video-probes). Build them with `
 - **Fit** is bilinear, which suits fitting a frame to the render size (1:1 up to about 2×); it is not a high-quality large reduction.
 - Chroma siting is left, as in the camera files (4:2:0 also half a row down). Reading the siting from the format description is not done, because every source seen so far is `Left`.
 
+## Task 4 result: the custom compositor
+
+`TimelineVideoCompositor` (with `PreviewVideoCompositor` and `ExportVideoCompositor`) replaces the `AVVideoComposition(applyingCIFiltersWithHandler:)` path. Architecture is in [ARCHITECTURE.md](../ARCHITECTURE.md#custom-compositor). Findings:
+
+- **Core Image must be given frames tagged `CoreMedia709`.** My first graded frame, tagged plain ITU-R 709, sat 10.2 of 255 levels (mean) from the old handler's output; working-space variants (extended linear sRGB, P3, none) did not help. AVFoundation uses Apple's video Rec. 709 (gamma about 1.96) for 709-tagged sources, and with that tag the mean is 0.3 (max 16) on a frame that uses every stage of the color chain. A neutral frame matches AVFoundation's own decode at a mean of 0.07. The golden frames from the old path are in `Tests/Fixtures/video`.
+- **Rotation moved into this task.** A custom compositor receives stored frames, so the fit kernel applies each clip's `preferredTransform`; without it a portrait phone clip would have played sideways. Verified against AVFoundation's own rotation.
+- **Gaps:** a black instruction. AVFoundation delivers an empty edit as one frame lasting the whole gap, so the exporter (Task 8) must expand it if it wants constant frame rate.
+- **A bug in the proxy generator surfaced:** proxies were written at the default timescale of 600, rounding frame times (frame 150 started 0.4 ms late), so a player asking for that frame's exact time showed frame 149. Fixed by writing at the source's timescale; cache key version 3.
+- **Throughput and memory** are in [PERFORMANCE_TARGETS.md](../PERFORMANCE_TARGETS.md#video-compositor-branch-plan10bit-vlog-color): neutral 4K runs at 75–79 fps, graded 4K at 21–36 fps, a graded 1080p proxy at 83–136 fps. Graded 4K uses about 770–860 MB over idle, over G7's 600 MB budget.
+- **Not covered:** the cancel path (the seek storm never made AVFoundation cancel), on-screen playback in the app (only reader, image generator and player-output paths were driven), and the source viewer, which has no input transform to show until Tasks 6 and 9.
+
 ## Verification still owed
 
 Task 0 measures feasibility only. G1–G9 in the plan remain open. The `VTDecoderXPCService` footprints are single samples taken mid-run. G7 must repeat them as peaks over whole runs.

@@ -984,6 +984,7 @@ final class EditorStore: ObservableObject {
         cullCache.clear()
         BrushMaskCache.shared.clear()
         SubjectMaskRenderer.clearCaches()
+        VideoCompositingEngine.releaseMemoryUnderPressure()
         cancelSubjectSelection()
         let renderer = photoRenderer
         let thumbnails = thumbnailRenderer

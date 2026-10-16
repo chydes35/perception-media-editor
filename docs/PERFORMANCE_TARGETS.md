@@ -18,6 +18,20 @@ The target workload is a 100–200-file Lumix S5 RW2 shoot on an 8 GB M1 MacBook
 
 UI responsiveness during generation is NOT VERIFIED.
 
+## Video compositor (branch `plan/10bit-vlog-color`)
+
+Lumix S5 `P1107157.MOV`, a 10 s UHD V-Log passthrough trim, `RealVideoCompositorTests`, release build, 8 GB M1, one case per process (`PME_COMPOSITOR_CASE`). Speeds vary 20–40% between runs on this passively cooled Mac.
+
+| Case | Speed | App footprint |
+|---|---|---|
+| 4K original, neutral, preview (half float) | 75–79 fps | 12 → 243 MB |
+| 4K original, neutral, export (`x422`) | 68–80 fps | 12 → 340 MB |
+| 4K original, graded, preview | 21–36 fps | 12 → 876 MB |
+| 4K original, graded, export | 23–34 fps | 12 → 785 MB |
+| 1080p proxy, graded, preview | 83–136 fps | 19 → 232 MB |
+
+The grade is the heavy test chain (exposure, contrast, highlights, shadows, temperature, tint, vibrance, saturation, curves, HSL, sharpness, vignette). It costs about 20–30 ms per 4K frame, so graded 4K originals sit at or below real time; playback should use proxies. Graded 4K adds about 770–860 MB over idle, above G7's 600 MB export budget; the likely cause is Core Image's half-float intermediates at 4K. The decoder process (`VTDecoderXPCService`, about 250 MB) is not included. Both are open work for Tasks 5 and 11.
+
 ## Acceptance workload
 
 Run a distinct 100–200-photo shoot through import, culling, Develop, masks, focus, export, save/reopen, and cache release on the target Mac. Record hardware and OS, sample count, file sizes, cold/warm cull latency, slider/mask response, first focus decode, export time, peak process footprint, and footprint after leaving focus/export. Check output pixels and failure recovery. `scripts/profile-memory.sh` is an isolated renderer diagnostic, not a full SwiftUI app measurement.

@@ -7,8 +7,9 @@ import Foundation
 enum ProxyFingerprint {
     static let sampleBytes = 1_048_576
     /// Bumped when existing proxies must be regenerated. 2: full-range sources are converted to video
-    /// range correctly; version-1 proxies of them play about 17% too bright.
-    static let formatVersion = 2
+    /// range correctly; version-1 proxies of them play about 17% too bright. 3: frames are written at
+    /// the source's timescale; older proxies have frame times rounded to 1/600 s.
+    static let formatVersion = 3
 
     /// Version 1 keys carry no version prefix, so they match the proxies already on disk.
     static func key(for url: URL, formatVersion: Int = formatVersion) throws -> String {

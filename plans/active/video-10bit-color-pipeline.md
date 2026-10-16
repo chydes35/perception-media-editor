@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task by task. Steps use checkbox (`- [ ]`) syntax for tracking. Task 0 is a measurement spike whose results can change Tasks 3–4. Do not skip it.
 
-Status: active (Tasks 0–3 done 2026-10-16; see the [compositor](../../docs/decisions/2026-10-16-10bit-compositor.md) and [timing](../../docs/decisions/2026-10-16-frame-exact-timing.md) decision records. Task 4 next. Task 13, Apple Log, is blocked on a real iPhone 15 Pro clip)
+Status: active (Tasks 0–4 done 2026-10-16; see the [compositor](../../docs/decisions/2026-10-16-10bit-compositor.md) and [timing](../../docs/decisions/2026-10-16-frame-exact-timing.md) decision records. Task 5 next. Task 13, Apple Log, is blocked on a real iPhone 15 Pro clip)
 Roadmap sources: [V0.2 — LUT import and intensity control](../../docs/ROADMAP.md), [V0.3 — 1080p and 4K export](../../docs/ROADMAP.md). The 10-bit compositor, frame-exact timing, OCIO and scopes are new V0.3 work and must be added to the roadmap (Task 12).
 Builds on: [video-proxy-pipeline.md](video-proxy-pipeline.md) (branch `feat/video-proxies`: `MediaQuality`, proxy-aware `TimelineCompositionService`)
 Owner: video engine
@@ -215,15 +215,23 @@ enum ColorInputTransform: Codable, Hashable, Sendable {
 
 ### Task 4: Custom compositor replaces the CIFilter handler
 
-- [ ] `TimelineVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable`, with a private serial `DispatchQueue` at `.userInitiated`:
+**Done 2026-10-16** except the source viewer, which has no input transform to show yet. See the decision record's "Task 4 result". Differences from the sketch below:
+- Preview and export are two subclasses (`PreviewVideoCompositor`, `ExportVideoCompositor`), because AVFoundation reads the output format from the compositor class, not from an instruction.
+- **Core Image frames are tagged `CoreMedia709`, not ITU-R 709.** The plan's "same ITU-R 709 transfer" assumption was wrong; plain 709 moved a graded frame by 10 of 255 levels and CoreMedia709 by 0.3. The golden frame from the old handler is checked in (`Tests/Fixtures/video`).
+- Each clip's `preferredTransform` is applied by the compositor's fit kernel (moved here from Task 13.2, because without it a portrait clip would have regressed to sideways). Task 13.2 now only adds the 2020 matrix.
+- A gap is a black instruction, delivered as one frame lasting the whole gap. Task 8's exporter must expand it if it needs a constant frame rate.
+- **Found and fixed:** `ProxyGenerator` wrote proxies at the writer's default timescale of 600, so proxy frame times were off by up to 0.4 ms and a player showed the previous frame at some frame boundaries. The proxy cache key is now version 3, so old proxies regenerate.
+- Tests that block on AVFoundation or the GPU run off the main actor; blocking it starved other main-actor tests and made the proxy workflow tests time out.
+
+- [x] `TimelineVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable`, with a private serial `DispatchQueue` at `.userInitiated`:
   - `sourcePixelBufferAttributes`: Task 0's formats (e.g. `[xf22, x422, 420v]`), `kCVPixelBufferMetalCompatibilityKey: true`, never `32BGRA`.
   - `requiredPixelBufferAttributesForRenderContext`: `64RGBAHalf` for preview, `x422` for export (Task 0). These are chosen from a `MediaQuality` passed through the instruction.
   - `supportsWideColorSourceFrames = true`, `canConformColorOfSourceFrames = true` (macOS 12+), `supportsHDRSourceFrames = false` for now. Per the SDK header (`AVVideoCompositing.h`), a source whose pixel format is **not** in `sourcePixelBufferAttributes` gets converted in both format **and** color space by the engine. So the list must cover every source format on the timeline: `xf22`, `x422`, `420v`, `420f`, plus `xf20`/`x420` for 10-bit 4:2:0 HEVC. Task 0 confirms that a listed format arrives unconverted. The video composition's `colorPrimaries`/`colorTransferFunction`/`colorYCbCrMatrix` also define the *required source* color space. Keep them at 709 to match the sources' tags, so the engine never converts V-Log pixels.
   - `startRequest`: look up the instruction's recipe, run steps 1–6 on one command buffer, then `finish(withComposedVideoFrame:)` in its completion handler. It honors `cancelAllPendingVideoCompositionRequests` by bumping a generation counter, and cancelled requests call `finishCancelledRequest()`.
-- [ ] `TimelineCompositionService.makePlayerItem`: build instructions from frame ranges, set `customVideoCompositorClass`, `frameDuration`, `renderSize` (proxy-fit logic moves into the recipe), and `colorPrimaries`/`colorTransferFunction`/`colorYCbCrMatrix = 709`. Keep the neutral fast path: no compositor when every clip is Rec.709, neutral, unproxied and at render size. V-Log clips always need the compositor.
-- [ ] `makeSourcePlayerItem` uses the same compositor for one clip, so the source viewer shows V-Log through its input transform.
-- [ ] Remove `applyingCIFiltersWithHandler`, `TimelineColorSegment` and `SendableVideoComposition` after the tests below pass.
-- [ ] Tests (`TimelineVideoCompositorTests`, using `AVAssetReaderVideoCompositionOutput` to pull frames headlessly):
+- [x] `TimelineCompositionService.makePlayerItem`: build instructions from frame ranges, set `customVideoCompositorClass`, `frameDuration`, `renderSize` (proxy-fit logic moves into the recipe), and `colorPrimaries`/`colorTransferFunction`/`colorYCbCrMatrix = 709`. Keep the neutral fast path: no compositor when every clip is Rec.709, neutral, unproxied and at render size. V-Log clips always need the compositor.
+- [ ] (Deferred to Tasks 6 and 9, when there is an input transform to show.) `makeSourcePlayerItem` uses the same compositor for one clip, so the source viewer shows V-Log through its input transform.
+- [x] Remove `applyingCIFiltersWithHandler`, `TimelineColorSegment` and `SendableVideoComposition` after the tests below pass.
+- [x] Tests (`TimelineVideoCompositorTests`, using `AVAssetReaderVideoCompositionOutput` to pull frames headlessly):
   - A neutral clip round-trips its code values within 1/1023 (proves no 8-bit stage). Use a 10-bit ramp fixture; count distinct output levels; expect ≥ 1 000 of 1 024.
   - Graded output matches `MediaColorRenderer.render` on the same decoded frame within 2/1023 (shared contract).
   - **No look change for Rec.709 clips.** Decoded Rec.709 R'G'B' enters Core Image linearized with the same ITU-R 709 transfer Core Image applies to 709-tagged sources today, so a graded 8-bit Rec.709 clip matches the old CIFilter-handler output within 4/1023 (the old path was 8-bit). Capture the old output as a golden PNG16 *before* removing the handler. Phase A LUT output (V709) is linearized the same way.

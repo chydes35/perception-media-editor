@@ -365,3 +365,89 @@ func shownFrameNumbers(_ item: AVPlayerItem, frames: Int, frameDuration: CMTime 
     }
     return shown
 }
+
+/// The test pattern's R'G'B' at normalized position (u, v), both 0…1 from the top left: red ramps
+/// across, green down, blue swirls, and the bottom tenth is a grey ramp. Smooth, so 4:2:0 and 4:2:2
+/// chroma handling differences between decoders stay small.
+func colorPatternRGB(u: Double, v: Double) -> (r: Double, g: Double, b: Double) {
+    if v > 0.9 { return (u, u, u) }
+    return (u, v / 0.9, 0.5 + 0.35 * sin(2 * .pi * (1.5 * u + 0.9 * v)))
+}
+
+/// Writes `frames` identical frames of the color pattern, tagged Rec. 709, at 23.976 fps.
+@discardableResult
+func writeColorPatternMovie(
+    to url: URL,
+    codec: AVVideoCodecType = .proRes422,
+    frames: Int = 12,
+    width: Int = 192,
+    height: Int = 108,
+    transform: CGAffineTransform = .identity
+) async throws -> URL {
+    try? FileManager.default.removeItem(at: url)
+    let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+    writer.movieTimeScale = 24000
+    var settings: [String: Any] = [
+        AVVideoCodecKey: codec,
+        AVVideoWidthKey: width,
+        AVVideoHeightKey: height,
+        AVVideoColorPropertiesKey: [
+            AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_709_2,
+            AVVideoTransferFunctionKey: AVVideoTransferFunction_ITU_R_709_2,
+            AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2
+        ]
+    ]
+    if codec == .h264 { settings[AVVideoCompressionPropertiesKey] = [AVVideoQualityKey: 1.0] }
+    let input = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
+    input.expectsMediaDataInRealTime = false
+    input.mediaTimeScale = 24000
+    input.transform = transform
+    let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [
+        kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+        kCVPixelBufferWidthKey as String: width,
+        kCVPixelBufferHeightKey as String: height
+    ])
+    writer.add(input)
+    guard writer.startWriting() else { throw writer.error ?? CocoaError(.fileWriteUnknown) }
+    writer.startSession(atSourceTime: .zero)
+    for index in 0 ..< frames {
+        while !input.isReadyForMoreMediaData { try await Task.sleep(for: .milliseconds(1)) }
+        guard let pool = adaptor.pixelBufferPool else { throw CocoaError(.fileWriteUnknown) }
+        var created: CVPixelBuffer?
+        CVPixelBufferPoolCreatePixelBuffer(nil, pool, &created)
+        guard let buffer = created else { throw CocoaError(.fileWriteUnknown) }
+        CVPixelBufferLockBaseAddress(buffer, [])
+        let base = CVPixelBufferGetBaseAddress(buffer)!.assumingMemoryBound(to: UInt8.self)
+        let stride = CVPixelBufferGetBytesPerRow(buffer)
+        for y in 0 ..< height {
+            for x in 0 ..< width {
+                let color = colorPatternRGB(u: (Double(x) + 0.5) / Double(width), v: (Double(y) + 0.5) / Double(height))
+                let pixel = base + y * stride + x * 4
+                pixel[0] = UInt8((color.b * 255).rounded()); pixel[1] = UInt8((color.g * 255).rounded())
+                pixel[2] = UInt8((color.r * 255).rounded()); pixel[3] = 255
+            }
+        }
+        CVPixelBufferUnlockBaseAddress(buffer, [])
+        guard adaptor.append(buffer, withPresentationTime: CMTime(value: CMTimeValue(index) * 1001, timescale: 24000)) else {
+            throw writer.error ?? CocoaError(.fileWriteUnknown)
+        }
+    }
+    input.markAsFinished()
+    await writer.finishWriting()
+    guard writer.status == .completed else { throw writer.error ?? CocoaError(.fileWriteUnknown) }
+    return url
+}
+
+/// The adjustments the golden frame was captured with: every stage of the color chain at once.
+func goldenGradeAdjustments() -> PhotoAdjustments {
+    var hsl = HSLAdjustments()
+    hsl.blue = HSLBandAdjustment(hue: 0.2, saturation: 0.5, luminance: -0.3)
+    hsl.red = HSLBandAdjustment(hue: 0, saturation: -0.3, luminance: 0.2)
+    return PhotoAdjustments(
+        exposure: 0.4, contrast: 0.15, highlights: -0.3, shadows: 0.2,
+        temperature: 0.1, tint: -0.05, vibrance: 0.3, saturation: 0.2,
+        sharpness: 0.3, vignette: 0.25,
+        curves: ToneCurves(rgb: ToneCurve.presets[1].curve),
+        hsl: hsl
+    )
+}

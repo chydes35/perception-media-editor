@@ -105,6 +105,23 @@ private struct EncodeParameters {
     var unormPerCode: Float = 64.0 / 65535.0
 }
 
+/// Mirrors `FitParameters` in the shader source: eight 4-byte floats.
+private struct FitParameters {
+    var a: Float
+    var b: Float
+    var c: Float
+    var d: Float
+    var tx: Float
+    var ty: Float
+    var orientedWidth: Float
+    var orientedHeight: Float
+
+    init(_ orientation: SourceOrientation) {
+        (a, b, c, d, tx, ty) = (orientation.a, orientation.b, orientation.c, orientation.d, orientation.tx, orientation.ty)
+        (orientedWidth, orientedHeight) = (orientation.orientedWidth, orientation.orientedHeight)
+    }
+}
+
 /// Y'CbCr ⇄ R'G'B' half-float conversion and fitting on the GPU.
 ///
 /// Working frames are `rgba16Float` textures holding gamma-encoded R'G'B' that is not clamped, so
@@ -178,14 +195,24 @@ final class VideoColorKernels: @unchecked Sendable {
         commandBuffer.addCompletedHandler { _ in withExtendedLifetime(owners) {} }
     }
 
-    /// Scales `source` to fit inside `output`, keeping its aspect ratio, on black. Bilinear, so it
-    /// is meant for fitting a frame to the render size, not for large reductions.
-    func fit(_ source: MTLTexture, into output: MTLTexture, commandBuffer: MTLCommandBuffer) {
-        guard let encoder = commandBuffer.makeComputeCommandEncoder(),
-              let pipeline = try? runtime.pipeline(named: "fitToRenderSize") else { return }
-        encoder.setComputePipelineState(pipeline)
+    /// Turns `source` upright (`orientation`, or as stored when nil) and scales it to fit inside
+    /// `output`, keeping its aspect ratio, on black. Bilinear, so it is meant for fitting a frame to
+    /// the render size, not for large reductions.
+    func fit(_ source: MTLTexture, orientation: SourceOrientation? = nil, into output: MTLTexture, commandBuffer: MTLCommandBuffer) throws {
+        var parameters = FitParameters(orientation ?? .identity(width: Float(source.width), height: Float(source.height)))
+        guard let encoder = commandBuffer.makeComputeCommandEncoder() else { throw VideoColorError.noMetalDevice }
+        encoder.setComputePipelineState(try runtime.pipeline(named: "fitToRenderSize"))
         encoder.setTexture(source, index: 0)
         encoder.setTexture(output, index: 1)
+        encoder.setBytes(&parameters, length: MemoryLayout<FitParameters>.stride, index: 0)
+        dispatch(encoder, width: output.width, height: output.height)
+        encoder.endEncoding()
+    }
+
+    func fillBlack(_ output: MTLTexture, commandBuffer: MTLCommandBuffer) throws {
+        guard let encoder = commandBuffer.makeComputeCommandEncoder() else { throw VideoColorError.noMetalDevice }
+        encoder.setComputePipelineState(try runtime.pipeline(named: "fillBlack"))
+        encoder.setTexture(output, index: 0)
         dispatch(encoder, width: output.width, height: output.height)
         encoder.endEncoding()
     }

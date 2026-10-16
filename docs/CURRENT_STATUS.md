@@ -4,7 +4,7 @@ Updated: 2026-10-14. Everything below is on `main` (PR #7 merged at `d9ccdb5`). 
 
 ## What works
 
-Card import with verified copies, culling, RAW develop (white balance with eyedropper, noise reduction, tone curve, HSL, Auto tone and white balance), presets with copy/paste/sync and history, gradient/brush/subject/sky masks, heal and clone, single-photo JPEG/PNG export, and sequential batch JPEG delivery. Video is a V1/A1 timeline with color, waveform, and fades; it is deferred until the photo gates pass.
+Card import with verified copies, culling, RAW develop (white balance with eyedropper, noise reduction, tone curve, HSL, Auto tone and white balance), presets with copy/paste/sync and history, gradient/brush/subject/sky masks, heal and clone, single-photo JPEG/PNG export, and sequential batch JPEG delivery. Video is a V1/A1 timeline with color, waveform, and fades; it is deferred until the photo gates pass. Video proxies (ProRes 422 Proxy) are generated automatically, can be toggled with "Proxies" in the timeline toolbar, and export always uses originals; hands-on UI walkthrough is NOT VERIFIED.
 
 ## Verification
 

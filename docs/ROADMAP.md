@@ -142,7 +142,7 @@ Video (V0.3 below) resumes after the photo phases. Lumix S5 10-bit 4:2:2 and V-L
 ## V1.0 — Perception Workflow
 
 - Documentary, interview, social reel, business promo, and photography templates
-- Proxy generation and original-media export
+- Proxy generation and export-quality source resolution are done (originals are always used for export). Video file export is still the V0.3 "1080p and 4K export" item
 - Reusable Perception title, color, audio, and export presets
 - Batch deliverables and project launcher with recent projects
 - Performance, accessibility, recovery, and release hardening

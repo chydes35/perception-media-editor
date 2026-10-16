@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-Status: active (planned, not started)
+Status: active (implemented; Runtime/UI gate open)
 Roadmap item: [V1.0 — Proxy generation and original-media export](../docs/ROADMAP.md) (pulled forward as the prerequisite for V0.3 video work)
 Owner: video engine
 
@@ -1500,13 +1500,21 @@ git commit -m "Document the video proxy cache contract and performance targets"
 
 | Gate | Required check | Result and evidence |
 | --- | --- | --- |
-| Static/build | `git diff --check`; `./scripts/qa.sh` | PENDING |
-| Unit/integration | `./scripts/test.sh --filter "Proxy|TimelineProxy|VideoProxyWorkflow"` | PENDING |
-| Runtime/UI | Task 7 Step 4 manual walkthrough | PENDING |
-| Media quality | `RealVideoProxyTests` with `PME_VIDEO_SAMPLE` = S5 4:2:2 clip; frame-exact | PENDING |
-| Performance | Proxy ≥ 1.2× realtime and UI responsive on the 8 GB M1 | PENDING |
+| Static/build | `git diff --check`; `./scripts/qa.sh` | PASS: `git diff --check` clean; full suite and app build via the CLT wrapper (`run-tests.sh --no-parallel`): 361 tests in 78 suites passed, 23 skipped (private inputs), 0 failed, build complete. `scripts/qa.sh` itself cannot run here (SDK 27.0 lacks SwiftUIMacros; `rg` is only a shell function so `agent-review.sh` exits 127). Its source review prints informational listings, and its one real check is `git diff --check`. |
+| Unit/integration | `./scripts/test.sh --filter "Proxy|TimelineProxy|VideoProxyWorkflow"` | PASS: covered by the full-suite run above (361 passed, 0 failed) |
+| Runtime/UI | Task 7 Step 4 manual walkthrough | NOT VERIFIED: hands-on walkthrough pending with the controller |
+| Media quality | `RealVideoProxyTests` with `PME_VIDEO_SAMPLE` = S5 4:2:2 clip; frame-exact | PASS: real Lumix S5 clip (H.264 High 4:2:2 10-bit UHD, 23.976), 10 s trim, frame-exact, 1920×1080 |
+| Performance | Proxy ≥ 1.2× realtime and UI responsive on the 8 GB M1 | Proxy generation PASS: 71.4 fps (about 3.0× realtime) vs 28.8 fps gate (debug build, opt-in `RealVideoProxyTests`); proxy decode 345 fps. UI responsiveness during generation and peak memory: NOT VERIFIED |
 
 ## Decisions, discoveries, and remaining work
 
 - Product decision pending: default proxy location (Application Support on the internal drive vs. a folder on the external SSD).
 - Video development is deferred in the roadmap until the photo gates pass. Starting this plan pulls one V1.0 item forward at the owner's request on 2026-10-15.
+- Proxy dimensions round to the nearest even size (not down), so odd aspect ratios do not lose a pixel row or column unevenly.
+- Proxy size uses the rotated render size (preferred transform applied), so portrait clips fit 1920×1080 correctly.
+- Parallel test runs hung when the blocking AVFoundation sample loops ran on Swift's cooperative pool. ProxyGenerator now runs them on a dedicated serial DispatchQueue per job (`requestMediaDataWhenReady`).
+- EditorStore forwards only proxy status case changes, not progress ticks, to bound view invalidation. Badges read progress directly.
+- A proxy finishing in the background rebuilds the timeline only when already in timeline mode; it never takes over the viewer.
+- Measured proxy generation was 71.4 fps in the real test, not the 40.8 fps of the earlier standalone probe.
+- Test environment: this Mac has only Command Line Tools, so `scripts/test.sh` and `scripts/qa.sh` fail (default SDK 27.0 lacks SwiftUIMacros). Workaround: `SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk` plus `-plugin-path` for the swift-testing macros; `build-app.sh` needs the same SDKROOT.
+- Remaining: Runtime/UI walkthrough (including UI responsiveness and peak memory during generation); the plan stays active until it passes.

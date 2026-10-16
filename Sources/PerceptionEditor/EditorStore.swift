@@ -92,6 +92,11 @@ final class EditorStore: ObservableObject {
     @Published private(set) var timelinePlaybackDurationSeconds = 0.0
     static let useProxiesKey = "perceptionEditor.useProxies"
     let proxyStore: ProxyStore
+    let lutLibrary: LUTLibrary
+    /// Every LUT in the library, for the pickers.
+    @Published var availableLUTs: [LUTReference] = []
+    /// LUTs the project uses that could not be found (not in the library or next to the project).
+    @Published var missingLUTs: [LUTReference] = []
     let proxyDefaults: UserDefaults
     @Published private(set) var timelineUsedProxyCount = 0
     @Published var usesProxiesForPlayback = true {
@@ -174,9 +179,14 @@ final class EditorStore: ObservableObject {
         previewRenderOperation: (@Sendable (URL, PhotoAdjustments, UUID?, Bool) async
             -> (RenderedImage?, PhotoPreviewResult?))? = nil,
         proxyStore: ProxyStore = ProxyStore(),
-        proxyDefaults: UserDefaults = TestIsolation.isRunningTests ? TestIsolation.defaults : .standard
+        proxyDefaults: UserDefaults = TestIsolation.isRunningTests ? TestIsolation.defaults : .standard,
+        lutLibrary: LUTLibrary = LUTLibrary()
     ) {
         self.proxyStore = proxyStore
+        self.lutLibrary = lutLibrary
+        availableLUTs = lutLibrary.references()
+        // Shader compilation would otherwise happen on the main actor the first time video plays.
+        Task.detached(priority: .utility) { VideoCompositingEngine.prepare() }
         self.proxyDefaults = proxyDefaults
         usesProxiesForPlayback = proxyDefaults.object(forKey: Self.useProxiesKey) as? Bool ?? true
         self.ingestScanner = ingestScanner
@@ -860,6 +870,7 @@ final class EditorStore: ObservableObject {
         clearAdjustmentHistory()
         backfillPhotoDimensions()
         migrateVideoMetadataIfNeeded()
+        loadReferencedLUTs()
         for asset in project.media where asset.kind == .video || asset.kind == .audio {
             requestAudioWaveform(for: asset)
         }
@@ -1407,6 +1418,26 @@ final class EditorStore: ObservableObject {
         timelinePlaybackPositionSeconds = 0
 
         let url = playbackURL(for: asset)
+        if let inputLUT = resolvedInputLUTs().resolved[asset.id] {
+            // Source color needs the compositor, so the viewer plays a one-clip timeline.
+            let player = AVPlayer()
+            replaceVideoPlayer(player, timelineMode: false)
+            let service = timelineCompositionService
+            let rate = asset.frameRate ?? .ntsc23976
+            let clip = TimelineClip(assetID: asset.id, frameRate: rate, durationFrames: max(1, asset.availableFrames ?? rate.nearestFrame(toSeconds: 5)))
+            let proxy = url == asset.url ? nil : url
+            compositionRebuildTask = Task { [weak self] in
+                guard let self else { return }
+                let result = await service.makePlayerItem(
+                    clips: [clip], media: [asset], quality: .preview,
+                    proxyURLsByAssetID: proxy.map { [asset.id: $0] } ?? [:], inputLUTsByAssetID: [asset.id: inputLUT]
+                )
+                guard !Task.isCancelled, playbackRequestID == requestID, videoPlayer === player else { return }
+                player.replaceCurrentItem(with: result.playerItem ?? AVPlayerItem(url: asset.url))
+                resumeSourcePlayback(player, from: resume)
+            }
+            return
+        }
         guard url != asset.url else {
             let player = AVPlayer(url: asset.url)
             replaceVideoPlayer(player, timelineMode: false)
@@ -1496,6 +1527,11 @@ final class EditorStore: ObservableObject {
         }
     }
 
+    /// Rebuilds timeline playback after a color input or LUT changed, keeping the position.
+    func rebuildTimelineForColorChange() {
+        rebuildTimelinePlayback()
+    }
+
     private func rebuildTimelinePlayback(
         autoplay: Bool = false,
         seekTo requestedPosition: Double? = nil
@@ -1517,6 +1553,7 @@ final class EditorStore: ObservableObject {
         let shouldAutoplay = autoplay || (isTimelinePlayback && isVideoPlaying)
         let clips = project.timelineClips
         let sequenceRate = project.sequenceFrameRate
+        let inputLUTs = resolvedInputLUTs()
         let media = project.media
         let adjustmentsByClipID = project.videoAdjustmentsByClipID
         let audioAdjustmentsByClipID = project.audioAdjustmentsByClipID
@@ -1536,11 +1573,12 @@ final class EditorStore: ObservableObject {
                 audioAdjustmentsByClipID: audioAdjustmentsByClipID,
                 quality: .preview,
                 proxyURLsByAssetID: proxyURLs,
-                sequenceFrameRate: sequenceRate
+                sequenceFrameRate: sequenceRate,
+                inputLUTsByAssetID: inputLUTs.resolved
             )
             guard !Task.isCancelled, playbackRequestID == requestID else { return }
 
-            timelinePlaybackWarnings = result.warnings
+            timelinePlaybackWarnings = result.warnings + inputLUTs.warnings
             timelineUsedProxyCount = result.usedProxyCount
             guard let playerItem = result.playerItem else {
                 replaceVideoPlayer(nil, timelineMode: false)

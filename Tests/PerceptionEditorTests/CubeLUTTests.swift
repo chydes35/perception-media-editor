@@ -205,3 +205,113 @@ struct LUTModelTests {
         #expect(decoded.colorInput(for: asset.id) == .lut(reference))
     }
 }
+
+import CoreImage
+import Metal
+import simd
+
+/// LUTs through `MediaColorRenderer` on the GPU, against `CubeLUT.evaluate` and the analytic tables.
+@Suite(.enabled(if: MTLCreateSystemDefaultDevice() != nil))
+struct LUTRenderTests {
+    /// A 3D LUT from a function of normalized (r, g, b).
+    static func table(size: Int, domainMin: SIMD3<Float> = .zero, domainMax: SIMD3<Float> = .one, _ f: (SIMD3<Double>) -> SIMD3<Double>) -> CubeLUT {
+        var values: [Float] = []
+        for b in 0 ..< size { for g in 0 ..< size { for r in 0 ..< size {
+            let out = f(SIMD3(Double(r), Double(g), Double(b)) / Double(size - 1))
+            values += [Float(out.x), Float(out.y), Float(out.z)]
+        } } }
+        return CubeLUT(kind: .threeD(size: size), domainMin: domainMin, domainMax: domainMax, values: values)
+    }
+
+    /// Registers the LUT under a fresh hash and renders `colors` through it as a creative LUT.
+    static func render(_ colors: [SIMD3<Float>], _ lut: CubeLUT, intensity: Double = 1) -> [SIMD3<Float>] {
+        let hash = LUTLibrary.hash(Data(UUID().uuidString.utf8))
+        LoadedLUTs.shared.insert(lut, hash: hash)
+        var adjustments = PhotoAdjustments()
+        adjustments.lut = LUTApplication(reference: LUTReference(contentHash: hash, displayName: "Test"), intensity: intensity)
+        return HSLPrecisionTests.render(colors, adjustments)
+    }
+
+    static func randomColors(_ count: Int, seed: UInt64) -> [SIMD3<Float>] {
+        var generator = SeededGenerator(seed: seed)
+        return (0 ..< count).map { _ in
+            SIMD3<Float>(Float.random(in: 0 ... 1, using: &generator), Float.random(in: 0 ... 1, using: &generator), Float.random(in: 0 ... 1, using: &generator))
+        }
+    }
+
+    static func worst(_ a: [SIMD3<Float>], _ b: [SIMD3<Float>]) -> Float {
+        zip(a, b).map { simd_abs($0 - $1).max() }.max() ?? .infinity
+    }
+
+    @Test func anIdentityLUTChangesNothing() {
+        let colors = Self.randomColors(4096, seed: 3)
+        let output = Self.render(colors, Self.table(size: 33) { $0 })
+        let error = Self.worst(output, colors)
+        #expect(error <= 0.5 / 1023, "Identity LUT moved colors by \(error * 1023) of 1023")
+    }
+
+    @Test func aChannelSwapWithGammaMatchesTheInterpolationAndTheMath() {
+        let lut = Self.table(size: 17) { c in SIMD3(c.z * c.z, c.x * c.x, c.y * c.y) }
+        let colors = Self.randomColors(4096, seed: 5)
+        let output = Self.render(colors, lut)
+        let interpolated = colors.map { SIMD3<Float>(lut.evaluate(SIMD3<Double>($0))) }
+        let exact = colors.map { c in SIMD3<Float>(c.z * c.z, c.x * c.x, c.y * c.y) }
+        let againstInterpolation = Self.worst(output, interpolated), againstMath = Self.worst(output, exact)
+        print("LUT 17³ swap+gamma: \(againstInterpolation * 1023) vs tetrahedral reference, \(againstMath * 1023) vs the function, of 1023")
+        #expect(againstInterpolation <= 0.5 / 1023)
+        // Linear interpolation of x² between nodes 1/16 apart is off by at most (1/16)²/8.
+        #expect(againstMath <= Float(1.0 / 256 / 8) + 0.5 / 1023)
+    }
+
+    @Test func latticePointsComeOutExactly() {
+        let lut = Self.table(size: 9) { c in SIMD3(sin(c.x * 1.3), c.y * c.z, 1 - c.x) }
+        var colors: [SIMD3<Float>] = []
+        for b in 0 ..< 9 { for g in stride(from: 0, to: 9, by: 2) { for r in stride(from: 0, to: 9, by: 3) {
+            colors.append(SIMD3(Float(r), Float(g), Float(b)) / 8)
+        } } }
+        let output = Self.render(colors, lut)
+        let expected = colors.map { c -> SIMD3<Float> in
+            let index = SIMD3<Int>(Int((c.x * 8).rounded()), Int((c.y * 8).rounded()), Int((c.z * 8).rounded()))
+            return lut.entry(r: index.x, g: index.y, b: index.z)
+        }
+        #expect(Self.worst(output, expected) <= 0.5 / 1023)
+    }
+
+    @Test func intensityZeroIsUntouchedAndHalfIsHalfway() {
+        let colors = Self.randomColors(1024, seed: 7)
+        let lut = Self.table(size: 17) { 1 - $0 }
+        let none = HSLPrecisionTests.render(colors, PhotoAdjustments())
+        #expect(Self.render(colors, lut, intensity: 0) == none, "Intensity 0 must be bit-identical to no LUT")
+        let half = Self.render(colors, lut, intensity: 0.5)
+        let expected = colors.map { ($0 + (1 - $0)) / 2 }
+        #expect(Self.worst(half, expected) <= 0.5 / 1023)
+    }
+
+    @Test func theDomainScalesTheInput() {
+        // Domain 0…2: an input of 1.0 is the middle of the table.
+        let lut = Self.table(size: 5, domainMax: SIMD3(repeating: 2)) { c in c * 0.5 }
+        let output = Self.render([SIMD3(repeating: 1)], lut)
+        #expect(Self.worst(output, [SIMD3(repeating: 0.25)]) <= 0.5 / 1023)
+    }
+
+    @Test func oneDimensionalLUTsInterpolatePerChannel() {
+        let size = 4100 // More than one 4096-entry row of the table image.
+        var values: [Float] = []
+        for i in 0 ..< size {
+            let x = Double(i) / Double(size - 1)
+            values += [Float(x * x), Float(sqrt(x)), Float(1 - x)]
+        }
+        let lut = CubeLUT(kind: .oneD(size: size), values: values)
+        let colors = Self.randomColors(4096, seed: 9)
+        let output = Self.render(colors, lut)
+        let expected = colors.map { SIMD3<Float>(lut.evaluate(SIMD3<Double>($0))) }
+        #expect(Self.worst(output, expected) <= 0.5 / 1023)
+    }
+
+    @Test func aLUTThatIsNotLoadedRendersWithoutIt() {
+        var adjustments = PhotoAdjustments()
+        adjustments.lut = LUTApplication(reference: LUTReference(contentHash: String(repeating: "f", count: 64), displayName: "Gone"))
+        let colors = Self.randomColors(64, seed: 11)
+        #expect(HSLPrecisionTests.render(colors, adjustments) == HSLPrecisionTests.render(colors, PhotoAdjustments()))
+    }
+}

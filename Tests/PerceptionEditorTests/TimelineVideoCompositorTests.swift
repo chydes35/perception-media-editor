@@ -4,12 +4,15 @@ import Foundation
 import ImageIO
 import Metal
 import Testing
+import simd
 @testable import PerceptionEditor
 
 /// The custom compositor, driven the way AVFoundation drives it: through `AVAssetReader`,
 /// `AVAssetImageGenerator` and `AVPlayer`. Without a Metal device these are reported as skipped.
+/// Serialized: run in parallel, these decode-heavy tests saturated AVFoundation's shared media
+/// services and made the proxy fault-injection tests overrun their 5 s bounds.
 @MainActor
-@Suite(.enabled(if: MTLCreateSystemDefaultDevice() != nil))
+@Suite(.serialized, .enabled(if: MTLCreateSystemDefaultDevice() != nil))
 struct TimelineVideoCompositorTests {
     private let service = TimelineCompositionService.shared
 
@@ -264,6 +267,26 @@ struct TimelineVideoCompositorTests {
             worst = max(worst, abs(Double(outputLuma[10 * outputStride + x] >> 6) - expected))
         }
         #expect(worst <= 1.0, "Full-range code values map onto 64…940 within \(worst) codes")
+    }
+
+    @Test func aSourceColorLUTMapsTheDecodedCodeValues() async throws {
+        let temp = try TempDirectory()
+        guard let asset = try await fullRangeAsset(temp) else { Issue.record("No full-range 10-bit HEVC encoder"); return }
+        // A channel swap with a gamma: if Core Image linearized the values first, this would be far off.
+        let lut = LUTRenderTests.table(size: 33) { c in SIMD3(c.z * c.z, c.x, c.y) }
+        let resolved = ResolvedLUT(hash: LUTLibrary.hash(Data(UUID().uuidString.utf8)), lut: lut)
+        let clip = TimelineClip(assetID: asset.id, durationFrames: 6)
+        let result = await service.makePlayerItem(
+            clips: [clip], media: [asset], quality: .preview, renderingPath: .automatic, inputLUTsByAssetID: [asset.id: resolved]
+        )
+        let item = try #require(result.playerItem)
+        #expect(item.videoComposition?.customVideoCompositorClass != nil)
+        let output = halfPixels(try #require(try await allFrames(item, pixelFormat: kCVPixelFormatType_64RGBAHalf).first), row: 0)
+        let decoded = try await referenceRow(decoding: try await sourceFirstFrame(asset.url))
+        let expected = decoded.map { SIMD3<Float>(lut.evaluate(SIMD3<Double>($0))) }
+        let worst = zip(output, expected).map { simd_abs($0 - $1).max() }.max() ?? .infinity
+        print("Source-color LUT in the compositor: worst \(worst * 1023) of 1023")
+        #expect(worst <= 1.0 / 1023, "The input LUT departs from the reference by \(worst * 1023) of 1023 levels")
     }
 
     // MARK: Look

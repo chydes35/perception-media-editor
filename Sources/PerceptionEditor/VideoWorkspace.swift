@@ -221,6 +221,9 @@ struct VideoWorkspace: View {
                         if let color = asset.sourceColor {
                             metadataRow("Color", color.summary)
                         }
+                        if asset.kind == .video {
+                            SourceColorPicker(asset: asset)
+                        }
                     }
                 }
 
@@ -304,6 +307,13 @@ struct VideoWorkspace: View {
                         videoAdjustment("Saturation", keyPath: \.saturation, range: -1...1)
                         videoAdjustment("Sharpness", keyPath: \.sharpness, range: 0...1)
                         videoAdjustment("Vignette", keyPath: \.vignette, range: 0...1)
+
+                        Text("LUT").font(.caption2.weight(.bold)).foregroundStyle(.secondary)
+                        LUTControls(
+                            application: store.selectedVideoAdjustments.lut,
+                            setLUT: { store.setClipLUT($0) },
+                            setIntensity: { value in store.updateSelectedVideoAdjustments { $0.lut?.intensity = value } }
+                        )
                     }
                 } else {
                     Text("Select a timeline clip to trim, split, or reorder it.")

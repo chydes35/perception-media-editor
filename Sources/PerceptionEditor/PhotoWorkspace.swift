@@ -249,6 +249,16 @@ struct PhotoWorkspace: View {
                     HSLPanel()
                 }
 
+                adjustmentGroup("LUT") {
+                    LUTControls(
+                        application: store.selectedAdjustments.lut,
+                        setLUT: { store.setPhotoLUT($0) },
+                        setIntensity: { value in store.updateAdjustments { $0.lut?.intensity = value } },
+                        onEditingChanged: { editing in editing ? store.beginAdjustmentEdit() : store.endAdjustmentEdit() }
+                    )
+                    .disabled(store.selectedAsset == nil)
+                }
+
                 adjustmentGroup("MASKS") {
                     MaskPanel()
                 }

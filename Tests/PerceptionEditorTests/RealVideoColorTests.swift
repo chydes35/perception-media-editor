@@ -136,6 +136,66 @@ struct RealVideoColorTests {
         #expect(Double(outputLevels.count) >= 0.95 * Double(referenceLevels.count), "Distinct blue levels \(outputLevels.count) of \(referenceLevels.count)")
     }
 
+    /// Gate G3: Panasonic's V-Log to V-709 LUT through the compositor against ffmpeg's
+    /// `lut3d=interp=tetrahedral` on the same frame. Make the reference with
+    /// `scripts/video-probes/ffmpeg-lut-reference.sh <clip> <lut> <out.raw>`, then run with
+    /// PME_VLOG_SHORT=<clip> PME_VLOG_LUT=<lut> PME_LUT_REFERENCE=<out.raw>.
+    @Test(.enabled(if: ["PME_VLOG_SHORT", "PME_VLOG_LUT", "PME_LUT_REFERENCE"].allSatisfy { ProcessInfo.processInfo.environment[$0] != nil }
+                   && MTLCreateSystemDefaultDevice() != nil))
+    func panasonicLUTMatchesFFmpeg() async throws {
+        let environment = ProcessInfo.processInfo.environment
+        let clip = URL(fileURLWithPath: environment["PME_VLOG_SHORT"]!)
+        let referenceURL = URL(fileURLWithPath: environment["PME_LUT_REFERENCE"]!)
+        let lut = try CubeLUT(contentsOf: URL(fileURLWithPath: environment["PME_VLOG_LUT"]!))
+
+        var asset = MediaAsset(url: clip, kind: .video)
+        asset.apply(await VideoMediaService.shared.metadata(for: clip))
+        let rate = try #require(asset.frameRate)
+        let item = try #require(await TimelineCompositionService.shared.makePlayerItem(
+            clips: [TimelineClip(assetID: asset.id, frameRate: rate, durationFrames: 1)], media: [asset], quality: .preview,
+            inputLUTsByAssetID: [asset.id: ResolvedLUT(hash: "g3-\(UUID())", lut: lut)]
+        ).playerItem)
+        let reader = try AVAssetReader(asset: item.asset)
+        let output = AVAssetReaderVideoCompositionOutput(
+            videoTracks: try await item.asset.loadTracks(withMediaType: .video),
+            videoSettings: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_64RGBAHalf]
+        )
+        output.videoComposition = item.videoComposition
+        reader.add(output)
+        #expect(reader.startReading())
+        let sample = try #require(output.copyNextSampleBuffer())
+        let frame = try #require(CMSampleBufferGetImageBuffer(sample))
+        reader.cancelReading()
+
+        let width = CVPixelBufferGetWidth(frame), height = CVPixelBufferGetHeight(frame)
+        let reference = try Data(contentsOf: referenceURL)
+        try #require(reference.count == width * height * 12, "The reference is \(reference.count) bytes, not a \(width)×\(height) gbrpf32le frame")
+        CVPixelBufferLockBaseAddress(frame, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(frame, .readOnly) }
+        let ours = try #require(CVPixelBufferGetBaseAddress(frame)).assumingMemoryBound(to: Float16.self)
+        let stride = CVPixelBufferGetBytesPerRow(frame) / 2
+        var differences: [Float] = []
+        differences.reserveCapacity(width * height / 2)
+        reference.withUnsafeBytes { raw in
+            let planes = raw.bindMemory(to: Float.self)
+            let plane = width * height
+            // Even columns only: there 4:2:2 chroma is a sample, not an interpolation, in both decoders.
+            for y in 0 ..< height {
+                for x in Swift.stride(from: 0, to: width, by: 2) {
+                    let i = y * width + x, o = y * stride + x * 4
+                    let theirs = SIMD3<Float>(planes[2 * plane + i], planes[i], planes[plane + i]) // R, G, B from G, B, R planes
+                    let mine = SIMD3<Float>(Float(ours[o]), Float(ours[o + 1]), Float(ours[o + 2]))
+                    differences.append(simd_abs(mine - theirs).max())
+                }
+            }
+        }
+        differences.sort()
+        let p999 = differences[Int(Double(differences.count - 1) * 0.999)] * 1023, worst = differences.last! * 1023
+        let mean = differences.reduce(0, +) / Float(differences.count) * 1023
+        print("G3: \(differences.count) pixels, mean \(mean), 99.9th percentile \(p999), max \(worst) of 1023")
+        #expect(p999 <= 2 && worst <= 4, "99.9th percentile \(p999), max \(worst) of 1023 levels")
+    }
+
     /// Grades a frame texture through `MediaColorRenderer` with Core Image, synchronously on the GPU.
     private static func grade(_ input: MTLTexture, adjustments: PhotoAdjustments, space: CGColorSpace, into output: MTLTexture, runtime: MetalPipelineCache) throws {
         let context = CIContext(mtlCommandQueue: runtime.queue, options: [.workingFormat: CIFormat.RGBAh, .cacheIntermediates: false])

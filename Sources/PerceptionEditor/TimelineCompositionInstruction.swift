@@ -1,12 +1,21 @@
 @preconcurrency import AVFoundation
 import Foundation
 
+/// A LUT with the content hash that identifies (and caches) its table.
+struct ResolvedLUT: Sendable, Equatable {
+    var hash: String
+    var lut: CubeLUT
+}
+
 /// What the compositor does with one clip's frames. Immutable, so any thread may read it.
 struct ClipRenderRecipe: Sendable {
     var adjustments: PhotoAdjustments
     var orientation: SourceOrientation
     /// How the source's Y'CbCr was matrixed. The recipe's own pixel format says range and depth.
     var matrix: YCbCrMatrix
+    /// Source color: a LUT applied to the decoded code values (such as V-Log to V-709) before
+    /// anything treats them as Rec. 709.
+    var inputLUT: ResolvedLUT? = nil
 }
 
 /// One stretch of the timeline: either a clip's recipe, or (with no recipe) black for a gap.

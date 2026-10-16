@@ -63,6 +63,11 @@ enum MediaColorRenderer {
             image = applyHSL(hsl, to: image)
         }
 
+        // A creative LUT comes after the global adjustments and before local ones.
+        if let lut = adjustments.lut {
+            image = applyCreativeLUT(lut, to: image)
+        }
+
         // Local adjustments come after the global ones, as in Lightroom. Video clips have no masks.
         if includesGeometry {
             image = applyMasks(image, adjustments: adjustments, sourceExtent: sourceExtent)

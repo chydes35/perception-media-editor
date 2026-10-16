@@ -29,6 +29,8 @@ Lumix S5 `P1107157.MOV`, a 10 s UHD V-Log passthrough trim, `RealVideoCompositor
 | 4K original, graded, preview | 21–36 fps | 12 → 876 MB |
 | 4K original, graded, export | 23–34 fps | 12 → 785 MB |
 | 1080p proxy, graded, preview | 83–136 fps | 19 → 232 MB |
+| 4K original, Panasonic V-Log to V-709 source color, preview | 78.7 fps | 17 → 567 MB |
+| 4K original, Panasonic V-Log to V-709 source color, export | 79.2 fps | 17 → 474 MB |
 
 The grade is the heavy test chain (exposure, contrast, highlights, shadows, temperature, tint, vibrance, saturation, curves, HSL, sharpness, vignette). It costs about 20–30 ms per 4K frame, so graded 4K originals sit at or below real time; playback should use proxies. Graded 4K adds about 770–860 MB over idle, above G7's 600 MB export budget; the likely cause is Core Image's half-float intermediates at 4K. The decoder process (`VTDecoderXPCService`, about 250 MB) is not included. Both are open work for Tasks 5 and 11.
 

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task by task. Steps use checkbox (`- [ ]`) syntax for tracking. Task 0 is a measurement spike whose results can change Tasks 3–4. Do not skip it.
 
-Status: active (Tasks 0–5 done 2026-10-16 (G5 visual part open); see the [compositor](../../docs/decisions/2026-10-16-10bit-compositor.md) and [timing](../../docs/decisions/2026-10-16-frame-exact-timing.md) decision records. Task 6 next. Task 13, Apple Log, is blocked on a real iPhone 15 Pro clip)
+Status: active (Tasks 0–6 done 2026-10-16 (G5 visual part and LUT UI walkthrough open); see the [compositor](../../docs/decisions/2026-10-16-10bit-compositor.md) and [timing](../../docs/decisions/2026-10-16-frame-exact-timing.md) decision records. Task 7 next. Task 13, Apple Log, is blocked on a real iPhone 15 Pro clip)
 Roadmap sources: [V0.2 — LUT import and intensity control](../../docs/ROADMAP.md), [V0.3 — 1080p and 4K export](../../docs/ROADMAP.md). The 10-bit compositor, frame-exact timing, OCIO and scopes are new V0.3 work and must be added to the roadmap (Task 12).
 Builds on: [video-proxy-pipeline.md](video-proxy-pipeline.md) (branch `feat/video-proxies`: `MediaQuality`, proxy-aware `TimelineCompositionService`)
 Owner: video engine
@@ -263,13 +263,20 @@ Root cause: the 48³ trilinear cube interpolates a function with a hue discontin
 
 ### Task 6: `.cube` LUT import and intensity (Phase A, roadmap V0.2)
 
-- [ ] `CubeLUT` parser: `TITLE`, `LUT_3D_SIZE` 2–65, `LUT_1D_SIZE` up to 65 536, `DOMAIN_MIN`/`DOMAIN_MAX`, comments, CRLF, and both locale-proof decimals and scientific notation. It rejects NaN, the wrong number of rows, mixed 1D/3D and files over 64 MB, with readable messages. Red varies fastest (Adobe spec).
-- [ ] `LUTLibrary`: import copies the file into the shoot folder `LUTs/<sha256-prefix>-<name>.cube`, so the project is self-contained. The original file is never modified. `LUTReference { contentHash, displayName }`. A missing or corrupt LUT gives a visible warning and renders without it. It never crashes or blocks.
-- [ ] Model: `PhotoAdjustments.lut: LUTApplication? { reference, intensity 0…1 }` (optional field, decodes from old files). Video V-Log input uses `ColorInputTransform.lut` (Task 2) before the adjustments. A creative LUT on a clip uses `PhotoAdjustments.lut` after them, the same as on photos.
-- [ ] Rendering: a 3D `MTLTexture` (`rgba16Float`; 65³ = 2.2 MB), **tetrahedral** interpolation in the shader, domain scaling, and `mix(input, lut, intensity)`. Photos use `MetalColorKernel`. Input-transform LUTs apply to decoded R'G'B' code values (normalized by 1023 for full range). This matters: going through Core Image's 709-tagged color space would linearize the V-Log values first.
-- [ ] UI: a "Source color" picker in the video inspector (Automatic / None / LUT… / ACES) and "LUT + Intensity" in Photo Color and Video Color. Imports go through `NSOpenPanel`; work stays off the main actor.
-- [ ] Tests (`CubeLUTTests`): the parser accepts or rejects 12 crafted files. An identity 33³ LUT is a no-op within 0.5/1023. A known analytic LUT (a channel swap plus gamma 2.0) at 17³ matches the analytic result. Tetrahedral interpolation is exact on lattice points. Intensity 0 is bit-identical to the input. A project referencing a deleted LUT opens with a warning. Re-importing the same bytes deduplicates.
-- [ ] Real gate **G3**.
+**Done 2026-10-16** except the in-app UI walkthrough. G3 PASS. See the decision record's "Task 6 result". Differences from the sketch below:
+- The library lives in Application Support (by content hash) and is copied next to the project on save; an unsaved project has no shoot folder to copy into yet.
+- Rendering is one Core Image kernel (tetrahedral, domain, intensity) for photos, clips and the compositor's source color, not a Metal 3D texture. See Task 5 for why Core Image kernels.
+- Shaper LUTs (1D plus 3D in one file) are rejected with a message.
+- Source color is set per media item; the video bin selects one item at a time, so there is no multi-select yet.
+- G3 compares even columns over one frame, with ffmpeg told to keep left-sited chroma uninterpolated. Its default chroma interpolation differs from the exact sample by up to 34 of 1023.
+
+- [x] `CubeLUT` parser: `TITLE`, `LUT_3D_SIZE` 2–65, `LUT_1D_SIZE` up to 65 536, `DOMAIN_MIN`/`DOMAIN_MAX`, comments, CRLF, and both locale-proof decimals and scientific notation. It rejects NaN, the wrong number of rows, mixed 1D/3D and files over 64 MB, with readable messages. Red varies fastest (Adobe spec).
+- [x] `LUTLibrary`: import copies the file into the shoot folder `LUTs/<sha256-prefix>-<name>.cube`, so the project is self-contained. The original file is never modified. `LUTReference { contentHash, displayName }`. A missing or corrupt LUT gives a visible warning and renders without it. It never crashes or blocks.
+- [x] Model: `PhotoAdjustments.lut: LUTApplication? { reference, intensity 0…1 }` (optional field, decodes from old files). Video V-Log input uses `ColorInputTransform.lut` (Task 2) before the adjustments. A creative LUT on a clip uses `PhotoAdjustments.lut` after them, the same as on photos.
+- [x] Rendering: a 3D `MTLTexture` (`rgba16Float`; 65³ = 2.2 MB), **tetrahedral** interpolation in the shader, domain scaling, and `mix(input, lut, intensity)`. Photos use `MetalColorKernel`. Input-transform LUTs apply to decoded R'G'B' code values (normalized by 1023 for full range). This matters: going through Core Image's 709-tagged color space would linearize the V-Log values first.
+- [x] UI: a "Source color" picker in the video inspector (Automatic / None / LUT… / ACES) and "LUT + Intensity" in Photo Color and Video Color. Imports go through `NSOpenPanel`; work stays off the main actor.
+- [x] Tests (`CubeLUTTests`): the parser accepts or rejects 12 crafted files. An identity 33³ LUT is a no-op within 0.5/1023. A known analytic LUT (a channel swap plus gamma 2.0) at 17³ matches the analytic result. Tetrahedral interpolation is exact on lattice points. Intensity 0 is bit-identical to the input. A project referencing a deleted LUT opens with a warning. Re-importing the same bytes deduplicates.
+- [x] Real gate **G3**.
 
 ### Task 7: Waveform and vectorscope (Metal)
 

@@ -43,6 +43,16 @@ private final class CompositorStatisticsStore: @unchecked Sendable {
 /// queue, the color kernels, a bounded pool of working frames, and the Core Image grade stage.
 final class VideoCompositingEngine: @unchecked Sendable {
     static let shared: VideoCompositingEngine? = try? VideoCompositingEngine()
+    /// Whether the compositor can run, without building the engine (which compiles shaders).
+    static let isSupported = MTLCreateSystemDefaultDevice() != nil
+
+    /// Builds the engine and compiles the video and Core Image color kernels. It takes from a few
+    /// hundred milliseconds to seconds with a cold shader cache, so call it off the main actor.
+    static func prepare() {
+        _ = shared
+        _ = HSLColorKernel.isAvailable
+        _ = LUTKernel.isAvailable
+    }
     /// Set once the engine exists, so memory pressure can release its textures without creating it.
     nonisolated(unsafe) private static weak var created: VideoCompositingEngine?
 
@@ -101,7 +111,7 @@ final class VideoCompositingEngine: @unchecked Sendable {
             }
             let sourceWidth = CVPixelBufferGetWidth(source), sourceHeight = CVPixelBufferGetHeight(source)
             let needsFit = !(recipe.orientation.isIdentity && sourceWidth == renderWidth && sourceHeight == renderHeight)
-            let needsGrade = recipe.adjustments != .neutral
+            let needsGrade = recipe.adjustments != .neutral || recipe.inputLUT != nil
 
             // Each stage writes the next stage's input; the last writes `final`.
             let decoded = (needsFit || needsGrade) ? temporary(sourceWidth, sourceHeight) : final
@@ -116,7 +126,7 @@ final class VideoCompositingEngine: @unchecked Sendable {
                     current = fitted
                 }
                 if needsGrade {
-                    guard grader.grade(current, adjustments: recipe.adjustments, into: final, commandBuffer: commandBuffer) else {
+                    guard grader.grade(current, adjustments: recipe.adjustments, inputLUT: recipe.inputLUT, into: final, commandBuffer: commandBuffer) else {
                         throw VideoColorError.textureCreationFailed(kCVReturnError)
                     }
                 }

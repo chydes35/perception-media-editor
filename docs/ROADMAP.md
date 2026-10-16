@@ -120,7 +120,7 @@ Video (V0.3 below) resumes after the photo phases. Lumix S5 10-bit 4:2:2 and V-L
 
 - [ ] RAW-specific development controls and metadata panel
 - [ ] Batch selection, adjustment sync, and batch export
-- [ ] LUT import and intensity control
+- [ ] LUT import and intensity control (implemented on branch `plan/10bit-vlog-color` for photos and video, with the V-Log source-color LUT; G3 PASS; in-app UI walkthrough NOT VERIFIED)
 - [x] Persistent thumbnail cache and media relinking
 - [x] Before/after split and side-by-side views
 - [x] Interactive crop and straighten with preview zoom and pan

@@ -7,7 +7,9 @@ import Testing
 /// 600 (one 23.976 frame is 25.025 ticks), a cut whose source and timeline positions round
 /// differently started a fraction of a tick early, so the player showed the previous source frame:
 /// 55 of the 240 output frames in `shuffledCutsShowExactlyTheirFrames` before schema 11.
+/// Serialized for the same reason as `TimelineVideoCompositorTests`: each test decodes hundreds of frames.
 @MainActor
+@Suite(.serialized)
 struct TimelineFrameExactTests {
     private func clips(_ ranges: [(start: Int, count: Int)], asset: MediaAsset) -> [TimelineClip] {
         var cursor: Int64 = 0

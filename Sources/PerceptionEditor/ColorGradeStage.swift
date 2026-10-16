@@ -22,18 +22,31 @@ final class ColorGradeStage: @unchecked Sendable {
     }
 
     /// Reads `input` and writes the graded frame into `output` (same size), both `rgba16Float`.
-    /// Returns false when Core Image cannot wrap the texture.
+    /// With an `inputLUT`, the frame's values are code values: the LUT maps them first, and its
+    /// output is then treated as Rec. 709. Returns false when Core Image cannot wrap the texture.
     @discardableResult
-    func grade(_ input: MTLTexture, adjustments: PhotoAdjustments, into output: MTLTexture, commandBuffer: MTLCommandBuffer) -> Bool {
-        guard let wrapped = CIImage(mtlTexture: input, options: [.colorSpace: space]) else { return false }
+    func grade(
+        _ input: MTLTexture, adjustments: PhotoAdjustments, inputLUT: ResolvedLUT? = nil,
+        into output: MTLTexture, commandBuffer: MTLCommandBuffer
+    ) -> Bool {
         let bounds = CGRect(x: 0, y: 0, width: input.width, height: input.height)
         // Textures have a top-left origin and Core Image a bottom-left one: flip in, grade, flip out.
         let flip = CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: 0, ty: CGFloat(input.height))
-        let upright = wrapped.transformed(by: flip)
-        let graded = MediaColorRenderer.render(upright, adjustments: adjustments, includesGeometry: false)
-            .cropped(to: bounds)
-            .transformed(by: flip)
-        context.render(graded, to: output, commandBuffer: commandBuffer, bounds: bounds, colorSpace: space)
+        var image: CIImage
+        if let inputLUT {
+            // Untagged, so Core Image does not linearize the log values before the LUT sees them.
+            guard let raw = CIImage(mtlTexture: input, options: [.colorSpace: NSNull()]),
+                  let mapped = LUTKernel.apply(inputLUT.lut, cacheKey: inputLUT.hash, intensity: 1, to: raw.transformed(by: flip)),
+                  let working = mapped.matchedToWorkingSpace(from: space) else { return false }
+            image = working
+        } else {
+            guard let wrapped = CIImage(mtlTexture: input, options: [.colorSpace: space]) else { return false }
+            image = wrapped.transformed(by: flip)
+        }
+        if adjustments != .neutral {
+            image = MediaColorRenderer.render(image, adjustments: adjustments, includesGeometry: false)
+        }
+        context.render(image.cropped(to: bounds).transformed(by: flip), to: output, commandBuffer: commandBuffer, bounds: bounds, colorSpace: space)
         return true
     }
 }

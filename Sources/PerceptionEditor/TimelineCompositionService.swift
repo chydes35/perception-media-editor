@@ -110,7 +110,8 @@ final class TimelineCompositionService {
         proxyURLsByAssetID: [UUID: URL] = [:],
         sequenceFrameRate: FrameRate? = nil,
         renderingPath: TimelineRenderingPath = .automatic,
-        statisticsKey: UUID? = nil
+        statisticsKey: UUID? = nil,
+        inputLUTsByAssetID: [UUID: ResolvedLUT] = [:]
     ) async -> TimelineCompositionResult {
         let sequenceRate = sequenceFrameRate ?? clips.first?.frameRate ?? .ntsc23976
         let composition = AVMutableComposition()
@@ -234,7 +235,8 @@ final class TimelineCompositionService {
                 recipe: ClipRenderRecipe(
                     adjustments: adjustmentsByClipID[clip.id] ?? .neutral,
                     orientation: SourceOrientation(preferredTransform: transform, sourceSize: naturalSize),
-                    matrix: mediaAsset.sourceColor?.matrix ?? .rec709
+                    matrix: mediaAsset.sourceColor?.matrix ?? .rec709,
+                    inputLUT: inputLUTsByAssetID[mediaAsset.id]
                 ),
                 transform: transform,
                 usesProxy: sources.usesProxy,
@@ -323,13 +325,14 @@ final class TimelineCompositionService {
         guard let first = segments.first else { return }
         let proxied = segments.first(where: \.usesProxy)
         let needsCompositor = renderingPath == .compositor || segments.contains {
-            $0.usesProxy || $0.isLog || $0.recipe.adjustments != .neutral || $0.recipe.orientation != first.recipe.orientation
+            $0.usesProxy || $0.isLog || $0.recipe.inputLUT != nil || $0.recipe.adjustments != .neutral
+                || $0.recipe.orientation != first.recipe.orientation
         }
         guard needsCompositor else {
             track.preferredTransform = first.transform
             return
         }
-        guard VideoCompositingEngine.shared != nil else {
+        guard VideoCompositingEngine.isSupported else {
             warnings.append("The GPU is unavailable, so clip color and proxies cannot be previewed.")
             track.preferredTransform = first.transform
             return

@@ -76,11 +76,14 @@ struct RealVideoCompositorTests {
         // PME_COMPOSITOR_CASE=<text> runs only the cases whose title contains it, so each can be
         // measured in a fresh process (footprints accumulate across cases in one process).
         let only = ProcessInfo.processInfo.environment["PME_COMPOSITOR_CASE"]
-        func run(_ title: String, quality: MediaQuality, format: OSType, adjustments: PhotoAdjustments, proxy: URL? = nil) async throws {
+        // PME_VLOG_LUT adds cases with Panasonic's V-Log to V-709 as the source color.
+        let vLogLUT = try ProcessInfo.processInfo.environment["PME_VLOG_LUT"].map { ResolvedLUT(hash: "throughput", lut: try CubeLUT(contentsOf: URL(fileURLWithPath: $0))) }
+        func run(_ title: String, quality: MediaQuality, format: OSType, adjustments: PhotoAdjustments, proxy: URL? = nil, inputLUT: ResolvedLUT? = nil) async throws {
             if let only, !title.contains(only) { return }
             let result = await service.makePlayerItem(
                 clips: [clip], media: [asset], adjustmentsByClipID: [clip.id: adjustments], quality: quality,
-                proxyURLsByAssetID: proxy.map { [asset.id: $0] } ?? [:], renderingPath: .compositor
+                proxyURLsByAssetID: proxy.map { [asset.id: $0] } ?? [:], renderingPath: .compositor,
+                inputLUTsByAssetID: inputLUT.map { [asset.id: $0] } ?? [:]
             )
             let m = try await measure(try #require(result.playerItem), pixelFormat: format, frames: frames)
             print("COMPOSITOR \(title): \(m.count) frames, \(String(format: "%.1f", m.fps)) fps, app footprint \(String(format: "%.0f", m.baselineMB)) -> peak \(String(format: "%.0f", m.peakMB)) MB")
@@ -93,6 +96,10 @@ struct RealVideoCompositorTests {
         // Export quality (10-bit 4:2:2 frames), as the exporter will pull them.
         try await run("4K original, neutral, export", quality: .export, format: kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange, adjustments: .neutral)
         try await run("4K original, graded, export", quality: .export, format: kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange, adjustments: graded)
+        if let vLogLUT {
+            try await run("4K original, V-Log LUT, preview", quality: .preview, format: kCVPixelFormatType_64RGBAHalf, adjustments: .neutral, inputLUT: vLogLUT)
+            try await run("4K original, V-Log LUT, export", quality: .export, format: kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange, adjustments: .neutral, inputLUT: vLogLUT)
+        }
         // A 1080p ProRes proxy, graded, as timeline playback with proxies uses it.
         let proxy = try await ProxyGenerator.generate(source: trimmed, destination: temp.url.appendingPathComponent("proxy.mov")).url
         try await run("1080p proxy, graded, preview", quality: .preview, format: kCVPixelFormatType_64RGBAHalf, adjustments: graded, proxy: proxy)

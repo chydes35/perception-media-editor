@@ -60,6 +60,14 @@ Probes: [`scripts/video-probes/`](../../scripts/video-probes). Build them with `
 - **Keeping the AVFoundation proxy conversion:** it round-trips inside our compositor, but AVPlayer, Core Image, the source viewer and any other app see a brighter, clipped proxy.
 - **Linking OCIO:** see Task 10. Generated shaders already meet the accuracy target.
 
+## Proxy fix result (same day)
+
+`ProxyGenerator` now reads full-range sources as `xf22`, scaled to proxy size by the reader. The probe found that the reader's scaled `x422` path is worse than the unscaled one: luma + 64 **and** clipped at 940. `VTPixelTransferSession` converts to `x422`, and the probe confirmed its scaling (mean 430.7 against an expected 430.7). The frames are appended through a pixel-buffer adaptor. The proxy key gained a format version (2).
+
+- Synthetic full-range HEVC 4:2:2 fixture: proxy RGB within 4/1023 of the original (`fullRangeSourceProxyShowsTheOriginalsColors`). It failed by 146 levels before the fix.
+- Real `P1107158`: cell-mean difference 1.8/1023, against 104.5 with the old generator.
+- Throughput on the 10 s UHD trim: 72.0 fps debug and 79.6 fps release, up from 68.5 debug.
+
 ## Verification still owed
 
 Task 0 measures feasibility only. G1–G9 in the plan remain open. The `VTDecoderXPCService` footprints are single samples taken mid-run. G7 must repeat them as peaks over whole runs.

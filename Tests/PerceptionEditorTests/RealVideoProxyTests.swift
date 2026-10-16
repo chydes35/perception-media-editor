@@ -3,8 +3,29 @@ import Foundation
 import Testing
 @testable import PerceptionEditor
 
-/// Run with PME_VIDEO_SAMPLE=/Volumes/ExSSD1/Pictures/110_PANA/P1107157.MOV on the target M1.
+/// Run with PME_VIDEO_SAMPLE=/Volumes/ExSSD1/Pictures/110_PANA/P1107157.MOV and
+/// PME_VLOG_SHORT=/Volumes/ExSSD1/Pictures/110_PANA/P1107158.MOV (full-range V-Log) on the target M1.
 struct RealVideoProxyTests {
+    /// Gate G2 (proxy part): a V-Log proxy must look like its original. Version-1 proxies were about
+    /// 17% brighter because AVFoundation's full-to-video-range conversion only added 64 to luma.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["PME_VLOG_SHORT"] != nil))
+    func lumixVLogProxyKeepsTheOriginalsLevels() async throws {
+        let source = URL(fileURLWithPath: ProcessInfo.processInfo.environment["PME_VLOG_SHORT"]!)
+        let attributes = try FileManager.default.attributesOfItem(atPath: source.path)
+        let temp = try TempDirectory()
+        let proxy = temp.url.appendingPathComponent("proxy.mov")
+        _ = try await ProxyGenerator.generate(source: source, destination: proxy)
+
+        let original = try await decodedRGBCellMeans(source)
+        let proxied = try await decodedRGBCellMeans(proxy)
+        let worst = zip(original, proxied).map { abs($0 - $1).max() }.max() ?? .infinity
+        print("V-Log proxy cell-mean difference: \(worst * 1023) of 1023 levels")
+        #expect(worst <= 4.0 / 1023, "Proxy cell means differ from the original by \(worst * 1023) levels")
+        let after = try FileManager.default.attributesOfItem(atPath: source.path)
+        #expect(after[.size] as? Int == attributes[.size] as? Int)
+        #expect(after[.modificationDate] as? Date == attributes[.modificationDate] as? Date, "The original must never change")
+    }
+
     @Test(.enabled(if: ProcessInfo.processInfo.environment["PME_VIDEO_SAMPLE"] != nil))
     func lumixProxyIsFasterThanRealtimeAndFrameExact() async throws {
         let source = URL(fileURLWithPath: ProcessInfo.processInfo.environment["PME_VIDEO_SAMPLE"]!)

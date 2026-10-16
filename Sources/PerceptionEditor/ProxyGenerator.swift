@@ -2,6 +2,7 @@
 @preconcurrency import AVFoundation
 import Foundation
 import Synchronization
+import VideoToolbox
 
 struct ProxyInfo: Equatable, Sendable {
     var url: URL
@@ -45,6 +46,11 @@ struct ProxyGenerationFaults: Sendable {
 
 /// Transcodes one original into a ProRes 422 Proxy for editing. Frames are read as 10-bit 4:2:2;
 /// asking the decoder for BGRA cut throughput to a quarter on the target M1 (12 fps vs 45 fps).
+///
+/// Full-range sources (the S5 records V-Log in full range) are read as full-range 10-bit and
+/// converted to video range by VideoToolbox. Reading them as video-range `x422` instead makes
+/// AVFoundation add 64 to luma without rescaling, so the proxy played about 17% brighter than the
+/// original and clipped above original code 876 (docs/decisions/2026-10-16-10bit-compositor.md).
 enum ProxyGenerator {
     static let defaultMaximumSize = CGSize(width: 1920, height: 1080)
     /// Measured on Lumix S5 UHD 23.976 footage: 44 MB per 10 s of 1080p ProRes 422 Proxy.
@@ -89,10 +95,18 @@ enum ProxyGenerator {
         try Task.checkCancellation()
         let size = proxySize(for: naturalSize, maximum: maximumSize)
 
+        let isFullRange = formats.first.map(isFullRangeVideo) ?? false
+
         let reader = try AVAssetReader(asset: asset)
-        let output = AVAssetReaderTrackOutput(track: track, outputSettings: [
-            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange
-        ])
+        let output = AVAssetReaderTrackOutput(track: track, outputSettings: isFullRange
+            ? [
+                // The reader scales, so the range conversion runs on proxy-sized frames.
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_422YpCbCr10BiPlanarFullRange,
+                kCVPixelBufferWidthKey as String: Int(size.width),
+                kCVPixelBufferHeightKey as String: Int(size.height)
+            ]
+            : [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange]
+        )
         output.alwaysCopiesSampleData = false
         reader.add(output)
 
@@ -112,6 +126,7 @@ enum ProxyGenerator {
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
         input.transform = transform
         input.expectsMediaDataInRealTime = false
+        let conversion = isFullRange ? try VideoRangeConversion(input: input, size: size) : nil
         writer.add(input)
 
         guard reader.startReading() else {
@@ -126,7 +141,7 @@ enum ProxyGenerator {
         // The sample loop blocks inside AVFoundation, so it runs on its own serial queue instead of
         // the cooperative pool; parallel jobs would otherwise starve every pool thread.
         let job = SampleCopyJob(
-            reader: reader, output: output, writer: writer, input: input,
+            reader: reader, output: output, writer: writer, input: input, conversion: conversion,
             start: timeRange.start, total: max(timeRange.duration.seconds, 0.001), faults: faults
         )
         let written = try await withoutActuallyEscaping(progress) { progress in
@@ -187,6 +202,10 @@ enum ProxyGenerator {
         }
     }
 
+    static func isFullRangeVideo(_ format: CMFormatDescription) -> Bool {
+        CMFormatDescriptionGetExtension(format, extensionKey: kCMFormatDescriptionExtension_FullRangeVideo) as? Bool == true
+    }
+
     /// AVFoundation requires all three color keys together. A source missing any of them stays untagged.
     private static func colorProperties(_ format: CMFormatDescription) -> [String: String]? {
         func value(_ key: CFString) -> String? { CMFormatDescriptionGetExtension(format, extensionKey: key) as? String }
@@ -214,6 +233,7 @@ private final class SampleCopyJob: @unchecked Sendable {
     private let output: AVAssetReaderTrackOutput
     private let writer: AVAssetWriter
     private let input: AVAssetWriterInput
+    private let conversion: VideoRangeConversion?
     private let start: CMTime
     private let total: Double
     private let faults: ProxyGenerationFaults
@@ -226,11 +246,13 @@ private final class SampleCopyJob: @unchecked Sendable {
     private var watchdog: (any DispatchSourceTimer)?
 
     init(reader: AVAssetReader, output: AVAssetReaderTrackOutput, writer: AVAssetWriter,
-         input: AVAssetWriterInput, start: CMTime, total: Double, faults: ProxyGenerationFaults) {
+         input: AVAssetWriterInput, conversion: VideoRangeConversion?,
+         start: CMTime, total: Double, faults: ProxyGenerationFaults) {
         self.reader = reader
         self.output = output
         self.writer = writer
         self.input = input
+        self.conversion = conversion
         self.start = start
         self.total = total
         self.faults = faults
@@ -277,7 +299,16 @@ private final class SampleCopyJob: @unchecked Sendable {
                 return finish(.success(written))
             }
             if isCancelled { return finish(.failure(CancellationError())) }
-            guard input.append(sample) else {
+            let appended: Bool
+            if let conversion {
+                guard let converted = conversion.append(sample) else {
+                    return finish(.failure(ProxyError.writeFailed("the video range conversion failed")))
+                }
+                appended = converted
+            } else {
+                appended = input.append(sample)
+            }
+            guard appended else {
                 return finish(.failure(ProxyError.writeFailed(writer.error?.localizedDescription ?? "append failed")))
             }
             written += 1
@@ -318,6 +349,40 @@ private final class SampleCopyJob: @unchecked Sendable {
             writer.cancelWriting()
         }
         continuation.resume(with: result)
+    }
+}
+
+/// Converts full-range frames to correctly scaled video range (Y' 64…940, C 64…960) and appends them.
+///
+/// Confinement: used only on `SampleCopyJob.queue`.
+private final class VideoRangeConversion: @unchecked Sendable {
+    private let adaptor: AVAssetWriterInputPixelBufferAdaptor
+    private let session: VTPixelTransferSession
+
+    init(input: AVAssetWriterInput, size: CGSize) throws {
+        adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange,
+            kCVPixelBufferWidthKey as String: Int(size.width),
+            kCVPixelBufferHeightKey as String: Int(size.height),
+            kCVPixelBufferIOSurfacePropertiesKey as String: [String: Any]()
+        ])
+        var created: VTPixelTransferSession?
+        guard VTPixelTransferSessionCreate(allocator: nil, pixelTransferSessionOut: &created) == noErr, let created else {
+            throw ProxyError.writeFailed("the video range converter could not be created")
+        }
+        session = created
+    }
+
+    deinit { VTPixelTransferSessionInvalidate(session) }
+
+    /// The adaptor's result, or nil when the frame could not be converted.
+    func append(_ sample: CMSampleBuffer) -> Bool? {
+        guard let source = CMSampleBufferGetImageBuffer(sample), let pool = adaptor.pixelBufferPool else { return nil }
+        var created: CVPixelBuffer?
+        guard CVPixelBufferPoolCreatePixelBuffer(nil, pool, &created) == kCVReturnSuccess, let converted = created else { return nil }
+        CVBufferPropagateAttachments(source, converted) // Color tags; the range lives in the pixel format.
+        guard VTPixelTransferSessionTransferImage(session, from: source, to: converted) == noErr else { return nil }
+        return adaptor.append(converted, withPresentationTime: sample.presentationTimeStamp)
     }
 }
 

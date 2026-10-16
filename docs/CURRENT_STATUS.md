@@ -17,6 +17,7 @@ Card import with verified copies, culling, RAW develop (white balance with eyedr
 | Agreed performance thresholds | NOT VERIFIED (observations only; see [PERFORMANCE_TARGETS](PERFORMANCE_TARGETS.md)) |
 | Video proxies (branch `feat/video-proxies`, pending merge): unit/integration and real S5 media (frame-exact, 68.5 fps at `.utility` QoS vs 28.8 fps gate) | PASS (full suite via CLT wrapper on 2026-10-16: 374 tests, 351 executed / 23 skipped, 0 failed; `qa.sh` itself not runnable on this Mac) |
 | Video proxies (branch `feat/video-proxies`, pending merge): Runtime/UI walkthrough, UI responsiveness during generation | NOT VERIFIED |
+| Video proxies of full-range sources (S5 V-Log), branch `feat/video-proxies` | FIXED 2026-10-16. Proxies made before it are about 17% too bright (AVFoundation's x422 read of a full-range source adds 64 to luma without rescaling). Real `P1107158` proxy now within 1.8/1023 of the original (104.5 before). The proxy key version is 2, so old proxies regenerate; the v1 files stay in the cache folder until "remove all proxies". 378 tests, 0 failed (CLT wrapper, 2026-10-16) |
 | Distribution signing and notarization | NOT VERIFIED |
 
 ## Open problems

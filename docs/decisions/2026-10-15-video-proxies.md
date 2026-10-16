@@ -18,3 +18,12 @@ Lumix S5 10-bit 4:2:2 H.264 UHD has no hardware decode on the target 8 GB M1. AV
 - Clearing the cache never loses edits and costs only regeneration time. A proxy deleted mid-session is noticed the next time it is enqueued, shown in the source viewer, or used by a timeline rebuild; it is regenerated, and playback uses the original until then.
 - Preview sharpening/vignette radii are computed at proxy resolution and can differ slightly from export.
 - A proxy finishing in the background never takes over the viewer; it rebuilds the timeline only when already in timeline mode.
+
+## Amendment 2026-10-16: full-range sources
+
+The S5 records V-Log in **full range**, tagged BT.709. Reading such a source as video-range `x422` makes AVFoundation add 64 to luma without rescaling. The proxy then stored original + 64, tagged video range, so AVPlayer and Core Image showed it about 17% brighter than the original (grey 0.392 → 0.460) and clipped above original code 876. Reading the same source as `xf22` was bit-exact with ffmpeg. The reader's scaled `x422` path also clipped at 940.
+
+- Full-range sources are read as `xf22`, scaled to proxy size by the reader. `VTPixelTransferSession`, whose range scaling is correct, converts them to video-range `x422`, and the frames are appended through a pixel-buffer adaptor. Video-range sources are unchanged.
+- `ProxyFingerprint.formatVersion` is 2, so existing proxies regenerate. Version-1 files are orphaned in the cache folder until "remove all proxies".
+- Evidence: a full-range HEVC 4:2:2 fixture proxy matches its original within 4/1023 RGB (146 levels off before). Real `P1107158.MOV` cell means are within 1.8/1023 (104.5 before). Generation on the 10 s UHD trim runs at 72.0 fps debug and 79.6 fps release.
+

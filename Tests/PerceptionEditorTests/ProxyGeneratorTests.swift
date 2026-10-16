@@ -3,6 +3,7 @@
 import Foundation
 import Synchronization
 import Testing
+import simd
 @testable import PerceptionEditor
 
 struct ProxyFingerprintTests {
@@ -24,6 +25,15 @@ struct ProxyFingerprintTests {
         try handle.write(contentsOf: Data([0xAB]))
         try handle.close()
         #expect(try ProxyFingerprint.key(for: url) != before)
+    }
+
+    /// Proxies made before the full-range fix are too bright, so their keys must not match any more.
+    @Test func keyChangesWithTheProxyFormatVersion() throws {
+        let temp = try TempDirectory()
+        let url = try temp.file("P1.MOV", bytes: 3_000_000, seed: 7)
+        #expect(ProxyFingerprint.formatVersion >= 2)
+        #expect(try ProxyFingerprint.key(for: url, formatVersion: 1) != ProxyFingerprint.key(for: url))
+        #expect(try ProxyFingerprint.key(for: url, formatVersion: ProxyFingerprint.formatVersion) == ProxyFingerprint.key(for: url))
     }
 
     @Test func smallFilesAndMissingFiles() throws {
@@ -74,6 +84,42 @@ struct ProxyGeneratorTests {
             == (kCMFormatDescriptionColorPrimaries_ITU_R_709_2 as String))
         #expect(CMFormatDescriptionGetExtension(proxyFormat, extensionKey: kCMFormatDescriptionExtension_TransferFunction) as? String
             == (kCMFormatDescriptionTransferFunction_ITU_R_709_2 as String))
+    }
+
+    /// The S5 records V-Log in full range. AVFoundation's own full-to-video-range conversion only adds 64
+    /// to luma, so a proxy made from `x422` reads plays about 17% brighter than the original and clips
+    /// above original code 876. The proxy must show the original's colors.
+    @Test func fullRangeSourceProxyShowsTheOriginalsColors() async throws {
+        let temp = try TempDirectory()
+        guard let source = try await writeFullRangeTestMovie(to: temp.url.appendingPathComponent("VLOG.MOV")) else {
+            Issue.record("This machine cannot encode a full-range 10-bit HEVC fixture")
+            return
+        }
+        let sourceFormat = try await AVURLAsset(url: source).loadTracks(withMediaType: .video)[0].load(.formatDescriptions)[0]
+        try #require(CMFormatDescriptionGetExtension(sourceFormat, extensionKey: kCMFormatDescriptionExtension_FullRangeVideo) as? Bool == true)
+
+        let destination = temp.url.appendingPathComponent("proxy.mov")
+        _ = try await ProxyGenerator.generate(source: source, destination: destination)
+
+        let original = try await decodedRGBGrid(source)
+        let proxy = try await decodedRGBGrid(destination)
+        // A ProRes proxy cannot hold colors outside 0…1, so compare what both can show.
+        let clamp = { (v: SIMD3<Float>) in simd_clamp(v, SIMD3(repeating: 0), SIMD3(repeating: 1)) }
+        let worst = zip(original, proxy).map { abs(clamp($0) - clamp($1)).max() }.max() ?? .infinity
+        #expect(worst <= 4.0 / 1023, "Proxy colors differ from the original by up to \(worst * 1023) of 1023 levels")
+    }
+
+    @Test func fullRangeProxyIsTaggedVideoRange() async throws {
+        let temp = try TempDirectory()
+        guard let source = try await writeFullRangeTestMovie(to: temp.url.appendingPathComponent("VLOG.MOV")) else {
+            Issue.record("This machine cannot encode a full-range 10-bit HEVC fixture")
+            return
+        }
+        let destination = temp.url.appendingPathComponent("proxy.mov")
+        _ = try await ProxyGenerator.generate(source: source, destination: destination)
+        let format = try await AVURLAsset(url: destination).loadTracks(withMediaType: .video)[0].load(.formatDescriptions)[0]
+        #expect(CMFormatDescriptionGetMediaSubType(format) == kCMVideoCodecType_AppleProRes422Proxy)
+        #expect(CMFormatDescriptionGetExtension(format, extensionKey: kCMFormatDescriptionExtension_FullRangeVideo) as? Bool != true)
     }
 
     @Test func cancellationLeavesNoFiles() async throws {

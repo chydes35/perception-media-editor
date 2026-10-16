@@ -1,6 +1,7 @@
 // Sources/PerceptionEditor/ProxyGenerator.swift
 @preconcurrency import AVFoundation
 import Foundation
+import Synchronization
 
 struct ProxyInfo: Equatable, Sendable {
     var url: URL
@@ -105,29 +106,23 @@ enum ProxyGenerator {
         }
         writer.startSession(atSourceTime: timeRange.start)
 
-        var written = 0
-        let total = max(timeRange.duration.seconds, 0.001)
-        do {
-            while let sample = output.copyNextSampleBuffer() {
-                try Task.checkCancellation()
-                while !input.isReadyForMoreMediaData { try await Task.sleep(for: .milliseconds(2)) }
-                guard input.append(sample) else {
-                    throw ProxyError.writeFailed(writer.error?.localizedDescription ?? "append failed")
+        // The sample loop blocks inside AVFoundation, so it runs on its own serial queue instead of
+        // the cooperative pool; parallel jobs would otherwise starve every pool thread.
+        let job = SampleCopyJob(
+            reader: reader, output: output, writer: writer, input: input,
+            start: timeRange.start, total: max(timeRange.duration.seconds, 0.001)
+        )
+        let written = try await withoutActuallyEscaping(progress) { progress in
+            // Only the job holds `progress`, and `finish` drops it before resuming, so it never outlives this call.
+            job.setProgress(progress)
+            return try await withTaskCancellationHandler {
+                try await withCheckedThrowingContinuation { continuation in
+                    job.queue.async { job.begin(continuation) }
                 }
-                written += 1
-                progress(min(1, (sample.presentationTimeStamp - timeRange.start).seconds / total))
+            } onCancel: {
+                job.cancel()
             }
-            try Task.checkCancellation()
-            if reader.status == .failed {
-                throw ProxyError.readFailed(reader.error?.localizedDescription ?? "unknown error")
-            }
-        } catch {
-            reader.cancelReading()
-            writer.cancelWriting()
-            throw error
         }
-
-        input.markAsFinished()
         await writer.finishWriting()
         guard writer.status == .completed else {
             throw ProxyError.writeFailed(writer.error?.localizedDescription ?? "finish failed")
@@ -158,10 +153,11 @@ enum ProxyGenerator {
         let output = AVAssetReaderTrackOutput(track: track, outputSettings: nil)
         reader.add(output)
         guard reader.startReading() else { throw ProxyError.readFailed(reader.error?.localizedDescription ?? "unknown") }
-        var count = 0
-        while let sample = output.copyNextSampleBuffer() { count += CMSampleBufferGetNumSamples(sample) }
-        guard reader.status == .completed else { throw ProxyError.readFailed(reader.error?.localizedDescription ?? "unknown") }
-        return count
+        // Blocking reads stay off the cooperative pool (see SampleCopyJob).
+        let counter = FrameCountJob(reader: reader, output: output)
+        return try await withCheckedThrowingContinuation { continuation in
+            counter.queue.async { continuation.resume(with: counter.run()) }
+        }
     }
 
     /// AVFoundation requires all three color keys together. A source missing any of them stays untagged.
@@ -175,5 +171,115 @@ enum ProxyGenerator {
             AVVideoTransferFunctionKey: transfer,
             AVVideoYCbCrMatrixKey: matrix
         ]
+    }
+}
+
+/// Runs one generation's copy/append loop on a private serial queue, pulled by
+/// `requestMediaDataWhenReady(on:using:)`.
+///
+/// Confinement: the reader, output, writer, input, `continuation`, `progress` and `written` are touched
+/// only on `queue` while the job runs. `cancelled` is the one cross-thread member. Once `finish` resumes
+/// the continuation, the job never touches the writer again, so `generate` may use it afterwards.
+private final class SampleCopyJob: @unchecked Sendable {
+    let queue = DispatchQueue(label: "PerceptionEditor.ProxyGenerator.samples", qos: .userInitiated)
+    private let cancelled = Atomic<Bool>(false)
+    private let reader: AVAssetReader
+    private let output: AVAssetReaderTrackOutput
+    private let writer: AVAssetWriter
+    private let input: AVAssetWriterInput
+    private let start: CMTime
+    private let total: Double
+    private var continuation: CheckedContinuation<Int, any Error>?
+    private var progress: (@Sendable (Double) -> Void)?
+    private var written = 0
+    private var finished = false
+
+    init(reader: AVAssetReader, output: AVAssetReaderTrackOutput, writer: AVAssetWriter,
+         input: AVAssetWriterInput, start: CMTime, total: Double) {
+        self.reader = reader
+        self.output = output
+        self.writer = writer
+        self.input = input
+        self.start = start
+        self.total = total
+    }
+
+    /// Called once from `generate` before `begin` is dispatched; that `queue.async` orders this write before any queue access.
+    func setProgress(_ progress: @escaping @Sendable (Double) -> Void) {
+        self.progress = progress
+    }
+
+    /// On `queue`.
+    func begin(_ continuation: CheckedContinuation<Int, any Error>) {
+        self.continuation = continuation
+        if cancelled.load(ordering: .acquiring) { return finish(.failure(CancellationError())) }
+        input.requestMediaDataWhenReady(on: queue) { [self] in pump() }
+    }
+
+    /// Any thread. The flag stops a running pump at the next frame; the queued `finish` resumes promptly
+    /// even while the input is not asking for data. If `begin` has not run yet, it sees the flag instead.
+    func cancel() {
+        cancelled.store(true, ordering: .releasing)
+        queue.async { [self] in finish(.failure(CancellationError())) }
+    }
+
+    private var isCancelled: Bool { cancelled.load(ordering: .acquiring) }
+
+    /// On `queue`.
+    private func pump() {
+        guard !finished else { return }
+        while input.isReadyForMoreMediaData {
+            if isCancelled { return finish(.failure(CancellationError())) }
+            guard let sample = output.copyNextSampleBuffer() else {
+                if isCancelled { return finish(.failure(CancellationError())) }
+                if reader.status == .failed {
+                    return finish(.failure(ProxyError.readFailed(reader.error?.localizedDescription ?? "unknown error")))
+                }
+                return finish(.success(written))
+            }
+            if isCancelled { return finish(.failure(CancellationError())) }
+            guard input.append(sample) else {
+                return finish(.failure(ProxyError.writeFailed(writer.error?.localizedDescription ?? "append failed")))
+            }
+            written += 1
+            progress?(min(1, (sample.presentationTimeStamp - start).seconds / total))
+        }
+    }
+
+    /// On `queue`. Resumes the continuation at most once; later calls (a queued cancel after success,
+    /// a late media-data callback) do nothing.
+    private func finish(_ result: Result<Int, any Error>) {
+        guard !finished, let continuation else { return }
+        finished = true
+        self.continuation = nil
+        progress = nil // Releases the caller's non-escaping closure before `generate` continues.
+        switch result {
+        case .success: input.markAsFinished()
+        case .failure:
+            reader.cancelReading()
+            writer.cancelWriting()
+        }
+        continuation.resume(with: result)
+    }
+}
+
+/// Confinement: `reader` and `output` are used only on `queue`, in `run`.
+private final class FrameCountJob: @unchecked Sendable {
+    let queue = DispatchQueue(label: "PerceptionEditor.ProxyGenerator.frameCount", qos: .userInitiated)
+    private let reader: AVAssetReader
+    private let output: AVAssetReaderTrackOutput
+
+    init(reader: AVAssetReader, output: AVAssetReaderTrackOutput) {
+        self.reader = reader
+        self.output = output
+    }
+
+    func run() -> Result<Int, any Error> {
+        var count = 0
+        while let sample = output.copyNextSampleBuffer() { count += CMSampleBufferGetNumSamples(sample) }
+        guard reader.status == .completed else {
+            return .failure(ProxyError.readFailed(reader.error?.localizedDescription ?? "unknown"))
+        }
+        return .success(count)
     }
 }

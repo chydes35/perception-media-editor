@@ -83,6 +83,74 @@ struct ProxyGeneratorTests {
         #expect(leftovers.isEmpty)
     }
 
+    /// Blocking AVFoundation sample I/O must stay off the cooperative pool: with more jobs than
+    /// pool threads, a blocked pool hangs every job and unrelated async work along with it.
+    @Test(.timeLimit(.minutes(1)))
+    func concurrentGenerationsDoNotStarveThePool() async throws {
+        enum Child: Sendable { case frames(Int), tick }
+        enum Outcome: Sendable { case finished(frames: [Int], ticked: Bool), failed(String), timedOut }
+
+        let temp = try TempDirectory()
+        var sources: [URL] = []
+        for index in 0 ..< 12 {
+            sources.append(try await writeTestMovie(
+                to: temp.url.appendingPathComponent("S\(index).MOV"), frames: 48, width: 640, height: 360
+            ))
+        }
+        let jobs = sources
+
+        let outcome = await withTaskGroup(of: Outcome.self) { race -> Outcome in
+            race.addTask {
+                do {
+                    return try await withThrowingTaskGroup(of: Child.self) { group -> Outcome in
+                        for (index, source) in jobs.enumerated() {
+                            group.addTask {
+                                let info = try await ProxyGenerator.generate(
+                                    source: source,
+                                    destination: temp.url.appendingPathComponent("proxy-\(index).mov"),
+                                    maximumSize: CGSize(width: 320, height: 180)
+                                )
+                                return .frames(info.frameCount)
+                            }
+                        }
+                        group.addTask {
+                            try await Task.sleep(for: .milliseconds(10))
+                            return .tick
+                        }
+                        var frames: [Int] = []
+                        var ticked = false
+                        for try await child in group {
+                            switch child {
+                            case .frames(let count): frames.append(count)
+                            case .tick: ticked = true
+                            }
+                        }
+                        return .finished(frames: frames, ticked: ticked)
+                    }
+                } catch {
+                    return .failed(String(describing: error))
+                }
+            }
+            race.addTask {
+                try? await Task.sleep(for: .seconds(30))
+                return .timedOut
+            }
+            let first = await race.next() ?? .timedOut
+            race.cancelAll()
+            return first
+        }
+
+        switch outcome {
+        case .finished(let frames, let ticked):
+            #expect(frames == Array(repeating: 48, count: 12))
+            #expect(ticked, "Unrelated async work must still get a thread")
+        case .failed(let reason):
+            Issue.record("A concurrent generation failed: \(reason)")
+        case .timedOut:
+            Issue.record("12 concurrent generations hung for 30 s: the cooperative pool is starved")
+        }
+    }
+
     @Test func fileWithoutVideoIsRejected() async throws {
         let temp = try TempDirectory()
         let junk = try temp.file("notes.mov", bytes: 4096, seed: 3)

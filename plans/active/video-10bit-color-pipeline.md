@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task by task. Steps use checkbox (`- [ ]`) syntax for tracking. Task 0 is a measurement spike whose results can change Tasks 3–4. Do not skip it.
 
-Status: active (Task 0 and the Task 2 proxy range fix done 2026-10-16, see [decision record](../../docs/decisions/2026-10-16-10bit-compositor.md); Task 1 next)
+Status: active (Task 0 and the Task 2 proxy range fix done 2026-10-16, see [decision record](../../docs/decisions/2026-10-16-10bit-compositor.md); Task 1 next. Task 13, Apple Log, is blocked on a real iPhone 15 Pro clip)
 Roadmap sources: [V0.2 — LUT import and intensity control](../../docs/ROADMAP.md), [V0.3 — 1080p and 4K export](../../docs/ROADMAP.md). The 10-bit compositor, frame-exact timing, OCIO and scopes are new V0.3 work and must be added to the roadmap (Task 12).
 Builds on: [video-proxy-pipeline.md](video-proxy-pipeline.md) (branch `feat/video-proxies`: `MediaQuality`, proxy-aware `TimelineCompositionService`)
 Owner: video engine
@@ -29,9 +29,9 @@ The photographer drops Lumix S5 V-Log clips on the timeline and sees normal-look
 
 ## Scope and dependencies
 
-**Included:** a custom `AVVideoCompositing` compositor (half-float Metal, never 32BGRA), frame-exact clip timing (schema 11), source color detection, `.cube` LUT import and intensity (photo and video), OCIO-generated V-Log→ACES→Rec.709 shaders, the 10-bit HSL and curves fix, waveform and vectorscope scopes, 10-bit timeline export (ProRes 422 HQ, HEVC Main10), and a proxy range fix.
+**Included:** a custom `AVVideoCompositing` compositor (half-float Metal, never 32BGRA), frame-exact clip timing (schema 11), source color detection, `.cube` LUT import and intensity (photo and video), OCIO-generated V-Log→ACES→Rec.709 shaders, the 10-bit HSL and curves fix, waveform and vectorscope scopes, 10-bit timeline export (ProRes 422 HQ, HEVC Main10), a proxy range fix, and Apple Log from the iPhone 15 Pro with per-clip rotation (Task 13, blocked until a real clip is measured).
 
-**Excluded:** HDR/EDR output, linking OCIO at runtime for user `.ocio` configs (Task 10 records the decision and stays deferred), LUTs inside presets, mixed frame rates beyond a warning, transitions or titles, a full Metal port of `MediaColorRenderer`'s Core Image adjustments, and photo scopes.
+**Excluded:** HDR/EDR output and HLG/PQ tone mapping (iPhone HDR clips are detected and flagged only), Apple Log 2 / Apple Gamut (unless Task 13.0 finds it on the 15 Pro), linking OCIO at runtime for user `.ocio` configs (Task 10 records the decision and stays deferred), LUTs inside presets, mixed frame rates beyond a warning, transitions or titles, a full Metal port of `MediaColorRenderer`'s Core Image adjustments, and photo scopes.
 
 **Affected systems:** `TimelineCompositionService`, `EditorModels` (`TimelineClip`, `MediaAsset`, `EditorProject`), `EditorStore` timeline edits, `ProxyGenerator` (with a cache-key version), `ColorGrading`, `MediaColorRenderer`, `VideoWorkspace`, and photo LUT controls.
 
@@ -99,6 +99,11 @@ Below, `run-tests <Suite>` means that command. Fixing `scripts/test.sh` to detec
 | `PME_REC709_8BIT` | `P1107172.MOV` (8-bit 4:2:0 video range, STANDARD) | Mixed-timeline gate |
 | `PME_VIDEO_SAMPLE` | `P1107157.MOV` (1386 s, 33 240 frames) | Frame-exact drift and throughput gates |
 | `PME_VLOG_LUT` | the user's downloaded `VLog_to_V709_forV35_ver100.cube` | LUT gates |
+| `PME_APPLELOG_SHORT` | iPhone 15 Pro Apple Log ProRes, 4K30 landscape, about 10 s, grey card (to be recorded, Task 13.0) | Apple Log detection, fidelity, LUT and OCIO gates |
+| `PME_APPLELOG_PORTRAIT` | iPhone 15 Pro Apple Log, portrait, about 5 s (optional) | Rotation gate |
+| `PME_APPLELOG_4K60` | iPhone 15 Pro Apple Log 4K60 on an external drive (optional) | Software ProRes decode throughput |
+| `PME_IPHONE_HLG` | iPhone 15 Pro ProRes with Log off (HLG) (optional) | Telling HLG and Apple Log apart |
+| `PME_APPLELOG_LUT` | the user's downloaded Apple Log → Rec.709 `.cube` from Apple | Apple Log LUT gate |
 | `PME_VIDEO_OUTPUT_DIR` | disposable directory outside `110_PANA` | Exports and reference frames |
 
 ---
@@ -276,6 +281,87 @@ Root cause: the 48³ trilinear cube interpolates a function with a hue discontin
 - [ ] `DATA_MODEL.md`: schema 11 (frames, `FrameRate`, descriptor, `colorInputByAssetID`, `PhotoAdjustments.lut`, the `LUTs/` folder), migration and offline behavior.
 - [ ] `ARCHITECTURE.md`: replace the "Core Image-backed `AVVideoComposition`" paragraph with the compositor pipeline, and update the `ColorGrading.swift` description (no 48-point cube).
 - [ ] `PERFORMANCE_TARGETS.md`: the G1/G7/G9 targets and measured results. `TESTING_STRATEGY.md`: the new env vars and opt-in suites. `ROADMAP.md`: tick V0.2 LUT import once G3 passes; add V0.3 items for the 10-bit compositor, V-Log color management, scopes and frame-exact timing. `CURRENT_STATUS.md`.
+- [ ] If Task 13 lands in this milestone: add Apple Log to `DATA_MODEL.md` (the new `SourceTransfer`/`SourceGamut` cases), `ROADMAP.md` and `CURRENT_STATUS.md`. If it is still blocked, list it in `CURRENT_STATUS.md` as blocked on a real clip.
+
+### Task 13: Apple Log (iPhone 15 Pro ProRes) — blocked on a real clip
+
+**Gate.** Step 13.0 needs at least one real Apple Log clip from an iPhone 15 Pro, recorded by the owner. Until the 13.0 decision record exists, write no product code for Apple Log: no enum cases, no shaders and no fixtures that claim to be Apple Log. Steps 13.1–13.5 also depend on Tasks 2, 3, 4 and 9, and on Task 6 for the LUT path.
+
+**User-visible outcome.** iPhone 15 Pro clips shot in Apple Log play as normal Rec.709 with no user action, next to the S5 V-Log clips and 8-bit Rec.709 clips on the same timeline. Portrait clips stand upright. The user can switch the source color between Apple's Apple Log LUT (after importing it) and the OCIO transform, the same as for V-Log.
+
+**Facts checked on 2026-10-16** (macOS 26.5 SDK headers, no clip yet):
+
+| Finding | Evidence | Consequence |
+| --- | --- | --- |
+| Apple Log content is identified by an explicit log-transfer key, not by the transfer tag. | `CMFormatDescription.h`: `kCMFormatDescriptionExtension_LogTransferFunction` (macOS 14.2+). The header says "Content captured in Apple Log will have this key set to `kCMFormatDescriptionLogTransferFunction_AppleLog`". `CVImageBuffer.h` has `kCVImageBufferLogTransferFunctionKey`, the same thing on each frame. | Detection reads a format-description extension. No Panasonic-style XML parsing is needed, and no guessing from the device model. |
+| Apple Log uses BT.2020 primaries. | `AVCaptureDevice.h`, `AVCaptureColorSpace_AppleLog`: "uses BT2020 as the color primaries, and an Apple defined Log curve". | The V-Log path assumes 709 tags and the 709 matrix. Apple Log needs the 2020 matrix in `decodeYCbCr` (Task 3 already takes Kr/Kb for 2020) and a 2020→709 gamut step in its input transform. |
+| There is a second curve, **Apple Log 2**, with its own **Apple Gamut** (macOS/iOS 26). | `kCVImageBufferLogTransferFunction_AppleLog2`; `AVCaptureColorSpace_AppleLog2`. For Apple Log 2 the header says to leave the primaries and transfer tags absent, with the matrix set to `ITU_R_2020`. | Apple Log 2 is a different input transform. It stays out of scope unless 13.0 finds the iPhone 15 Pro writes it. Detect it and show a hint, but do not render it as Apple Log. |
+| The curve's exact definition is in Apple's "Apple Log Profile" white paper. | The header links `developer.apple.com/download/all/?q=Apple%20log%20profile`. | The Double oracle (13.3) takes its constants from the white paper and checks them against OCIO's built-in. Do not copy the constants from memory or from this plan. |
+| The current composition sets one `preferredTransform` for the whole track, taken from the first clip. | `TimelineCompositionService.swift:202–205` (`didSetVideoTransform`). A custom `AVVideoCompositing` receives source frames *before* any transform. | iPhone footage is often portrait or rotated. The compositor must apply each source's `preferredTransform` itself (13.2). Otherwise a portrait clip after a landscape clip renders sideways. |
+
+**Not yet verified (13.0 confirms or refutes each one):**
+
+- The iPhone 15 Pro records Apple Log only as ProRes 422 HQ, 10-bit 4:2:2, video range.
+- 4K60 ProRes goes only to an external USB-C drive, and internal recording tops out lower.
+- The base M1 has no ProRes hardware engine, so 4K ProRes decodes in software. Throughput may fall short of the V-Log H.264 path's 47 fps.
+- The primaries tag is BT.2020 and the transfer tag is absent or unspecified. If the engine sees 2020 tags with a 709 composition, it may color-convert the log pixels (see Task 4: `canConformColorOfSourceFrames`).
+- OCIO 2.5.2 has a built-in Apple Log → ACES2065-1 transform (expected in `src/OpenColorIO/transforms/builtins/AppleCameras.cpp`).
+- Apple's Apple Log → Rec.709 `.cube` has `LUT_3D_SIZE` within the parser's 2–65 limit.
+
+#### 13.0 Spike — measure with a real clip (no product code)
+
+- [ ] **Owner records the clips** on the iPhone 15 Pro (Camera → Formats → ProRes, Log on). Copy the original files with Image Capture, AirDrop or Finder, not with a Photos export, which can re-encode. Put them in a read-only folder on `/Volumes/ExSSD1/Pictures` and record the path here.
+  1. `PME_APPLELOG_SHORT`: 4K30 landscape, about 10 s, with a grey card or white paper, sky and skin in the frame. This one is required; the others are optional.
+  2. `PME_APPLELOG_PORTRAIT`: about 5 s, phone held upright.
+  3. `PME_APPLELOG_4K60`: 4K60 to an external drive, about 10 s, if the owner has one.
+  4. `PME_IPHONE_HLG`: the same scene in ProRes with Log off (HDR/HLG), to confirm that the two kinds of file can be told apart.
+  5. `PME_APPLELOG_LUT`: Apple's Apple Log → Rec.709 `.cube`, downloaded by the owner (not redistributed, as in Decision 2).
+- [ ] **Tags** (read-only): `ffprobe -show_streams -show_format`, plus a probe (`scripts/video-probes/applelogprobe.swift`) that prints every format-description extension. Record `LogTransferFunction`, primaries, transfer, matrix, `FullRangeVideo`, `BitsPerComponent`, codec FourCC, `preferredTransform`, `nominalFrameRate`, `minFrameDuration`, and the QuickTime metadata (make, model, software). Do this for clips 1–4.
+- [ ] **Compositor format and color conformance.** Run `probe.swift` on clip 1 with the Task 0 list `[xf22, x422, 420v, 420f]`. Record which format arrives and whether it is IOSurface-backed. If ProRes arrives converted, try adding its native output formats and record which one arrives unconverted. Then compare code values on 64 positions × 3 frames against `ffmpeg … -pix_fmt yuv422p10le` raw output, as Task 0 did. Do this twice: with the composition color properties at 709 (the plan's default) and at 2020. **The question:** does AVFoundation leave the Apple Log Y'CbCr code values untouched when the composition says 709?
+- [ ] **Throughput and memory** on the target M1 (release probe): decode fps through the compositor for clip 1, and for clip 3 if it exists. Record the `VTDecoderXPCService` footprint, and the time to generate a 1080p proxy of clip 1.
+- [ ] **Curve check.** Measure the grey-card code value in clip 1. Compare it with the white paper's encoding of 18% grey after range scaling. Record whether the file is video range or full range.
+- [ ] **OCIO.** Run `ocio_list.py` against OCIO 2.5.2 and record the exact Apple Log built-in name, then compile its MSL through the Task 0 runtime path.
+- [ ] **LUT.** Parse `PME_APPLELOG_LUT` header-only: size, domain and title.
+- [ ] Write `docs/decisions/2026-10-xx-apple-log.md` with the numbers and the choices below.
+
+**Exit and escalation.**
+- If the engine color-converts Apple Log pixels for every listed format and every composition color setting, stop and escalate to the owner. The fallback options are the same as in Task 0.
+- If 4K software decode through the compositor runs below 38 fps (G1's bar), Apple Log preview uses proxies by default and G12 sets its own export bar from the measured decode ceiling. This is a recorded limitation, not a failure.
+
+#### 13.1 Model and detection
+
+- [ ] Add `SourceTransfer.appleLog` and `SourceGamut.rec2020`. Add `SourceTransfer.hlg` and `.pq`, detected but not rendered (HDR stays excluded). Add `SourceTransfer.appleLog2` only if 13.0 found it on the 15 Pro; otherwise Apple Log 2 maps to `.unknown` with a hint. `detectedFrom` gains `"log-transfer-key"`.
+- [ ] Detection order in `SourceColor.swift`:
+  1. `kCMFormatDescriptionExtension_LogTransferFunction == AppleLog` → Apple Log / BT.2020.
+  2. Panasonic XML (Task 2).
+  3. Format-description tags.
+  Use a device-model fallback (make Apple + an iPhone Pro model + ProRes + BT.2020 primaries + no HLG/PQ transfer) **only if** 13.0 shows real clips missing the key. Mark it as lower confidence and show the inline hint.
+- [ ] HLG/PQ iPhone clips: the descriptor records them and the clip shows "HDR source — shown without tone mapping" until HDR is in scope.
+- [ ] Tests (`SourceColorTests`): synthetic `CMVideoFormatDescription`s built with `CMVideoFormatDescriptionCreate` plus extensions, covering Apple Log, Apple Log 2, HLG, a 2020 tag with no log key, and a 709 tag. The descriptor comes from the original file and never from a proxy (a test with a proxy that lacks the key).
+
+#### 13.2 Decode matrix and per-clip rotation
+
+- [ ] `decodeYCbCr` takes the BT.2020 non-constant-luminance coefficients from the descriptor. Extend `MetalColorKernelTests` with 2020 bars computed in Double.
+- [ ] `ClipRenderRecipe` carries the source's `preferredTransform`, and `fitToRenderSize` applies rotation (90/180/270 and mirroring) before fitting. Remove the single-track `preferredTransform` assignment once the compositor is used for every clip that needs rotation. Keep it on the neutral fast path only when every clip shares one transform.
+- [ ] Tests (`TimelineVideoCompositorTests`): a landscape clip, then a rotated-90° fixture, then a landscape clip. Every frame is upright at one render size, with letterbox or pillarbox as expected and no size change at the cuts.
+
+#### 13.3 Input transforms
+
+- [ ] **LUT (Phase A).** Apple's LUT goes through the Task 6 import. Input-transform LUTs apply to decoded R'G'B' code values, as with V-Log. Use `PME_APPLELOG_LUT` in the gates.
+- [ ] **OCIO (Phase B).** Add `applelog_rec2020_to_lin_rec709` to `scripts/ocio/generate-shaders.py`: the built-in Apple Log → ACES2065-1 transform, then ACES2065-1 → linear Rec.709, unclamped. Regenerate the golden data.
+- [ ] Add an independent Swift Double Apple Log oracle, with constants from the white paper and a BT.2020→Rec.709 matrix. It must agree with OCIO's CPU output within 1e-4. The integration test asserts that the white-paper code for 18% grey gives linear about 0.18.
+- [ ] The default view follows Decision 3, the same as for V-Log.
+
+#### 13.4 Proxies
+
+- [ ] Proxies of ProRes sources keep the range and code values (`ProxyGeneratorTests`, using a video-range 10-bit fixture with the log key set). Proxy files are not re-detected. The descriptor stays on `MediaAsset`.
+- [ ] If 13.0 chose proxy-first preview for Apple Log, `MediaQuality` defaults to proxies for Apple Log assets once the proxy is ready. Export always uses originals.
+
+#### 13.5 Real gates
+
+- [ ] **G10–G13** below, on the target M1.
+
+**Files:** modify `SourceColor.swift`, `MetalShaderSources.swift`, `TimelineVideoCompositor.swift`, `TimelineCompositionInstruction.swift`, `TimelineCompositionService.swift`, `ProxyGenerator.swift` and `scripts/ocio/generate-shaders.py`. Regenerate `OCIOGeneratedShaders.swift`. Create `scripts/video-probes/applelogprobe.swift` and `docs/decisions/2026-10-xx-apple-log.md`.
 
 ---
 
@@ -288,6 +374,7 @@ Root cause: the 48³ trilinear cube interpolates a function with a hue discontin
 5. **Scopes.** Open the scopes while playing the 1080p proxy. Playback stays realtime. The waveform and vectorscope update at ≥ 10 Hz and freeze on the paused frame.
 6. **Export.** Export the three-clip timeline as ProRes 422 HQ UHD. The file is 10-bit 4:2:2, tagged Rec.709, with frame count = sum of clip frames. It is built from originals, never proxies, and the source files are untouched.
 7. **Old project.** Opening a schema-10 project with seconds-based clips converts it to frames. It plays the same cut, and saving writes schema 11. An offline clip keeps its timing until relinked.
+8. **iPhone Apple Log (Task 13).** Import `PME_APPLELOG_SHORT` and `PME_APPLELOG_PORTRAIT`. The source color shows "Apple Log / BT.2020 (log transfer key), 10-bit 4:2:2", and both clips play as normal Rec.709 next to a V-Log clip. The portrait clip is upright and pillarboxed. An HLG iPhone clip is labelled as an HDR source, not as Apple Log. *Failure:* the key is missing → the descriptor comes from the tags, with the "Set source color if this is log footage" hint.
 
 ## Test strategy
 
@@ -314,6 +401,10 @@ Rules: red tests first for the drift bug (Task 1) and the banding bug (Task 5). 
 | **G7 Memory** | Peak footprint over idle, summed over the app **and `VTDecoderXPCService`** (decoding is out of process; Task 0 measured 252 MB for the decoder at UHD `xf22`): ≤ +600 MB during UHD export, ≤ +350 MB during 1080p proxy playback with scopes. No growth > 20 MB across 10 consecutive 60 s playbacks. Swap does not increase during the run. | `footprint`/`profile-video.sh`, `vm_stat` before/after |
 | **G8 Visual** | The owner compares LUT vs OCIO on `P1107210` and `P1107158` (skin, sky, highlights) and records the default-view decision (Decision 3). | Human, screenshots in evidence |
 | **G9 Scopes** | On `PME_VLOG_SHORT` with *None*: waveform black near code 128 and the V-Log grey card (if present) near 433. Scope update ≥ 10 Hz during playback, GPU cost ≤ 2 ms per update at 1080p. | Test + signposts |
+| **G10 Apple Log fidelity** | Like G2 on `PME_APPLELOG_SHORT` with the BT.2020 matrix and the range 13.0 measured: within 1/1023 of ffmpeg's decode for originals and 2/1023 for proxies. | Task 13 harness |
+| **G11 Apple Log transforms** | The Apple LUT vs `ffmpeg lut3d` (tetrahedral) meets G3's thresholds. The OCIO Apple Log transform vs PyOpenColorIO CPU meets G4's thresholds. | Same harness |
+| **G12 Apple Log throughput and memory** | UHD Apple Log export through the compositor runs at ≥ 85% of 13.0's measured decode ceiling. Proxy preview drops 0 frames over 60 s. G7's memory limits hold, summed with `VTDecoderXPCService`. | `RealVideoColorTests`, `profile-video.sh` |
+| **G13 Rotation** | A landscape, portrait, landscape timeline: every frame is upright at one render size (the owner checks it visually), and no cut changes the size. | Test + human review |
 
 ## Original-media and project-data safety
 
@@ -331,6 +422,9 @@ Rules: red tests first for the drift bug (Task 1) and the banding bug (Task 5). 
 | OCIO MSL output needs a newer MSL or features (textures, samplers) | Task 0 compile check; manifest-driven bindings |
 | 4K half-float buffers exhaust 8 GB | YCbCr in and out, pool cap 3, G7 |
 | Schema-11 migration loses timing for offline media | Keep legacy seconds until relink; migration tests |
+| Apple Log ProRes decodes in software on the base M1 and misses realtime at 4K | Task 13.0 measures it; proxy-first preview for Apple Log; G12's bar comes from the measured ceiling |
+| AVFoundation conforms BT.2020-tagged Apple Log to the 709 composition and corrupts log values | Task 13.0 compares code values at both composition settings; escalate if it cannot be avoided |
+| No real iPhone clip is available | Task 13 stays blocked, and the rest of the milestone does not depend on it |
 | Scope work steals GPU from playback | Visible-only, every other frame, downsampled, single-slot mailbox; G1 includes scopes |
 
 ## QA gate
@@ -341,12 +435,12 @@ Rules: red tests first for the drift bug (Task 1) and the banding bug (Task 5). 
 | Unit | PENDING | `run-tests` per suite above |
 | Integration | PENDING | Compositor, frame-exact, exporter, proxy suites |
 | Runtime/UI | PENDING | Scenarios 1–7 on the target M1 |
-| Real media/quality | PENDING | G2, G3, G4, G5, G6, G8, G9 |
-| Target-hardware performance | PENDING | G1, G7 |
+| Real media/quality | PENDING | G2, G3, G4, G5, G6, G8, G9; Apple Log G10, G11, G13 (blocked on a clip) |
+| Target-hardware performance | PENDING | G1, G7; Apple Log G12 (blocked on a clip) |
 
 ## Suggested order and parallelism
 
-Task 0 → (Task 1 ∥ Task 2 ∥ Task 6 parser/library) → Task 3 → Task 4 → (Task 5 ∥ Task 6 rendering ∥ Task 7 ∥ Task 9 script) → Task 8 → Task 11 → Task 12. Task 1 touches `EditorModels`/`EditorStore` timeline code. Task 2 touches `ProxyGenerator`/`EditorModels` media fields. Keep one writer on `EditorModels.swift` at a time (do Task 1's model change first, then rebase Task 2).
+Task 0 → (Task 1 ∥ Task 2 ∥ Task 6 parser/library) → Task 3 → Task 4 → (Task 5 ∥ Task 6 rendering ∥ Task 7 ∥ Task 9 script) → Task 8 → Task 11 → Task 12. Task 13.0 (probes only) can run whenever the owner supplies a clip. Tasks 13.1–13.4 start after Tasks 4 and 9 (and after Task 6 for the LUT path). 13.1 touches `SourceColor.swift`/`EditorModels.swift`, so keep it after Task 2. Task 1 touches `EditorModels`/`EditorStore` timeline code. Task 2 touches `ProxyGenerator`/`EditorModels` media fields. Keep one writer on `EditorModels.swift` at a time (do Task 1's model change first, then rebase Task 2).
 
 ## Closeout
 

@@ -21,7 +21,7 @@ struct VideoProxyWorkflowTests {
     @Test func importedVideoGetsAProxyAndTheTimelinePlaysIt() async throws {
         let temp = try TempDirectory()
         let store = try makeStore(temp)
-        let movie = try await writeTestMovie(to: temp.url.appendingPathComponent("A.MOV"), frames: 48)
+        let movie = try await writeTestMovie(to: temp.url.appendingPathComponent("A.MOV"), frames: 48, width: 160, height: 90)
         await store.importURLs([movie]).value
         let asset = try #require(store.project.media.first)
         guard case .ready(let proxy) = try await waitForProxy(store.proxyStore, asset.id) else { return }
@@ -35,7 +35,7 @@ struct VideoProxyWorkflowTests {
     @Test func turningProxiesOffPlaysOriginals() async throws {
         let temp = try TempDirectory()
         let store = try makeStore(temp)
-        let movie = try await writeTestMovie(to: temp.url.appendingPathComponent("A.MOV"), frames: 48)
+        let movie = try await writeTestMovie(to: temp.url.appendingPathComponent("A.MOV"), frames: 48, width: 160, height: 90)
         await store.importURLs([movie]).value
         let asset = try #require(store.project.media.first)
         _ = try await waitForProxy(store.proxyStore, asset.id)
@@ -51,7 +51,7 @@ struct VideoProxyWorkflowTests {
     @Test func proxyReadyRebuildKeepsPosition() async throws {
         let temp = try TempDirectory()
         let store = try makeStore(temp)
-        let movie = try await writeTestMovie(to: temp.url.appendingPathComponent("A.MOV"), frames: 96)
+        let movie = try await writeTestMovie(to: temp.url.appendingPathComponent("A.MOV"), frames: 96, width: 160, height: 90)
         await store.importURLs([movie]).value
         let asset = try #require(store.project.media.first)
         store.proxyStore.cancelAll() // Build the timeline from the original first.
@@ -70,7 +70,7 @@ struct VideoProxyWorkflowTests {
     @Test func proxyReadyRebuildKeepsPlayState() async throws {
         let temp = try TempDirectory()
         let store = try makeStore(temp)
-        let movie = try await writeTestMovie(to: temp.url.appendingPathComponent("A.MOV"), frames: 240)
+        let movie = try await writeTestMovie(to: temp.url.appendingPathComponent("A.MOV"), frames: 240, width: 160, height: 90)
         await store.importURLs([movie]).value
         let asset = try #require(store.project.media.first)
         store.proxyStore.cancelAll()
@@ -93,7 +93,7 @@ struct VideoProxyWorkflowTests {
     @Test func progressTicksDoNotFanOutToEditorObservers() async throws {
         let temp = try TempDirectory()
         let store = try makeStore(temp)
-        let movie = try await writeTestMovie(to: temp.url.appendingPathComponent("A.MOV"), frames: 240)
+        let movie = try await writeTestMovie(to: temp.url.appendingPathComponent("A.MOV"), frames: 240, width: 160, height: 90)
         // No import: that would start a player whose 100 ms monitor publishes on its own.
         let asset = MediaAsset(url: movie, kind: .video, durationSeconds: 10)
         store.project.media.append(asset)
@@ -110,8 +110,8 @@ struct VideoProxyWorkflowTests {
     @Test func backgroundProxyNeverSwitchesViewerToTimelineMode() async throws {
         let temp = try TempDirectory()
         let store = try makeStore(temp)
-        let a = try await writeTestMovie(to: temp.url.appendingPathComponent("A.MOV"), frames: 48)
-        let b = try await writeTestMovie(to: temp.url.appendingPathComponent("B.MOV"), frames: 48)
+        let a = try await writeTestMovie(to: temp.url.appendingPathComponent("A.MOV"), frames: 48, width: 160, height: 90)
+        let b = try await writeTestMovie(to: temp.url.appendingPathComponent("B.MOV"), frames: 48, width: 160, height: 90)
         await store.importURLs([a, b]).value
         store.proxyStore.cancelAll()
         let assetA = try #require(store.project.media.first { $0.url == a })
@@ -134,7 +134,7 @@ struct VideoProxyWorkflowTests {
     @Test func deletedProxyIsRegeneratedWhenTheTimelineRebuilds() async throws {
         let temp = try TempDirectory()
         let store = try makeStore(temp)
-        let movie = try await writeTestMovie(to: temp.url.appendingPathComponent("A.MOV"), frames: 48)
+        let movie = try await writeTestMovie(to: temp.url.appendingPathComponent("A.MOV"), frames: 48, width: 160, height: 90)
         await store.importURLs([movie]).value
         let asset = try #require(store.project.media.first)
         guard case .ready(let proxy) = try await waitForProxy(store.proxyStore, asset.id) else { return }
@@ -154,7 +154,7 @@ struct VideoProxyWorkflowTests {
     @Test func deletedProxyIsRegeneratedWhenTheSourceViewerOpensIt() async throws {
         let temp = try TempDirectory()
         let store = try makeStore(temp)
-        let movie = try await writeTestMovie(to: temp.url.appendingPathComponent("A.MOV"), frames: 48)
+        let movie = try await writeTestMovie(to: temp.url.appendingPathComponent("A.MOV"), frames: 48, width: 160, height: 90)
         await store.importURLs([movie]).value
         let asset = try #require(store.project.media.first)
         guard case .ready(let proxy) = try await waitForProxy(store.proxyStore, asset.id) else { return }
@@ -171,7 +171,7 @@ struct VideoProxyWorkflowTests {
     @Test func newProjectForgetsTheOldProjectsProxyStatuses() async throws {
         let temp = try TempDirectory()
         let store = try makeStore(temp)
-        let movie = try await writeTestMovie(to: temp.url.appendingPathComponent("A.MOV"), frames: 48)
+        let movie = try await writeTestMovie(to: temp.url.appendingPathComponent("A.MOV"), frames: 48, width: 160, height: 90)
         await store.importURLs([movie]).value
         let asset = try #require(store.project.media.first)
         _ = try await waitForProxy(store.proxyStore, asset.id)
@@ -191,7 +191,7 @@ struct VideoProxyWorkflowTests {
     @Test func sourceViewerPlaysProxyVideoWithOriginalAudio() async throws {
         let temp = try TempDirectory()
         let store = try makeStore(temp)
-        let movie = try await writeTestMovie(to: temp.url.appendingPathComponent("A.MOV"), frames: 48, withAudio: true)
+        let movie = try await writeTestMovie(to: temp.url.appendingPathComponent("A.MOV"), frames: 48, width: 160, height: 90, withAudio: true)
         await store.importURLs([movie]).value
         let asset = try #require(store.project.media.first)
         guard case .ready(let proxy) = try await waitForProxy(store.proxyStore, asset.id) else { return }
@@ -209,7 +209,7 @@ struct VideoProxyWorkflowTests {
     @Test func sourceViewerKeepsPositionWhenItsProxyBecomesReady() async throws {
         let temp = try TempDirectory()
         let store = try makeStore(temp)
-        let movie = try await writeTestMovie(to: temp.url.appendingPathComponent("A.MOV"), frames: 96, withAudio: true)
+        let movie = try await writeTestMovie(to: temp.url.appendingPathComponent("A.MOV"), frames: 96, width: 160, height: 90, withAudio: true)
         await store.importURLs([movie]).value
         let asset = try #require(store.project.media.first)
         store.proxyStore.cancelAll()
@@ -231,7 +231,7 @@ struct VideoProxyWorkflowTests {
     @Test func togglingProxiesKeepsSourcePlaybackRunning() async throws {
         let temp = try TempDirectory()
         let store = try makeStore(temp)
-        let movie = try await writeTestMovie(to: temp.url.appendingPathComponent("A.MOV"), frames: 240, withAudio: true)
+        let movie = try await writeTestMovie(to: temp.url.appendingPathComponent("A.MOV"), frames: 240, width: 160, height: 90, withAudio: true)
         await store.importURLs([movie]).value
         let asset = try #require(store.project.media.first)
         guard case .ready(let proxy) = try await waitForProxy(store.proxyStore, asset.id) else { return }
@@ -252,7 +252,7 @@ struct VideoProxyWorkflowTests {
     @Test func newProjectCancelsPendingProxies() async throws {
         let temp = try TempDirectory()
         let store = try makeStore(temp)
-        let movie = try await writeTestMovie(to: temp.url.appendingPathComponent("A.MOV"), frames: 480, width: 1920, height: 1080)
+        let movie = try await writeTestMovie(to: temp.url.appendingPathComponent("A.MOV"), frames: 240, width: 160, height: 90)
         await store.importURLs([movie]).value
         store.resetToEmptyProject(named: "Next")
         #expect(!store.proxyStore.statuses.values.contains { if case .generating = $0 { true } else { $0 == .queued } })

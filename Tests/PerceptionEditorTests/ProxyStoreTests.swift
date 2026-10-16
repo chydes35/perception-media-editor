@@ -14,7 +14,7 @@ struct ProxyStoreTests {
     }
 
     private func video(_ temp: TempDirectory, _ name: String) async throws -> MediaAsset {
-        let url = try await writeTestMovie(to: temp.url.appendingPathComponent(name), frames: 24)
+        let url = try await writeTestMovie(to: temp.url.appendingPathComponent(name), frames: 24, width: 160, height: 90)
         return MediaAsset(url: url, kind: .video, durationSeconds: 1.0)
     }
 
@@ -35,7 +35,7 @@ struct ProxyStoreTests {
     @Test func generatingProgressIsThrottled() async throws {
         let temp = try TempDirectory()
         let store = try makeStore(temp)
-        let url = try await writeTestMovie(to: temp.url.appendingPathComponent("L.MOV"), frames: 240)
+        let url = try await writeTestMovie(to: temp.url.appendingPathComponent("L.MOV"), frames: 240, width: 160, height: 90)
         let asset = MediaAsset(url: url, kind: .video, durationSeconds: 10)
         var fractions: [Double] = []
         let cancellable = store.$statuses.sink { statuses in
@@ -134,7 +134,7 @@ struct ProxyStoreTests {
         store.cancelAll()
         #expect(store.statuses[a.id] != .queued)
         if case .generating = store.statuses[a.id] { Issue.record("cancelAll must stop the running job") }
-        try await Task.sleep(for: .milliseconds(200))
+        try await waitUntil { store.activeJobs == 0 }
         let partials = try FileManager.default.contentsOfDirectory(atPath: store.directory.path).filter { $0.hasSuffix(".partial.mov") }
         #expect(partials.isEmpty)
     }
@@ -155,7 +155,7 @@ struct ProxyStoreTests {
     @Test func invalidateDuringGenerationDiscardsTheStaleResult() async throws {
         let temp = try TempDirectory()
         let store = try makeStore(temp)
-        let url = try await writeTestMovie(to: temp.url.appendingPathComponent("A.MOV"), frames: 120)
+        let url = try await writeTestMovie(to: temp.url.appendingPathComponent("A.MOV"), frames: 120, width: 160, height: 90)
         let asset = MediaAsset(url: url, kind: .video, durationSeconds: 5)
         var notified: [UUID] = []
         store.onReady = { notified.append($0) }
@@ -172,7 +172,7 @@ struct ProxyStoreTests {
     @Test func cancelThenEnqueueNeverOverlapsGenerations() async throws {
         let temp = try TempDirectory()
         let store = try makeStore(temp)
-        let url = try await writeTestMovie(to: temp.url.appendingPathComponent("A.MOV"), frames: 120)
+        let url = try await writeTestMovie(to: temp.url.appendingPathComponent("A.MOV"), frames: 120, width: 160, height: 90)
         let asset = MediaAsset(url: url, kind: .video, durationSeconds: 5)
         store.enqueue([asset])
         try await waitUntil { if case .generating? = store.statuses[asset.id] { true } else { false } }

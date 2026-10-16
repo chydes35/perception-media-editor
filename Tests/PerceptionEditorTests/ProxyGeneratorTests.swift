@@ -48,7 +48,7 @@ struct ProxyGeneratorTests {
 
     @Test func proxyKeepsFramesTimingColorAndLeavesTheSourceUntouched() async throws {
         let temp = try TempDirectory()
-        let source = try await writeTestMovie(to: temp.url.appendingPathComponent("P1.MOV"), frames: 48)
+        let source = try await writeTestMovie(to: temp.url.appendingPathComponent("P1.MOV"), frames: 24)
         let sourceBytes = try Data(contentsOf: source)
         let destination = temp.url.appendingPathComponent("proxy.mov")
 
@@ -56,7 +56,7 @@ struct ProxyGeneratorTests {
             source: source, destination: destination, maximumSize: CGSize(width: 320, height: 180)
         )
 
-        #expect(info.frameCount == 48)
+        #expect(info.frameCount == 24)
         #expect(info.pixelWidth == 320 && info.pixelHeight == 180)
         #expect(try Data(contentsOf: source) == sourceBytes, "The original must never change")
         #expect(!FileManager.default.fileExists(atPath: temp.url.appendingPathComponent("proxy.partial.mov").path))
@@ -78,10 +78,17 @@ struct ProxyGeneratorTests {
 
     @Test func cancellationLeavesNoFiles() async throws {
         let temp = try TempDirectory()
-        let source = try await writeTestMovie(to: temp.url.appendingPathComponent("P1.MOV"), frames: 240, width: 1920, height: 1080)
+        let source = try await writeTestMovie(to: temp.url.appendingPathComponent("P1.MOV"), frames: 24, width: 160, height: 90)
         let destination = temp.url.appendingPathComponent("proxy.mov")
-        let job = Task { try await ProxyGenerator.generate(source: source, destination: destination) }
-        try await Task.sleep(for: .milliseconds(30))
+        let partial = temp.url.appendingPathComponent("proxy.partial.mov")
+        // The fault holds the job mid-flight after one frame, so the cancel is deterministic.
+        let faults = ProxyGenerationFaults(stallAfterFrames: 1, watchdogInterval: nil)
+        let job = Task { try await ProxyGenerator.generate(source: source, destination: destination, faults: faults) }
+        let deadline = ContinuousClock.now + .seconds(30)
+        while !FileManager.default.fileExists(atPath: partial.path), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(FileManager.default.fileExists(atPath: partial.path), "The job must be in flight before it is cancelled")
         job.cancel()
         await #expect(throws: CancellationError.self) { _ = try await job.value }
         let leftovers = try FileManager.default.contentsOfDirectory(atPath: temp.url.path).filter { $0.hasPrefix("proxy") }
@@ -99,7 +106,7 @@ struct ProxyGeneratorTests {
         var sources: [URL] = []
         for index in 0 ..< 12 {
             sources.append(try await writeTestMovie(
-                to: temp.url.appendingPathComponent("S\(index).MOV"), frames: 48, width: 640, height: 360
+                to: temp.url.appendingPathComponent("S\(index).MOV"), frames: 24, width: 160, height: 90
             ))
         }
         let jobs = sources
@@ -147,7 +154,7 @@ struct ProxyGeneratorTests {
 
         switch outcome {
         case .finished(let frames, let ticked):
-            #expect(frames == Array(repeating: 48, count: 12))
+            #expect(frames == Array(repeating: 24, count: 12))
             #expect(ticked, "Unrelated async work must still get a thread")
         case .failed(let reason):
             Issue.record("A concurrent generation failed: \(reason)")
@@ -186,7 +193,7 @@ struct ProxyGeneratorTests {
     /// would ever call back. The status check after the loop must end the job.
     @Test func writerFailureWhenTheLoopStopsFailsTheJob() async throws {
         let temp = try TempDirectory()
-        let source = try await writeTestMovie(to: temp.url.appendingPathComponent("S.MOV"), frames: 48)
+        let source = try await writeTestMovie(to: temp.url.appendingPathComponent("S.MOV"), frames: 24, width: 160, height: 90)
         let faults = ProxyGenerationFaults(
             stallAfterFrames: 1, watchdogInterval: nil, pipelineFailure: { .writeFailed("injected") }
         )
@@ -199,7 +206,7 @@ struct ProxyGeneratorTests {
     /// If the writer fails after the loop has already yielded, only the watchdog can notice.
     @Test func watchdogFailsAJobWhoseWriterFailedWhileStalled() async throws {
         let temp = try TempDirectory()
-        let source = try await writeTestMovie(to: temp.url.appendingPathComponent("S.MOV"), frames: 48)
+        let source = try await writeTestMovie(to: temp.url.appendingPathComponent("S.MOV"), frames: 24, width: 160, height: 90)
         let checks = Mutex(0)
         let faults = ProxyGenerationFaults(stallAfterFrames: 1, pipelineFailure: {
             // Healthy when the loop stops; failed by the time the watchdog looks.

@@ -89,8 +89,8 @@ enum ProxyGenerator {
             throw ProxyError.noVideoTrack
         }
         guard let track = tracks.first else { throw ProxyError.noVideoTrack }
-        let (naturalSize, transform, timeRange, formats) = try await track.load(
-            .naturalSize, .preferredTransform, .timeRange, .formatDescriptions
+        let (naturalSize, transform, timeRange, formats, sourceTimescale) = try await track.load(
+            .naturalSize, .preferredTransform, .timeRange, .formatDescriptions, .naturalTimeScale
         )
         try Task.checkCancellation()
         let size = proxySize(for: naturalSize, maximum: maximumSize)
@@ -126,6 +126,13 @@ enum ProxyGenerator {
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
         input.transform = transform
         input.expectsMediaDataInRealTime = false
+        // Frame times such as 1001/24000 s only fit the source's own timescale. At the writer's default
+        // of 600 every frame start was rounded to a tick, up to 0.4 ms off, and a player asking for a
+        // frame's exact time showed the frame before it.
+        if sourceTimescale > 0 {
+            writer.movieTimeScale = sourceTimescale
+            input.mediaTimeScale = sourceTimescale
+        }
         let conversion = isFullRange ? try VideoRangeConversion(input: input, size: size) : nil
         writer.add(input)
 

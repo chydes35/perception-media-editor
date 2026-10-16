@@ -27,3 +27,7 @@ The S5 records V-Log in **full range**, tagged BT.709. Reading such a source as 
 - `ProxyFingerprint.formatVersion` is 2, so existing proxies regenerate. Version-1 files are orphaned in the cache folder until "remove all proxies".
 - Evidence: a full-range HEVC 4:2:2 fixture proxy matches its original within 4/1023 RGB (146 levels off before). Real `P1107158.MOV` cell means are within 1.8/1023 (104.5 before). Generation on the 10 s UHD trim runs at 72.0 fps debug and 79.6 fps release.
 
+## Amendment 2026-10-16: frame timestamps
+
+The generator wrote proxies at AVAssetWriter's default timescale of 600. Frame times such as 1001/24000 s (25.025 ticks) were rounded to a whole tick, so a proxy frame started up to 0.4 ms off its original's start (234 of 240 frames in a test). A player asking for a frame's exact time then showed the frame before it, which a frame-numbered composition test caught as a one-frame lag on proxied clips. The writer and its video input now use the source track's own timescale (24000 for the S5), so every proxy frame starts exactly when its original did. `ProxyFingerprint.formatVersion` is 3, so existing proxies regenerate.
+

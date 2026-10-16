@@ -1,6 +1,6 @@
 # Current status
 
-Updated: 2026-10-14. Everything below is on `main` (PR #7 merged at `d9ccdb5`). Schema version **10**. Candidate build **16**; not yet signed or notarized for distribution. Long-form evidence from earlier passes is in [archive/](archive/README.md). The last full status snapshot is [archive/CURRENT_STATUS_2026-10-10.md](archive/CURRENT_STATUS_2026-10-10.md).
+Updated: 2026-10-15. Everything below is on `main` (PR #7 merged at `d9ccdb5`). Schema version **10**. Candidate build **16**; not yet signed or notarized for distribution. Long-form evidence from earlier passes is in [archive/](archive/README.md). The last full status snapshot is [archive/CURRENT_STATUS_2026-10-10.md](archive/CURRENT_STATUS_2026-10-10.md).
 
 ## What works
 
@@ -15,6 +15,8 @@ Card import with verified copies, culling, RAW develop (white balance with eyedr
 | 100 distinct S5 RAWs on the M1/8 GB target (import, cull, edit, export) | PASS: 100/100 full-resolution JPEGs; all original hashes unchanged; whole-app peak 1.53 GiB |
 | Genuine single 100–200-photo shoot | NOT VERIFIED |
 | Agreed performance thresholds | NOT VERIFIED (observations only; see [PERFORMANCE_TARGETS](PERFORMANCE_TARGETS.md)) |
+| Video proxies (branch `feat/video-proxies`): unit/integration and real S5 media (frame-exact, 71.4 fps vs 28.8 fps gate) | PASS (full suite via CLT wrapper: 361 passed, 0 failed; `qa.sh` itself not runnable on this Mac) |
+| Video proxies: Runtime/UI walkthrough, UI responsiveness during generation | NOT VERIFIED |
 | Distribution signing and notarization | NOT VERIFIED |
 
 ## Open problems

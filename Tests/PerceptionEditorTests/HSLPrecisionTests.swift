@@ -131,7 +131,7 @@ struct HSLPrecisionTests {
     }
 
     /// The interpolated cube is only the fallback for when the kernel cannot be compiled. Measured on
-    /// solid-color images (Core Image's cube filter rendered zeros for float bitmap rows in this harness).
+    /// solid-color images.
     @Test func theCubeFallbackStaysNearTheExactCurve() throws {
         let srgb = try #require(CGColorSpace(name: CGColorSpace.sRGB))
         var hsl = HSLAdjustments()

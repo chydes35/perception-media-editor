@@ -276,7 +276,10 @@ final class TimelineCompositionService {
                             source = source.transformed(by: CGAffineTransform(translationX: dx, y: dy))
                                 .composited(over: CIImage(color: .black).cropped(to: CGRect(origin: .zero, size: renderSize)))
                         }
-                        let output = MediaColorRenderer.render(source, adjustments: adjustments, includesGeometry: false)
+                        // A neutral clip only needs fitting into the proxy frame; skip the colour chain.
+                        let output = adjustments == .neutral
+                            ? source
+                            : MediaColorRenderer.render(source, adjustments: adjustments, includesGeometry: false)
                         request.finish(
                             with: output.cropped(to: CGRect(origin: .zero, size: renderSize ?? request.sourceImage.extent.size)),
                             context: nil

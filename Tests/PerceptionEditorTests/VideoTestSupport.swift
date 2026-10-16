@@ -56,3 +56,18 @@ func writeTestMovie(
     guard writer.status == .completed else { throw writer.error ?? CocoaError(.fileWriteUnknown) }
     return url
 }
+
+/// Polls until the asset's proxy is ready or failed.
+@MainActor
+func waitForProxy(_ store: ProxyStore, _ id: UUID, timeout: Duration = .seconds(60)) async throws -> ProxyStatus {
+    let clock = ContinuousClock()
+    let deadline = clock.now + timeout
+    while clock.now < deadline {
+        switch store.statuses[id] {
+        case .ready?, .failed?: return store.statuses[id]!
+        default: try await Task.sleep(for: .milliseconds(20))
+        }
+    }
+    Issue.record("Proxy for \(id) did not finish within \(timeout)")
+    return store.statuses[id] ?? .missing
+}

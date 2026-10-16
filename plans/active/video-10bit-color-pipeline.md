@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task by task. Steps use checkbox (`- [ ]`) syntax for tracking. Task 0 is a measurement spike whose results can change Tasks 3–4. Do not skip it.
 
-Status: active (Task 0 and the Task 2 proxy range fix done 2026-10-16, see [decision record](../../docs/decisions/2026-10-16-10bit-compositor.md); Task 1 next. Task 13, Apple Log, is blocked on a real iPhone 15 Pro clip)
+Status: active (Tasks 0, 1 and 2 done 2026-10-16; see the [compositor](../../docs/decisions/2026-10-16-10bit-compositor.md) and [timing](../../docs/decisions/2026-10-16-frame-exact-timing.md) decision records. Task 3 next. Task 13, Apple Log, is blocked on a real iPhone 15 Pro clip)
 Roadmap sources: [V0.2 — LUT import and intensity control](../../docs/ROADMAP.md), [V0.3 — 1080p and 4K export](../../docs/ROADMAP.md). The 10-bit compositor, frame-exact timing, OCIO and scopes are new V0.3 work and must be added to the roadmap (Task 12).
 Builds on: [video-proxy-pipeline.md](video-proxy-pipeline.md) (branch `feat/video-proxies`: `MediaQuality`, proxy-aware `TimelineCompositionService`)
 Owner: video engine
@@ -169,6 +169,15 @@ struct EditorProject { …; var sequenceFrameRate: FrameRate? /* first clip's ra
 
 ### Task 2: Source color descriptor, Panasonic detection and the proxy range fix
 
+**Done 2026-10-16.** Differences from the sketch below:
+- The XML is the QuickTime `mdta` item `mdta/com.panasonic.Semi-Pro.metadata.xml`.
+- `EditUnit` is not used, because the track's frame duration already gives the rate.
+- The S5's `avcC` records carry no high-profile extension, so bit depth and chroma come from the SPS (Exp-Golomb `chroma_format_idc` and `bit_depth_luma_minus8`). HEVC uses `hvcC`, and ProRes is identified by its codec type.
+- `detectedFrom` is an enum (`SourceColorEvidence`), and the matrix is an enum too.
+- `ColorInputTransform` has only `automatic` and `none` for now. Tasks 6 and 9 add `lut` and `aces`.
+- The inspector shows the descriptor's summary. The source-color picker arrives with Task 6, when there is something to pick.
+- Real check: `RealVideoColorTests` passes on `P1107158` and `P1107172`.
+
 ```swift
 enum YCbCrRange: String, Codable, Sendable { case video, full }
 enum SourceTransfer: String, Codable, Sendable { case rec709, vLog, unknown }
@@ -186,10 +195,10 @@ enum ColorInputTransform: Codable, Hashable, Sendable {
 }
 ```
 
-- [ ] Parse `com.panasonic.Semi-Pro.metadata.xml` (loaded with `AVAsset.load(.metadata)`, key space QuickTime metadata) using `XMLParser`. Take `CaptureGamma`, `CaptureGamut`, `BitDepth`, `EditUnit`. Range and matrix come from the format description extensions (`kCMFormatDescriptionExtension_FullRangeVideo`, `…YCbCrMatrix`). Do not use the transfer and primaries tags when Panasonic metadata disagrees.
-- [ ] Store the descriptor on `MediaAsset` (schema 11, optional). It is backfilled on open together with the frame rate. Store `colorInputByAssetID: [UUID: ColorInputTransform]` on `EditorProject`. Color input is a property of the source file, not of a clip.
+- [x] Parse `com.panasonic.Semi-Pro.metadata.xml` (loaded with `AVAsset.load(.metadata)`, key space QuickTime metadata) using `XMLParser`. Take `CaptureGamma`, `CaptureGamut`, `BitDepth`, `EditUnit`. Range and matrix come from the format description extensions (`kCMFormatDescriptionExtension_FullRangeVideo`, `…YCbCrMatrix`). Do not use the transfer and primaries tags when Panasonic metadata disagrees.
+- [x] Store the descriptor on `MediaAsset` (schema 11, optional). It is backfilled on open together with the frame rate. Store `colorInputByAssetID: [UUID: ColorInputTransform]` on `EditorProject`. Color input is a property of the source file, not of a clip.
 - [x] **Done 2026-10-16** (red test first; see the decision record's "Proxy fix result"). Implementation note: VideoToolbox's `VTPixelTransferSession` does the scaling correctly, so no Metal pass was needed. Old v1 proxy files are orphaned, not deleted. A cache sweep is a follow-up. **Proxy range fix (priority: today's proxies preview V-Log about 17% too bright; see the decision record).** `ProxyGenerator` reads full-range sources as `xf22`. A Metal (or vImage) pass converts to correctly scaled video range: Y' = 64 + Y'·876/1023, C = 512 + (C − 512)·896/1023, rounded. The frames are appended through `AVAssetWriterInputPixelBufferAdaptor` as `x422`, tagged video range. AVFoundation's own full→video conversion only adds 64 to luma, so never hand it full-range buffers to convert. Add a red test first: a full-range fixture's proxy, read back as RGB, matches the original within 2/1023 (it fails today by about 17%). The proxy's own range is recorded in the proxy validation and read from the proxy's format description at composition time, never assumed. Add a generator version to the cache key (`ProxyFingerprint.key` gets a `v2|` prefix), so v1 proxies regenerate. Do not delete them eagerly; the existing reuse and cleanup logic retires them.
-- [ ] Tests: `SourceColorTests` uses checked-in XML snippets (V-Log, STANDARD, malformed, missing). The test fixture writer gains a full-range variant. A proxy of a full-range fixture keeps code values within 2 levels of 1023 (`ProxyGeneratorTests.fullRangeSourceKeepsCodeValues`).
+- [x] Tests: `SourceColorTests` uses checked-in XML snippets (V-Log, STANDARD, malformed, missing). The test fixture writer gains a full-range variant. A proxy of a full-range fixture keeps code values within 2 levels of 1023 (`ProxyGeneratorTests.fullRangeSourceKeepsCodeValues`).
 
 ### Task 3: Metal runtime, YCbCr decode kernel
 

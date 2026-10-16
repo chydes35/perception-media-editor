@@ -859,7 +859,7 @@ final class EditorStore: ObservableObject {
         pendingAudioWaveforms = []
         clearAdjustmentHistory()
         backfillPhotoDimensions()
-        migrateClipTimingIfNeeded()
+        migrateVideoMetadataIfNeeded()
         for asset in project.media where asset.kind == .video || asset.kind == .audio {
             requestAudioWaveform(for: asset)
         }
@@ -1030,13 +1030,13 @@ final class EditorStore: ObservableObject {
         }
     }
 
-    /// Projects saved before schema 11 stored clip times in seconds and no frame rates. This reads
-    /// each available video's rate and converts its clips to exact frames. The saved snapshot is
-    /// converted the same way, so this alone does not mark the project edited.
-    func migrateClipTimingIfNeeded() {
+    /// Projects saved before schema 11 stored clip times in seconds, and no frame rates or source
+    /// color. This reads each available video's metadata and converts its clips to exact frames. The
+    /// saved snapshot is updated the same way, so this alone does not mark the project edited.
+    func migrateVideoMetadataIfNeeded() {
         let legacyAssets = Set(project.timelineClips.filter { $0.legacyTiming != nil }.map(\.assetID))
         let targets = project.media
-            .filter { $0.kind == .video && ($0.frameRate == nil || legacyAssets.contains($0.id)) }
+            .filter { $0.kind == .video && ($0.frameRate == nil || $0.sourceColor == nil || legacyAssets.contains($0.id)) }
             .filter { FileManager.default.fileExists(atPath: $0.url.path) }
             .map { ($0.id, $0.url) }
         guard !targets.isEmpty else { return }
@@ -1047,11 +1047,11 @@ final class EditorStore: ObservableObject {
             var found: [UUID: VideoMetadata] = [:]
             for (id, url) in targets {
                 let metadata = await service.metadata(for: url)
-                if metadata.frameRate != nil { found[id] = metadata }
+                if metadata.frameRate != nil || metadata.sourceColor != nil { found[id] = metadata }
             }
             guard project.id == projectID, !found.isEmpty else { return }
-            let changed = project.adoptFrameMetadata(found)
-            lastSavedProject.adoptFrameMetadata(found)
+            let changed = project.adoptVideoMetadata(found)
+            lastSavedProject.adoptVideoMetadata(found)
             if changed { rebuildTimelinePlayback() }
         }
     }
@@ -1155,7 +1155,7 @@ final class EditorStore: ObservableObject {
                     return
                 }
                 project.media[currentIndex].apply(metadata)
-                project.adoptFrameMetadata([target.id: metadata]) // Converts clips left in seconds while offline.
+                project.adoptVideoMetadata([target.id: metadata]) // Converts clips left in seconds while offline.
                 proxyStore.enqueue([project.media[currentIndex]])
                 if project.timelineClips.contains(where: { $0.assetID == target.id }) {
                     rebuildTimelinePlayback()

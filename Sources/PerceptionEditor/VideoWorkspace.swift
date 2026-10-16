@@ -218,6 +218,9 @@ struct VideoWorkspace: View {
                             metadataRow("Frame", "\(width) × \(height)")
                         }
                         metadataRow("Type", asset.url.pathExtension.uppercased())
+                        if let color = asset.sourceColor {
+                            metadataRow("Color", color.summary)
+                        }
                     }
                 }
 

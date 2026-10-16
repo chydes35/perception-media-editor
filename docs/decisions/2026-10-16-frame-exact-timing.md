@@ -13,7 +13,7 @@ Up to schema 10, `TimelineClip` stored `timelineStartSeconds`, `sourceStartSecon
 - The composition sets the video and audio tracks' `naturalTimeScale` and the video composition's `frameDuration` to the sequence rate. It cuts from the track's first timestamp and keys color and audio segments by exact `CMTimeRange`s.
 - Trims and splits move whole frames. The shortest clip is 6 frames. Seeking snaps to the nearest frame start.
 - `MediaAsset` gains `frameRate` and `frameCount`, read on import, ingest and relink.
-- **Migration:** a schema ≤ 10 clip decodes its seconds into `legacyTiming`, with provisional 23.976 frames. After open (`EditorStore.migrateClipTimingIfNeeded`) and after relink, the source's real rate is read and the clip converted exactly (`EditorProject.adoptFrameMetadata`). The saved snapshot is converted the same way, so this does not mark the project edited. A clip whose media is offline keeps and saves its original seconds until relink, so nothing is rounded twice.
+- **Migration:** a schema ≤ 10 clip decodes its seconds into `legacyTiming`, with provisional 23.976 frames. After open (`EditorStore.migrateVideoMetadataIfNeeded`) and after relink, the source's real rate is read and the clip converted exactly (`EditorProject.adoptVideoMetadata`). The saved snapshot is converted the same way, so this does not mark the project edited. A clip whose media is offline keeps and saves its original seconds until relink, so nothing is rounded twice.
 - A clip at a different rate from the sequence fills whole sequence frames, its source is cut to that slot, and a warning is shown. Proper mixed-rate editing is out of scope.
 
 ## Alternatives considered

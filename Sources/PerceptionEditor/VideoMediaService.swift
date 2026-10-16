@@ -7,6 +7,7 @@ struct VideoMetadata: Sendable {
     var pixelHeight: Int?
     var frameRate: FrameRate?
     var frameCount: Int64?
+    var sourceColor: SourceColorDescriptor?
 }
 
 @MainActor
@@ -24,7 +25,11 @@ final class VideoMediaService {
         var transformedSize: CGSize?
         var frameRate: FrameRate?
         var frameCount: Int64?
+        var sourceColor: SourceColorDescriptor?
         if let videoTrack {
+            if let format = (try? await videoTrack.load(.formatDescriptions))?.first {
+                sourceColor = SourceColorDetector.descriptor(format: format, panasonicXML: await panasonicXML(in: asset))
+            }
             if let (minimum, range) = try? await videoTrack.load(.minFrameDuration, .timeRange),
                let rate = FrameRate(frameDuration: minimum) {
                 frameRate = rate
@@ -42,8 +47,17 @@ final class VideoMediaService {
             pixelWidth: transformedSize.map { Int(abs($0.width).rounded()) },
             pixelHeight: transformedSize.map { Int(abs($0.height).rounded()) },
             frameRate: frameRate,
-            frameCount: frameCount
+            frameCount: frameCount,
+            sourceColor: sourceColor
         )
+    }
+
+    /// The Lumix clip metadata item, which records the real capture gamma (V-Log) and gamut.
+    private func panasonicXML(in asset: AVURLAsset) async -> String? {
+        guard let items = try? await asset.loadMetadata(for: .quickTimeMetadata) else { return nil }
+        let matches = AVMetadataItem.metadataItems(from: items, filteredByIdentifier: PanasonicClipMetadata.metadataIdentifier)
+        guard let item = matches.first else { return nil }
+        return try? await item.load(.stringValue)
     }
 
     func thumbnail(
@@ -71,19 +85,23 @@ extension MediaAsset {
         pixelHeight = metadata.pixelHeight
         frameRate = metadata.frameRate
         frameCount = metadata.frameCount
+        sourceColor = metadata.sourceColor
     }
 }
 
 extension EditorProject {
-    /// Fills in frame rates and counts read from the sources, then converts schema-10 clips of those
-    /// sources from seconds to exact frames and re-packs the timeline. Clips whose source is still
-    /// unknown (offline) keep their seconds. Returns whether any clip changed.
+    /// Fills in frame rates, frame counts and source color read from the sources, then converts
+    /// schema-10 clips of those sources from seconds to exact frames and re-packs the timeline. Clips
+    /// whose source is still unknown (offline) keep their seconds. Returns whether any clip changed.
     @discardableResult
-    mutating func adoptFrameMetadata(_ metadata: [UUID: VideoMetadata]) -> Bool {
+    mutating func adoptVideoMetadata(_ metadata: [UUID: VideoMetadata]) -> Bool {
         for index in media.indices {
-            guard let found = metadata[media[index].id], found.frameRate != nil else { continue }
-            media[index].frameRate = found.frameRate
-            media[index].frameCount = found.frameCount
+            guard let found = metadata[media[index].id] else { continue }
+            if found.frameRate != nil {
+                media[index].frameRate = found.frameRate
+                media[index].frameCount = found.frameCount
+            }
+            if let sourceColor = found.sourceColor { media[index].sourceColor = sourceColor }
         }
         let rates = Dictionary(uniqueKeysWithValues: media.compactMap { asset in asset.frameRate.map { (asset.id, $0) } })
         var changed = false

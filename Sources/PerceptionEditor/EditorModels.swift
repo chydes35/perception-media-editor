@@ -62,6 +62,8 @@ struct MediaAsset: Identifiable, Codable, Equatable {
     /// or when an older project opens.
     var frameRate: FrameRate?
     var frameCount: Int64?
+    /// Video only (schema 11): what the original's code values mean (V-Log or Rec. 709, range, depth).
+    var sourceColor: SourceColorDescriptor?
 
     init(
         id: UUID = UUID(),
@@ -77,7 +79,8 @@ struct MediaAsset: Identifiable, Codable, Equatable {
         pixelWidth: Int? = nil,
         pixelHeight: Int? = nil,
         frameRate: FrameRate? = nil,
-        frameCount: Int64? = nil
+        frameCount: Int64? = nil,
+        sourceColor: SourceColorDescriptor? = nil
     ) {
         self.id = id
         self.url = url
@@ -93,11 +96,12 @@ struct MediaAsset: Identifiable, Codable, Equatable {
         self.pixelHeight = pixelHeight
         self.frameRate = frameRate
         self.frameCount = frameCount
+        self.sourceColor = sourceColor
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, url, kind, importedAt, rating, isFavorite, flag, colorLabel, captureDate
-        case durationSeconds, pixelWidth, pixelHeight, frameRate, frameCount
+        case durationSeconds, pixelWidth, pixelHeight, frameRate, frameCount, sourceColor
     }
 
     /// Fields added after schema 1 decode with defaults so older projects keep opening.
@@ -117,6 +121,7 @@ struct MediaAsset: Identifiable, Codable, Equatable {
         pixelHeight = try container.decodeIfPresent(Int.self, forKey: .pixelHeight)
         frameRate = try container.decodeIfPresent(FrameRate.self, forKey: .frameRate)
         frameCount = try container.decodeIfPresent(Int64.self, forKey: .frameCount)
+        sourceColor = try container.decodeIfPresent(SourceColorDescriptor.self, forKey: .sourceColor)
     }
 
     /// Frames in the source: the recorded count, or one derived from the duration for files whose
@@ -460,6 +465,8 @@ struct EditorProject: Codable, Equatable {
     var videoAdjustmentsByClipID: [UUID: PhotoAdjustments] = [:]
     var audioAdjustmentsByClipID: [UUID: ClipAudioAdjustments] = [:]
     var timelineClips: [TimelineClip] = []
+    /// Per media item (schema 11); a missing entry means `.automatic`.
+    var colorInputByAssetID: [UUID: ColorInputTransform] = [:]
 
     static let starter = EditorProject(name: "Untitled Project")
 
@@ -483,6 +490,10 @@ struct EditorProject: Codable, Equatable {
             timelineClips[index].timelineStartFrame = cursor
             cursor += timelineFrames(of: timelineClips[index])
         }
+    }
+
+    func colorInput(for assetID: UUID) -> ColorInputTransform {
+        colorInputByAssetID[assetID] ?? .automatic
     }
 
     var timelineDurationFrames: Int64 {
@@ -524,6 +535,7 @@ struct EditorProject: Codable, Equatable {
         case videoAdjustmentsByClipID
         case audioAdjustmentsByClipID
         case timelineClips
+        case colorInputByAssetID
     }
 
     init(from decoder: Decoder) throws {
@@ -547,5 +559,9 @@ struct EditorProject: Codable, Equatable {
             forKey: .audioAdjustmentsByClipID
         ) ?? [:]
         timelineClips = try container.decodeIfPresent([TimelineClip].self, forKey: .timelineClips) ?? []
+        colorInputByAssetID = try container.decodeIfPresent(
+            [UUID: ColorInputTransform].self,
+            forKey: .colorInputByAssetID
+        ) ?? [:]
     }
 }

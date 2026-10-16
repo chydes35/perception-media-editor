@@ -101,7 +101,7 @@ struct ProjectMigration11Tests {
     @Test func knownFrameRatesConvertClipsExactlyAndRepackTheTimeline() throws {
         var project = try document.project(from: schema10Project())
         let pal = FrameRate(frameDuration: 1, timescale: 25)
-        let changed = project.adoptFrameMetadata([
+        let changed = project.adoptVideoMetadata([
             assetID: VideoMetadata(durationSeconds: 30, frameRate: pal, frameCount: 750)
         ])
         #expect(changed)
@@ -121,7 +121,7 @@ struct ProjectMigration11Tests {
 
     @Test func clipsOfOfflineSourcesStayInSeconds() throws {
         var project = try document.project(from: schema10Project())
-        let changed = project.adoptFrameMetadata([:])
+        let changed = project.adoptVideoMetadata([:])
         #expect(!changed)
         #expect(project.timelineClips.allSatisfy { $0.legacyTiming != nil })
     }
@@ -153,6 +153,9 @@ struct ProjectMigration11Tests {
 
         let asset = try #require(store.project.media.first)
         #expect(asset.frameRate == .ntsc23976 && asset.frameCount == 480)
+        // Source color is backfilled in the same pass (the fixture is ProRes 422 tagged Rec. 709).
+        let color = try #require(asset.sourceColor)
+        #expect(color.transfer == .rec709 && color.bitDepth == 10 && color.chroma == .yuv422 && color.detectedFrom == .formatDescription)
         let first = store.project.timelineClips[0]
         #expect(first.sourceStartFrame == 59 && first.durationFrames == 96)
         #expect(store.project.timelineClips[1].timelineStartFrame == 96)

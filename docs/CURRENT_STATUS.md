@@ -18,6 +18,7 @@ Card import with verified copies, culling, RAW develop (white balance with eyedr
 | Video proxies (branch `feat/video-proxies`, pending merge): unit/integration and real S5 media (frame-exact, 68.5 fps at `.utility` QoS vs 28.8 fps gate) | PASS (full suite via CLT wrapper on 2026-10-16: 374 tests, 351 executed / 23 skipped, 0 failed; `qa.sh` itself not runnable on this Mac) |
 | Video proxies (branch `feat/video-proxies`, pending merge): Runtime/UI walkthrough, UI responsiveness during generation | NOT VERIFIED |
 | Video proxies of full-range sources (S5 V-Log), branch `plan/10bit-vlog-color` | FIXED, not yet on `feat/video-proxies`. Proxies made before it are about 17% too bright (AVFoundation's x422 read of a full-range source adds 64 to luma without rescaling). Real `P1107158` proxy now within 1.8/1023 of the original (104.5 before). The proxy key version is 2, so old proxies regenerate; the v1 files stay in the cache folder until "remove all proxies". 378 tests, 0 failed (CLT wrapper, 2026-10-16) |
+| Frame-exact clip timing, schema 11 (branch `plan/10bit-vlog-color`) | PASS: unit and integration (55 of 240 output frames were wrong on the old code, 0 now), and G6 on the composition with real `P1107157` (frames 33 000–33 239). 392 tests, 0 failed (CLT wrapper, 2026-10-16). Through-export G6 and the UI walkthrough are NOT VERIFIED |
 | Distribution signing and notarization | NOT VERIFIED |
 
 ## Open problems

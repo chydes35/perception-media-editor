@@ -136,6 +136,12 @@ The decision is xf22-first YCbCr input, our own decode and encode, and a proxy r
 
 ### Task 1: Frame-exact time model (schema 10 → 11)
 
+**Done 2026-10-16** (commit a5f5111 plus docs). See the [decision record](../../docs/decisions/2026-10-16-frame-exact-timing.md). Differences from the sketch below:
+- Clips carry their own `frameRate`. `MediaAsset` gets `frameRate`/`frameCount`, not `firstFrameTime`; the composition reads the track's first timestamp itself.
+- `sequenceFrameRate` is computed (the first clip's rate), not stored.
+- The red test that matters is `shuffledCutsShowExactlyTheirFrames`, which got 55 of 240 frames wrong on the old code. The "1 117 split" layout passes on old code, because equal source and timeline offsets cancel the rounding.
+- The first red result was produced by the fixture, not the code: the writer's default timescale of 600 rounded the fixture's own frame times. The test movie writers now use 24000.
+
 **Interfaces:**
 
 ```swift
@@ -154,12 +160,12 @@ struct MediaAsset { …; var frameRate: FrameRate?; var firstFrameTime: CMTimeVa
 struct EditorProject { …; var sequenceFrameRate: FrameRate? /* first clip's rate; default ntsc23976 */ }
 ```
 
-- [ ] **Red test first:** `TimelineFrameExactTests.legacySecondsLoseFramesAt23976`. Write a frame-numbered fixture: extend `writeTestMovie` to draw the frame index as a binary bar code in the top rows, 24000/1001, 1 200 frames. Split at frame 1 117, ripple 30 one-frame trims, and decode every output frame of the composition through `AVAssetImageGenerator` with zero tolerance. Expect output frame k to read source index k. It fails on today's code, which proves the bug. Then switch the test to the new API.
-- [ ] Rewrite every use of `*Seconds` in `TimelineCompositionService` and `EditorStore` timeline edits to work in frames: insert, split, trim (minimum 6 frames instead of 0.25 s), ripple cursor, active-clip lookup, and playhead snapping to the frame shown. Audio uses the same `CMTime`s. Fades stay as Double durations, converted at the sequence timescale.
-- [ ] Composition: set `naturalTimeScale` to the sequence timescale (24000) and the video composition's `frameDuration` to the sequence rate.
-- [ ] Migration: in `ProjectDocument`, read schema ≤ 10 clips into a `LegacyClipTiming` (seconds). After open, the store fills in `MediaAsset.frameRate` and `firstFrameTime` with an async track load (like the pixel-dimension backfill), then converts with `nearestFrame(toSeconds:)`. An offline asset keeps its legacy seconds, which are written back unchanged, until relink. Saving writes schema 11 with frame fields, plus legacy seconds only for clips that are still unconverted.
-- [ ] Tests: `FrameTimeTests` (exactness at frames 0, 1, 33 239 and 10⁹; round-trip `frame(containing: time(ofFrame:))`; 25, 29.97 and 59.94 fps); `ProjectMigration11Tests` (a schema-10 fixture file opens, converts and saves as 11; reopening gives identical frames; an offline asset keeps its seconds; a schema-12 file still throws `unsupportedSchema`); and the frame-numbered composition test going green.
-- [ ] Real gate **G6** (below).
+- [x] **Red test first:** `TimelineFrameExactTests.legacySecondsLoseFramesAt23976`. Write a frame-numbered fixture: extend `writeTestMovie` to draw the frame index as a binary bar code in the top rows, 24000/1001, 1 200 frames. Split at frame 1 117, ripple 30 one-frame trims, and decode every output frame of the composition through `AVAssetImageGenerator` with zero tolerance. Expect output frame k to read source index k. It fails on today's code, which proves the bug. Then switch the test to the new API.
+- [x] Rewrite every use of `*Seconds` in `TimelineCompositionService` and `EditorStore` timeline edits to work in frames: insert, split, trim (minimum 6 frames instead of 0.25 s), ripple cursor, active-clip lookup, and playhead snapping to the frame shown. Audio uses the same `CMTime`s. Fades stay as Double durations, converted at the sequence timescale.
+- [x] Composition: set `naturalTimeScale` to the sequence timescale (24000) and the video composition's `frameDuration` to the sequence rate.
+- [x] Migration: in `ProjectDocument`, read schema ≤ 10 clips into a `LegacyClipTiming` (seconds). After open, the store fills in `MediaAsset.frameRate` and `firstFrameTime` with an async track load (like the pixel-dimension backfill), then converts with `nearestFrame(toSeconds:)`. An offline asset keeps its legacy seconds, which are written back unchanged, until relink. Saving writes schema 11 with frame fields, plus legacy seconds only for clips that are still unconverted.
+- [x] Tests: `FrameTimeTests` (exactness at frames 0, 1, 33 239 and 10⁹; round-trip `frame(containing: time(ofFrame:))`; 25, 29.97 and 59.94 fps); `ProjectMigration11Tests` (a schema-10 fixture file opens, converts and saves as 11; reopening gives identical frames; an offline asset keeps its seconds; a schema-12 file still throws `unsupportedSchema`); and the frame-numbered composition test going green.
+- [x] Real gate **G6** (below), on the composition. It needs repeating through an export after Task 8.
 
 ### Task 2: Source color descriptor, Panasonic detection and the proxy range fix
 

@@ -87,4 +87,31 @@ struct TimelineProxyCompositionTests {
         let frame = try await generator.image(at: CMTime(seconds: 1.5, preferredTimescale: 24000)).image
         #expect(frame.width == 320 && frame.height == 180, "The unproxied clip is scaled into the proxy frame")
     }
+
+    @Test func portraitProxyRendersPortraitSize() async throws {
+        let temp = try TempDirectory()
+        let rotate = CGAffineTransform(a: 0, b: 1, c: -1, d: 0, tx: 360, ty: 0)
+        let original = try await writeTestMovie(
+            to: temp.url.appendingPathComponent("P.MOV"), frames: 48, transform: rotate
+        )
+        let proxy = try await ProxyGenerator.generate(
+            source: original,
+            destination: temp.url.appendingPathComponent("P-proxy.mov"),
+            maximumSize: CGSize(width: 320, height: 180)
+        ).url
+        let asset = MediaAsset(url: original, kind: .video, durationSeconds: 48 * 1001 / 24000.0)
+        let result = await TimelineCompositionService.shared.makePlayerItem(
+            clips: [TimelineClip(assetID: asset.id, durationSeconds: 1.0)],
+            media: [asset],
+            proxyURLsByAssetID: [asset.id: proxy]
+        )
+        let item = try #require(result.playerItem)
+        let videoComposition = try #require(item.videoComposition)
+        #expect(videoComposition.renderSize == CGSize(width: 180, height: 320))
+
+        let generator = AVAssetImageGenerator(asset: item.asset)
+        generator.videoComposition = videoComposition
+        let frame = try await generator.image(at: CMTime(seconds: 0.5, preferredTimescale: 24000)).image
+        #expect(frame.width == 180 && frame.height == 320, "The upright frame is portrait")
+    }
 }

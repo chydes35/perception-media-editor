@@ -7,7 +7,13 @@ import Testing
 /// Writes a small ProRes 422 movie whose frames step from black to white, tagged Rec. 709,
 /// at 23.976 fps, so proxy tests exercise the same frame timing as Lumix footage.
 @discardableResult
-func writeTestMovie(to url: URL, frames: Int = 24, width: Int = 640, height: Int = 360) async throws -> URL {
+func writeTestMovie(
+    to url: URL,
+    frames: Int = 24,
+    width: Int = 640,
+    height: Int = 360,
+    transform: CGAffineTransform = .identity
+) async throws -> URL {
     let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
     let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
         AVVideoCodecKey: AVVideoCodecType.proRes422,
@@ -20,6 +26,7 @@ func writeTestMovie(to url: URL, frames: Int = 24, width: Int = 640, height: Int
         ]
     ])
     input.expectsMediaDataInRealTime = false
+    input.transform = transform
     let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [
         kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
         kCVPixelBufferWidthKey as String: width,

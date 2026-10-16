@@ -154,7 +154,11 @@ final class TimelineCompositionService {
             if sources.usesProxy {
                 usedProxyCount += 1
                 if proxyRenderSize == nil, let size = try? await sourceVideoTrack.load(.naturalSize) {
-                    proxyRenderSize = size
+                    // The composition track carries the preferred transform, so frames reach the
+                    // CI handler upright; the render size must be the post-transform size.
+                    let transform = (try? await sourceVideoTrack.load(.preferredTransform)) ?? .identity
+                    let upright = size.applying(transform)
+                    proxyRenderSize = CGSize(width: abs(upright.width), height: abs(upright.height))
                 }
             }
 

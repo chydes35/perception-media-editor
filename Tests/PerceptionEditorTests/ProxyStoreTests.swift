@@ -99,4 +99,53 @@ struct ProxyStoreTests {
         store.enqueue([junk])
         guard case .failed = try await waitForProxy(store, junk.id) else { Issue.record("should fail"); return }
     }
+
+    private func waitUntil(_ condition: () -> Bool) async throws {
+        let deadline = ContinuousClock.now + .seconds(30)
+        while !condition(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
+    }
+
+    @Test func invalidateDuringGenerationDiscardsTheStaleResult() async throws {
+        let temp = try TempDirectory()
+        let store = try makeStore(temp)
+        let url = try await writeTestMovie(to: temp.url.appendingPathComponent("A.MOV"), frames: 120)
+        let asset = MediaAsset(url: url, kind: .video, durationSeconds: 5)
+        var notified: [UUID] = []
+        store.onReady = { notified.append($0) }
+        store.enqueue([asset])
+        try await waitUntil { if case .generating? = store.statuses[asset.id] { true } else { false } }
+        store.invalidate(assetID: asset.id)
+        try await waitUntil { store.activeJobs == 0 }
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(store.statuses[asset.id] == nil)
+        #expect(notified.isEmpty)
+        #expect(store.peakActiveJobs == 1)
+    }
+
+    @Test func cancelThenEnqueueNeverOverlapsGenerations() async throws {
+        let temp = try TempDirectory()
+        let store = try makeStore(temp)
+        let url = try await writeTestMovie(to: temp.url.appendingPathComponent("A.MOV"), frames: 120)
+        let asset = MediaAsset(url: url, kind: .video, durationSeconds: 5)
+        store.enqueue([asset])
+        try await waitUntil { if case .generating? = store.statuses[asset.id] { true } else { false } }
+        store.cancelAll()
+        store.enqueue([asset])
+        guard case .ready = try await waitForProxy(store, asset.id) else { Issue.record("not ready"); return }
+        #expect(store.peakActiveJobs == 1, "A new job must wait for the cancelled one to finish")
+        #expect(try FileManager.default.contentsOfDirectory(atPath: store.directory.path).filter { $0.hasSuffix(".partial.mov") }.isEmpty)
+    }
+
+    @Test func removeAllProxiesOnlyDeletesStoreOwnedFiles() async throws {
+        let temp = try TempDirectory()
+        let store = try makeStore(temp)
+        let key = String(repeating: "ab12", count: 16)
+        let fm = FileManager.default
+        for name in ["holiday.mov", "\(key).mov", "\(key).partial.mov", "\(key.dropLast()).mov", "notes.txt"] {
+            try Data([1, 2, 3]).write(to: store.directory.appendingPathComponent(name))
+        }
+        try store.removeAllProxies()
+        let left = Set(try fm.contentsOfDirectory(atPath: store.directory.path))
+        #expect(left == ["holiday.mov", "\(key.dropLast()).mov", "notes.txt"])
+    }
 }

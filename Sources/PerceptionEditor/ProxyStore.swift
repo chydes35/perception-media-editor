@@ -26,6 +26,13 @@ final class ProxyStore: ObservableObject {
     private var worker: Task<Void, Never>?
     /// A cancelled worker may still be unwinding when a new one starts; only the current one clears `worker`.
     private var workerToken = UUID()
+    /// The newest worker, running or still unwinding. A new worker waits for it so two generations never overlap.
+    private var tail: Task<Void, Never>?
+    /// The job whose result may still be applied. `invalidate`/`cancelAll` clear it so a stale job is discarded.
+    private var current: (assetID: UUID, token: UUID, job: Task<URL, any Error>)?
+    /// Jobs currently executing (test observability for the one-job-at-a-time rule).
+    private(set) var activeJobs = 0
+    private(set) var peakActiveJobs = 0
 
     init(
         directory: URL = ProxyStore.defaultDirectory(),
@@ -83,12 +90,18 @@ final class ProxyStore: ObservableObject {
     /// Forget an asset's status after relink or when its proxy file disappeared.
     func invalidate(assetID: UUID) {
         queue.removeAll { $0.id == assetID }
+        if let current, current.assetID == assetID {
+            current.job.cancel()
+            self.current = nil
+        }
         statuses[assetID] = nil
     }
 
     func cancelAll() {
         worker?.cancel()
         worker = nil
+        current?.job.cancel()
+        current = nil
         for asset in queue { statuses[asset.id] = .missing }
         queue = []
         for (id, status) in statuses { if case .generating = status { statuses[id] = .missing } }
@@ -97,21 +110,34 @@ final class ProxyStore: ObservableObject {
     func removeAllProxies() throws {
         cancelAll()
         let contents = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
-        for url in contents where url.pathExtension == "mov" { try FileManager.default.removeItem(at: url) }
+        for url in contents where Self.isOwnedProxyFile(url.lastPathComponent) { try FileManager.default.removeItem(at: url) }
         statuses = [:]
+    }
+
+    /// Only `<64 lowercase hex>.mov` and `<64 lowercase hex>.partial.mov` belong to the store.
+    nonisolated static func isOwnedProxyFile(_ name: String) -> Bool {
+        let stem: Substring
+        if name.hasSuffix(".partial.mov") { stem = name.dropLast(".partial.mov".count) }
+        else if name.hasSuffix(".mov") { stem = name.dropLast(".mov".count) }
+        else { return false }
+        return stem.count == 64 && stem.allSatisfy { ("0"..."9").contains($0) || ("a"..."f").contains($0) }
     }
 
     private func startWorkerIfNeeded() {
         guard worker == nil, !queue.isEmpty else { return }
         let token = UUID()
         workerToken = token
-        worker = Task { [weak self] in
+        let prior = tail
+        let newWorker = Task { [weak self] in
+            await prior?.value
             while let self, !Task.isCancelled, !self.queue.isEmpty {
                 let asset = self.queue.removeFirst()
                 await self.process(asset)
             }
             if let self, self.workerToken == token { self.worker = nil }
         }
+        worker = newWorker
+        tail = newWorker
     }
 
     private func process(_ asset: MediaAsset) async {
@@ -119,7 +145,15 @@ final class ProxyStore: ObservableObject {
         let maximumSize = maximumSize
         let availableBytes = availableBytes
         let assetID = asset.id
+        let jobToken = UUID()
         statuses[assetID] = .generating(0)
+
+        let report: @Sendable (Double) -> Void = { [weak self] fraction in
+            Task { @MainActor in
+                guard let self, self.current?.token == jobToken, case .generating = self.statuses[assetID] else { return }
+                self.statuses[assetID] = .generating(fraction)
+            }
+        }
 
         let job = Task.detached(priority: .utility) { () throws -> URL in
             let key = try ProxyFingerprint.key(for: asset.url)
@@ -134,20 +168,20 @@ final class ProxyStore: ObservableObject {
             if let available = availableBytes(directory), available < needed {
                 throw ProxyError.insufficientSpace(neededBytes: needed, availableBytes: available)
             }
-            return try await ProxyGenerator.generate(source: asset.url, destination: destination, maximumSize: maximumSize) { fraction in
-                Task { @MainActor [weak self] in
-                    guard let self, case .generating = self.statuses[assetID] else { return }
-                    self.statuses[assetID] = .generating(fraction)
-                }
-            }.url
+            return try await ProxyGenerator.generate(source: asset.url, destination: destination, maximumSize: maximumSize, progress: report).url
         }
+        current = (assetID, jobToken, job)
+        activeJobs += 1
+        peakActiveJobs = max(peakActiveJobs, activeJobs)
 
         let outcome = await withTaskCancellationHandler {
             await job.result
         } onCancel: {
             job.cancel()
         }
-        guard !Task.isCancelled else { return }
+        activeJobs -= 1
+        guard !Task.isCancelled, current?.token == jobToken else { return }
+        current = nil
         switch outcome {
         case .success(let url):
             statuses[assetID] = .ready(url)

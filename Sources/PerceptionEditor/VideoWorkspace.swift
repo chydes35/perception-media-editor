@@ -487,8 +487,8 @@ private struct EditorTimelineView: View {
             .toggleStyle(.button)
             .controlSize(.small)
             .help(store.timelineUsedProxyCount > 0
-                  ? "Playing \(store.timelineUsedProxyCount) clip(s) from proxies. Export always uses originals."
-                  : "Play from proxies when they are ready. Export always uses originals.")
+                  ? "Playing \(store.timelineUsedProxyCount) clip(s) from proxies. Proxies are used only for playback; sound always comes from the originals."
+                  : "Play from proxies when they are ready. Proxies are used only for playback; sound always comes from the originals.")
             Button { store.toggleVideoPlayback() } label: {
                 Image(systemName: store.isVideoPlaying ? "pause.fill" : "play.fill")
             }

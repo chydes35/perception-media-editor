@@ -1504,7 +1504,7 @@ git commit -m "Document the video proxy cache contract and performance targets"
 | Unit/integration | `./scripts/test.sh --filter "Proxy|TimelineProxy|VideoProxyWorkflow"` | PASS (substitute): the filtered `scripts/test.sh --filter` command was not run as written; the proxy tests were covered by the full-suite CLT-wrapper run above (361 passed, 0 failed) |
 | Runtime/UI | Task 7 Step 4 manual walkthrough | NOT VERIFIED: hands-on walkthrough pending with the controller |
 | Media quality | `RealVideoProxyTests` with `PME_VIDEO_SAMPLE` = S5 4:2:2 clip; frame-exact | PASS: real Lumix S5 clip (H.264 High 4:2:2 10-bit UHD, 23.976), 10 s trim, frame-exact, 1920×1080 |
-| Performance | Proxy ≥ 1.2× realtime and UI responsive on the 8 GB M1 | Proxy generation PASS: 71.4 fps (about 3.0× realtime) vs 28.8 fps gate (debug build, opt-in `RealVideoProxyTests`); proxy decode 345 fps. UI responsiveness during generation and peak memory: NOT VERIFIED |
+| Performance | Proxy ≥ 1.2× realtime and UI responsive on the 8 GB M1 | Proxy generation PASS: 68.5 fps (about 2.9× realtime) at `.utility` QoS vs 28.8 fps gate (71.4 fps at the earlier `.userInitiated`) (debug build, opt-in `RealVideoProxyTests`); proxy decode 345 fps. UI responsiveness during generation and peak memory: NOT VERIFIED |
 
 ## Decisions, discoveries, and remaining work
 

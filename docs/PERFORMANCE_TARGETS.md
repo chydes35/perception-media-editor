@@ -13,7 +13,7 @@ The target workload is a 100–200-file Lumix S5 RW2 shoot on an 8 GB M1 MacBook
 
 | Operation | Target | Measured |
 |---|---|---|
-| Proxy generation, S5 UHD 4:2:2 H.264 | ≥ 1.2× realtime (28.8 fps at 23.976) | 71.4 fps (about 3.0×), 10 s trim, debug build |
+| Proxy generation, S5 UHD 4:2:2 H.264 | ≥ 1.2× realtime (28.8 fps at 23.976) | 68.5 fps (about 2.9×) at `.utility` QoS, 10 s trim, debug build (71.4 fps at `.userInitiated`) |
 | Proxy decode (ProRes 422 Proxy, 1080p) | ≥ 120 fps | 345 fps (evaluation probe) |
 
 UI responsiveness during generation is NOT VERIFIED.

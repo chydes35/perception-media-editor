@@ -46,6 +46,7 @@ final class ProxyStore: ObservableObject {
     }
 
     nonisolated static func defaultDirectory() -> URL {
+        if TestIsolation.isRunningTests { return TestIsolation.proxyDirectory }
         if let path = UserDefaults.standard.string(forKey: directoryDefaultsKey) {
             return URL(fileURLWithPath: path, isDirectory: true)
         }
@@ -197,4 +198,28 @@ final class ProxyStore: ObservableObject {
             statuses[assetID] = .failed(error.localizedDescription)
         }
     }
+}
+
+/// Keeps test runs away from the user's real Proxy Cache and defaults. Production builds never load
+/// XCTest or Swift Testing, so this is always false in the app.
+enum TestIsolation {
+    nonisolated static let isRunningTests: Bool = {
+        // `swift test` hosts Swift Testing in swiftpm-testing-helper and XCTest in xctest; Xcode sets the env var.
+        if ["swiftpm-testing-helper", "xctest"].contains(ProcessInfo.processInfo.processName) { return true }
+        if NSClassFromString("XCTestCase") != nil { return true }
+        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil { return true }
+        return Bundle.allFrameworks.contains { $0.bundlePath.hasSuffix("/Testing.framework") || $0.bundlePath.hasSuffix("/XCTest.framework") }
+    }()
+
+    /// One throwaway cache per test process.
+    nonisolated static let proxyDirectory: URL = FileManager.default.temporaryDirectory
+        .appendingPathComponent("PerceptionEditorTests-ProxyCache-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
+
+    /// A fixed suite, wiped when first used, so runs never read or leave state in `UserDefaults.standard`.
+    nonisolated(unsafe) static let defaults: UserDefaults = {
+        let name = "PerceptionEditorTests.isolated"
+        let defaults = UserDefaults(suiteName: name) ?? .standard
+        defaults.removePersistentDomain(forName: name)
+        return defaults
+    }()
 }

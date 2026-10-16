@@ -92,7 +92,7 @@ final class EditorStore: ObservableObject {
     @Published private(set) var timelinePlaybackDurationSeconds = 0.0
     static let useProxiesKey = "perceptionEditor.useProxies"
     let proxyStore: ProxyStore
-    private let proxyDefaults: UserDefaults
+    let proxyDefaults: UserDefaults
     @Published private(set) var timelineUsedProxyCount = 0
     @Published var usesProxiesForPlayback = true {
         didSet {
@@ -174,7 +174,7 @@ final class EditorStore: ObservableObject {
         previewRenderOperation: (@Sendable (URL, PhotoAdjustments, UUID?, Bool) async
             -> (RenderedImage?, PhotoPreviewResult?))? = nil,
         proxyStore: ProxyStore = ProxyStore(),
-        proxyDefaults: UserDefaults = .standard
+        proxyDefaults: UserDefaults = TestIsolation.isRunningTests ? TestIsolation.defaults : .standard
     ) {
         self.proxyStore = proxyStore
         self.proxyDefaults = proxyDefaults

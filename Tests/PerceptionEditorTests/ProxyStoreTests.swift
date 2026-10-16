@@ -166,4 +166,14 @@ struct ProxyStoreTests {
         let left = Set(try fm.contentsOfDirectory(atPath: store.directory.path))
         #expect(left == ["holiday.mov", "\(key.dropLast()).mov", "notes.txt"])
     }
+
+    /// Older suites build `EditorStore()` with default arguments; those must never write into the
+    /// user's real Proxy Cache or read and write the user's real defaults.
+    @Test func defaultsAreIsolatedUnderTests() {
+        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].standardizedFileURL.path
+        #expect(!ProxyStore.defaultDirectory().standardizedFileURL.path.hasPrefix(support))
+        let store = EditorStore()
+        #expect(!store.proxyStore.directory.standardizedFileURL.path.hasPrefix(support))
+        #expect(store.proxyDefaults !== UserDefaults.standard)
+    }
 }

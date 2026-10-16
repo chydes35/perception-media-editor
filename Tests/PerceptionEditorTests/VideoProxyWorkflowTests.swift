@@ -143,7 +143,10 @@ struct VideoProxyWorkflowTests {
 
         try FileManager.default.removeItem(at: proxy) // The user cleared the cache folder.
         store.updateSelectedAudioAdjustments { $0.volume = 0.5 } // Any edit rebuilds the timeline.
-        try await waitUntil { FileManager.default.fileExists(atPath: proxy.path) }
+        // The file is published before the main actor marks it ready.
+        try await waitUntil {
+            FileManager.default.fileExists(atPath: proxy.path) && store.proxyStore.readyURL(for: asset.id) == proxy
+        }
         #expect(store.proxyStore.readyURL(for: asset.id) == proxy)
         try await waitUntil { store.timelineUsedProxyCount == 1 }
     }
@@ -158,7 +161,10 @@ struct VideoProxyWorkflowTests {
 
         try FileManager.default.removeItem(at: proxy)
         store.selectVideo(asset)
-        try await waitUntil { FileManager.default.fileExists(atPath: proxy.path) }
+        // The file is published before the main actor marks it ready.
+        try await waitUntil {
+            FileManager.default.fileExists(atPath: proxy.path) && store.proxyStore.readyURL(for: asset.id) == proxy
+        }
         #expect(store.proxyStore.readyURL(for: asset.id) == proxy)
     }
 
@@ -171,6 +177,76 @@ struct VideoProxyWorkflowTests {
         _ = try await waitForProxy(store.proxyStore, asset.id)
         store.resetToEmptyProject(named: "Next")
         #expect(store.proxyStore.statuses.isEmpty)
+    }
+
+    private func sourceComposition(_ store: EditorStore) -> AVComposition? {
+        store.videoPlayer?.currentItem?.asset as? AVComposition
+    }
+
+    private func segmentURLs(_ composition: AVComposition?, _ type: AVMediaType) -> [URL] {
+        composition?.tracks(withMediaType: type).flatMap(\.segments).compactMap { $0.isEmpty ? nil : $0.sourceURL } ?? []
+    }
+
+    /// Proxies are video-only; the source viewer must still play the original's sound.
+    @Test func sourceViewerPlaysProxyVideoWithOriginalAudio() async throws {
+        let temp = try TempDirectory()
+        let store = try makeStore(temp)
+        let movie = try await writeTestMovie(to: temp.url.appendingPathComponent("A.MOV"), frames: 48, withAudio: true)
+        await store.importURLs([movie]).value
+        let asset = try #require(store.project.media.first)
+        guard case .ready(let proxy) = try await waitForProxy(store.proxyStore, asset.id) else { return }
+
+        try await waitUntil { segmentURLs(sourceComposition(store), .video) == [proxy] }
+        #expect(!store.isTimelinePlayback)
+        #expect(segmentURLs(sourceComposition(store), .video) == [proxy], "Video comes from the proxy")
+        #expect(segmentURLs(sourceComposition(store), .audio) == [movie], "Audio comes from the original")
+
+        store.usesProxiesForPlayback = false
+        try await waitUntil { (store.videoPlayer?.currentItem?.asset as? AVURLAsset)?.url == movie }
+        #expect(!store.isTimelinePlayback)
+    }
+
+    @Test func sourceViewerKeepsPositionWhenItsProxyBecomesReady() async throws {
+        let temp = try TempDirectory()
+        let store = try makeStore(temp)
+        let movie = try await writeTestMovie(to: temp.url.appendingPathComponent("A.MOV"), frames: 96, withAudio: true)
+        await store.importURLs([movie]).value
+        let asset = try #require(store.project.media.first)
+        store.proxyStore.cancelAll()
+        store.proxyStore.invalidate(assetID: asset.id)
+        store.selectVideo(asset)
+        let original = try #require(store.videoPlayer)
+        try await waitUntil { original.currentItem?.status == .readyToPlay }
+        await original.seek(to: CMTime(seconds: 2, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+
+        store.proxyStore.enqueue([asset])
+        guard case .ready(let proxy) = try await waitForProxy(store.proxyStore, asset.id) else { return }
+        try await waitUntil { store.videoPlayer !== original && segmentURLs(sourceComposition(store), .video) == [proxy] }
+        let swapped = try #require(store.videoPlayer)
+        try await waitUntil { abs(swapped.currentTime().seconds - 2) < 0.05 }
+        #expect(abs(swapped.currentTime().seconds - 2) < 0.05, "Paused clip jumped to \(swapped.currentTime().seconds)")
+        #expect(!store.isVideoPlaying)
+    }
+
+    @Test func togglingProxiesKeepsSourcePlaybackRunning() async throws {
+        let temp = try TempDirectory()
+        let store = try makeStore(temp)
+        let movie = try await writeTestMovie(to: temp.url.appendingPathComponent("A.MOV"), frames: 240, withAudio: true)
+        await store.importURLs([movie]).value
+        let asset = try #require(store.project.media.first)
+        guard case .ready(let proxy) = try await waitForProxy(store.proxyStore, asset.id) else { return }
+        try await waitUntil { segmentURLs(sourceComposition(store), .video) == [proxy] }
+        let before = try #require(store.videoPlayer)
+        try await waitUntil { before.currentItem?.status == .readyToPlay }
+        await before.seek(to: CMTime(seconds: 3, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+        store.toggleVideoPlayback()
+        try await waitUntil { store.isVideoPlaying }
+
+        store.usesProxiesForPlayback = false
+        try await waitUntil { store.videoPlayer !== before }
+        let after = try #require(store.videoPlayer)
+        try await waitUntil { store.isVideoPlaying }
+        #expect(after.currentTime().seconds >= 2.9, "Playback restarted at \(after.currentTime().seconds)")
     }
 
     @Test func newProjectCancelsPendingProxies() async throws {

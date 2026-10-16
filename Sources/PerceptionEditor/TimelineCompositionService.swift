@@ -58,6 +58,41 @@ final class TimelineCompositionService {
         return ClipSourceURLs(video: proxyURL, audio: asset.url, usesProxy: true)
     }
 
+    /// The source viewer's item. Proxies are video-only, so with a usable proxy this is a one-clip
+    /// composition of the proxy's video and the original's audio; otherwise it is simply the original.
+    func makeSourcePlayerItem(for asset: MediaAsset, proxyURL: URL?) async -> AVPlayerItem {
+        let usableProxy = proxyURL.flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
+        let sources = Self.sourceURLs(for: asset, quality: .preview, proxyURL: usableProxy)
+        guard sources.usesProxy else { return AVPlayerItem(url: asset.url) }
+
+        let videoAsset = AVURLAsset(url: sources.video)
+        let composition = AVMutableComposition()
+        guard let videoTrack = (try? await videoAsset.loadTracks(withMediaType: .video))?.first,
+              let duration = try? await videoAsset.load(.duration), duration > .zero,
+              let compositionVideo = composition.addMutableTrack(
+                  withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid
+              )
+        else { return AVPlayerItem(url: asset.url) }
+        let range = CMTimeRange(start: .zero, duration: duration)
+        do { try compositionVideo.insertTimeRange(range, of: videoTrack, at: .zero) } catch {
+            return AVPlayerItem(url: asset.url)
+        }
+        compositionVideo.preferredTransform = (try? await videoTrack.load(.preferredTransform)) ?? .identity
+
+        let audioAsset = AVURLAsset(url: sources.audio)
+        if let audioTrack = (try? await audioAsset.loadTracks(withMediaType: .audio))?.first,
+           let audioRange = try? await audioTrack.load(.timeRange),
+           let compositionAudio = composition.addMutableTrack(
+               withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid
+           ) {
+            let overlap = range.intersection(audioRange)
+            if overlap.duration > .zero {
+                try? compositionAudio.insertTimeRange(overlap, of: audioTrack, at: overlap.start)
+            }
+        }
+        return AVPlayerItem(asset: composition)
+    }
+
     /// `quality` has no default: a caller that renders deliverables must say `.export` explicitly
     /// rather than silently inheriting proxies.
     func makePlayerItem(

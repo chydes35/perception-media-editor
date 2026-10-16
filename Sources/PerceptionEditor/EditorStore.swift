@@ -1358,13 +1358,48 @@ final class EditorStore: ObservableObject {
         return nil
     }
 
-    private func showSourceVideo(_ asset: MediaAsset) {
-        playbackRequestID = UUID()
+    /// Shows one clip in the viewer. With a proxy, the video comes from the proxy and the audio from
+    /// the original. `preservingPosition` keeps the time and play state when the same clip's player is
+    /// swapped (a proxy became ready, or proxies were toggled).
+    private func showSourceVideo(_ asset: MediaAsset, preservingPosition: Bool = false) {
+        let resume: (time: CMTime, playing: Bool)? = preservingPosition && !isTimelinePlayback
+            ? videoPlayer.map { ($0.currentTime(), isVideoPlaying) }
+            : nil
+        let requestID = UUID()
+        playbackRequestID = requestID
         compositionRebuildTask?.cancel()
         timelinePlaybackWarnings = []
         timelinePlaybackDurationSeconds = 0
         timelinePlaybackPositionSeconds = 0
-        replaceVideoPlayer(AVPlayer(url: playbackURL(for: asset)), timelineMode: false)
+
+        let url = playbackURL(for: asset)
+        guard url != asset.url else {
+            let player = AVPlayer(url: asset.url)
+            replaceVideoPlayer(player, timelineMode: false)
+            resumeSourcePlayback(player, from: resume)
+            return
+        }
+        // The player exists right away; its proxy + original-audio item follows once the tracks load.
+        let player = AVPlayer()
+        replaceVideoPlayer(player, timelineMode: false)
+        compositionRebuildTask = Task { [weak self] in
+            guard let self else { return }
+            let item = await timelineCompositionService.makeSourcePlayerItem(for: asset, proxyURL: url)
+            guard !Task.isCancelled, playbackRequestID == requestID, videoPlayer === player else { return }
+            player.replaceCurrentItem(with: item)
+            resumeSourcePlayback(player, from: resume)
+        }
+    }
+
+    private func resumeSourcePlayback(_ player: AVPlayer, from state: (time: CMTime, playing: Bool)?) {
+        guard let state else { return }
+        if state.time.isValid, state.time.seconds > 0 {
+            player.seek(to: state.time, toleranceBefore: .zero, toleranceAfter: .zero)
+        }
+        if state.playing {
+            player.play()
+            isVideoPlaying = true
+        }
     }
 
     private static func proxyStatusKind(_ status: ProxyStatus) -> Int {
@@ -1403,7 +1438,7 @@ final class EditorStore: ObservableObject {
         } else if selectedVideoAssetID == assetID, !isVideoPlaying,
                   let asset = project.media.first(where: { $0.id == assetID }) {
             // A background proxy never switches the viewer into timeline mode.
-            showSourceVideo(asset)
+            showSourceVideo(asset, preservingPosition: true)
         }
     }
 
@@ -1411,7 +1446,7 @@ final class EditorStore: ObservableObject {
         if isTimelinePlayback {
             rebuildTimelinePlayback()
         } else if let asset = selectedVideoAsset {
-            showSourceVideo(asset)
+            showSourceVideo(asset, preservingPosition: true)
         }
     }
 

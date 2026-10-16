@@ -7,6 +7,20 @@ struct TimelineCompositionResult {
     var durationSeconds: Double
     var insertedClipIDs: [UUID]
     var warnings: [String]
+    var usedProxyCount = 0
+}
+
+enum MediaQuality: Sendable {
+    /// Editing playback. Uses a ready proxy when one exists.
+    case preview
+    /// Deliverables. Always reads camera originals.
+    case export
+}
+
+struct ClipSourceURLs: Equatable, Sendable {
+    var video: URL
+    var audio: URL
+    var usesProxy: Bool
 }
 
 private struct TimelineColorSegment: Sendable {
@@ -35,11 +49,59 @@ final class TimelineCompositionService {
 
     private init() {}
 
+    /// Proxies are video-only, so audio always comes from the original. A proxy URL whose file
+    /// has gone (the cache was cleared) falls back to the original without a warning.
+    nonisolated static func sourceURLs(for asset: MediaAsset, quality: MediaQuality, proxyURL: URL?) -> ClipSourceURLs {
+        guard quality == .preview, let proxyURL else {
+            return ClipSourceURLs(video: asset.url, audio: asset.url, usesProxy: false)
+        }
+        return ClipSourceURLs(video: proxyURL, audio: asset.url, usesProxy: true)
+    }
+
+    /// The source viewer's item. Proxies are video-only, so with a usable proxy this is a one-clip
+    /// composition of the proxy's video and the original's audio; otherwise it is simply the original.
+    func makeSourcePlayerItem(for asset: MediaAsset, proxyURL: URL?) async -> AVPlayerItem {
+        let usableProxy = proxyURL.flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
+        let sources = Self.sourceURLs(for: asset, quality: .preview, proxyURL: usableProxy)
+        guard sources.usesProxy else { return AVPlayerItem(url: asset.url) }
+
+        let videoAsset = AVURLAsset(url: sources.video)
+        let composition = AVMutableComposition()
+        guard let videoTrack = (try? await videoAsset.loadTracks(withMediaType: .video))?.first,
+              let duration = try? await videoAsset.load(.duration), duration > .zero,
+              let compositionVideo = composition.addMutableTrack(
+                  withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid
+              )
+        else { return AVPlayerItem(url: asset.url) }
+        let range = CMTimeRange(start: .zero, duration: duration)
+        do { try compositionVideo.insertTimeRange(range, of: videoTrack, at: .zero) } catch {
+            return AVPlayerItem(url: asset.url)
+        }
+        compositionVideo.preferredTransform = (try? await videoTrack.load(.preferredTransform)) ?? .identity
+
+        let audioAsset = AVURLAsset(url: sources.audio)
+        if let audioTrack = (try? await audioAsset.loadTracks(withMediaType: .audio))?.first,
+           let audioRange = try? await audioTrack.load(.timeRange),
+           let compositionAudio = composition.addMutableTrack(
+               withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid
+           ) {
+            let overlap = range.intersection(audioRange)
+            if overlap.duration > .zero {
+                try? compositionAudio.insertTimeRange(overlap, of: audioTrack, at: overlap.start)
+            }
+        }
+        return AVPlayerItem(asset: composition)
+    }
+
+    /// `quality` has no default: a caller that renders deliverables must say `.export` explicitly
+    /// rather than silently inheriting proxies.
     func makePlayerItem(
         clips: [TimelineClip],
         media: [MediaAsset],
         adjustmentsByClipID: [UUID: PhotoAdjustments] = [:],
-        audioAdjustmentsByClipID: [UUID: ClipAudioAdjustments] = [:]
+        audioAdjustmentsByClipID: [UUID: ClipAudioAdjustments] = [:],
+        quality: MediaQuality,
+        proxyURLsByAssetID: [UUID: URL] = [:]
     ) async -> TimelineCompositionResult {
         let composition = AVMutableComposition()
         guard let compositionVideoTrack = composition.addMutableTrack(
@@ -50,7 +112,8 @@ final class TimelineCompositionService {
                 playerItem: nil,
                 durationSeconds: 0,
                 insertedClipIDs: [],
-                warnings: ["The video composition track could not be created."]
+                warnings: ["The video composition track could not be created."],
+                usedProxyCount: 0
             )
         }
 
@@ -68,6 +131,8 @@ final class TimelineCompositionService {
         var audioSegments: [TimelineAudioSegment] = []
         var warnings: [String] = []
         var didSetVideoTransform = false
+        var usedProxyCount = 0
+        var proxyRenderSize: CGSize?
 
         for clip in orderedClips {
             if Task.isCancelled { break }
@@ -81,7 +146,11 @@ final class TimelineCompositionService {
                 continue
             }
 
-            let sourceAsset = AVURLAsset(url: mediaAsset.url)
+            let proxyURL = proxyURLsByAssetID[clip.assetID]
+                .flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
+            let sources = Self.sourceURLs(for: mediaAsset, quality: quality, proxyURL: proxyURL)
+            let sourceAsset = AVURLAsset(url: sources.video)
+            let audioAsset = sources.audio == sources.video ? sourceAsset : AVURLAsset(url: sources.audio)
             guard let assetDuration = try? await sourceAsset.load(.duration) else {
                 warnings.append("Skipped unreadable media: \(mediaAsset.filename)")
                 continue
@@ -119,6 +188,17 @@ final class TimelineCompositionService {
                 continue
             }
 
+            if sources.usesProxy {
+                usedProxyCount += 1
+                if proxyRenderSize == nil, let size = try? await sourceVideoTrack.load(.naturalSize) {
+                    // The composition track carries the preferred transform, so frames reach the
+                    // CI handler upright; the render size must be the post-transform size.
+                    let transform = (try? await sourceVideoTrack.load(.preferredTransform)) ?? .identity
+                    let upright = size.applying(transform)
+                    proxyRenderSize = CGSize(width: abs(upright.width), height: abs(upright.height))
+                }
+            }
+
             if !didSetVideoTransform,
                let preferredTransform = try? await sourceVideoTrack.load(.preferredTransform) {
                 compositionVideoTrack.preferredTransform = preferredTransform
@@ -127,7 +207,7 @@ final class TimelineCompositionService {
 
             if !clip.isMuted,
                let compositionAudioTrack,
-               let sourceAudioTrack = (try? await sourceAsset.loadTracks(withMediaType: .audio))?.first {
+               let sourceAudioTrack = (try? await audioAsset.loadTracks(withMediaType: .audio))?.first {
                 do {
                     try compositionAudioTrack.insertTimeRange(
                         sourceRange,
@@ -161,7 +241,8 @@ final class TimelineCompositionService {
                 playerItem: nil,
                 durationSeconds: 0,
                 insertedClipIDs: [],
-                warnings: warnings.isEmpty ? ["The timeline has no playable clips."] : warnings
+                warnings: warnings.isEmpty ? ["The timeline has no playable clips."] : warnings,
+                usedProxyCount: 0
             )
         }
 
@@ -210,7 +291,9 @@ final class TimelineCompositionService {
             playerItem.audioMix = audioMix
         }
 
-        if colorSegments.contains(where: { $0.adjustments != .neutral }) {
+        let needsColor = colorSegments.contains(where: { $0.adjustments != .neutral })
+        if needsColor || proxyRenderSize != nil {
+            let renderSize = proxyRenderSize
             let renderSegments = colorSegments
             let videoCompositionResult: SendableVideoComposition = await withCheckedContinuation { continuation in
                 AVVideoComposition.videoComposition(
@@ -219,12 +302,23 @@ final class TimelineCompositionService {
                         let seconds = request.compositionTime.seconds
                         let adjustments = renderSegments.first(where: { $0.contains(seconds) })?.adjustments
                             ?? .neutral
-                        let output = MediaColorRenderer.render(
-                            request.sourceImage,
-                            adjustments: adjustments,
-                            includesGeometry: false
+                        var source = request.sourceImage
+                        if let renderSize, source.extent.size != renderSize {
+                            let scale = min(renderSize.width / source.extent.width, renderSize.height / source.extent.height)
+                            source = source.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+                            let dx = (renderSize.width - source.extent.width) / 2 - source.extent.minX
+                            let dy = (renderSize.height - source.extent.height) / 2 - source.extent.minY
+                            source = source.transformed(by: CGAffineTransform(translationX: dx, y: dy))
+                                .composited(over: CIImage(color: .black).cropped(to: CGRect(origin: .zero, size: renderSize)))
+                        }
+                        // A neutral clip only needs fitting into the proxy frame; skip the colour chain.
+                        let output = adjustments == .neutral
+                            ? source
+                            : MediaColorRenderer.render(source, adjustments: adjustments, includesGeometry: false)
+                        request.finish(
+                            with: output.cropped(to: CGRect(origin: .zero, size: renderSize ?? request.sourceImage.extent.size)),
+                            context: nil
                         )
-                        request.finish(with: output.cropped(to: request.sourceImage.extent), context: nil)
                     },
                     completionHandler: { videoComposition, _ in
                         continuation.resume(returning: SendableVideoComposition(value: videoComposition))
@@ -232,7 +326,12 @@ final class TimelineCompositionService {
                 )
             }
             if let videoComposition = videoCompositionResult.value {
-                playerItem.videoComposition = videoComposition
+                if let renderSize, let mutable = videoComposition.mutableCopy() as? AVMutableVideoComposition {
+                    mutable.renderSize = renderSize
+                    playerItem.videoComposition = mutable
+                } else {
+                    playerItem.videoComposition = videoComposition
+                }
             } else {
                 warnings.append("Clip color could not be previewed.")
             }
@@ -242,7 +341,8 @@ final class TimelineCompositionService {
             playerItem: playerItem,
             durationSeconds: durationSeconds.isFinite ? max(0, durationSeconds) : 0,
             insertedClipIDs: insertedClipIDs,
-            warnings: warnings
+            warnings: warnings,
+            usedProxyCount: usedProxyCount
         )
     }
 }

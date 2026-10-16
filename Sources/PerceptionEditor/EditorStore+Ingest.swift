@@ -282,6 +282,7 @@ extension EditorStore {
                 project.media[index].durationSeconds = metadata.durationSeconds
                 project.media[index].pixelWidth = metadata.pixelWidth
                 project.media[index].pixelHeight = metadata.pixelHeight
+                proxyStore.enqueue([project.media[index]])
             }
         }
     }

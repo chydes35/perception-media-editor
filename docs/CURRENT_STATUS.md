@@ -1,20 +1,23 @@
 # Current status
 
-Updated: 2026-10-14. Everything below is on `main` (PR #7 merged at `d9ccdb5`). Schema version **10**. Candidate build **16**; not yet signed or notarized for distribution. Long-form evidence from earlier passes is in [archive/](archive/README.md). The last full status snapshot is [archive/CURRENT_STATUS_2026-10-10.md](archive/CURRENT_STATUS_2026-10-10.md).
+Updated: 2026-10-16. Everything below is on `main` (PR #7 merged at `d9ccdb5`) unless marked as branch `feat/video-proxies` (pending merge). Schema version **10**. Candidate build **16**; not yet signed or notarized for distribution. Long-form evidence from earlier passes is in [archive/](archive/README.md). The last full status snapshot is [archive/CURRENT_STATUS_2026-10-10.md](archive/CURRENT_STATUS_2026-10-10.md).
 
 ## What works
 
-Card import with verified copies, culling, RAW develop (white balance with eyedropper, noise reduction, tone curve, HSL, Auto tone and white balance), presets with copy/paste/sync and history, gradient/brush/subject/sky masks, heal and clone, single-photo JPEG/PNG export, and sequential batch JPEG delivery. Video is a V1/A1 timeline with color, waveform, and fades; it is deferred until the photo gates pass.
+Card import with verified copies, culling, RAW develop (white balance with eyedropper, noise reduction, tone curve, HSL, Auto tone and white balance), presets with copy/paste/sync and history, gradient/brush/subject/sky masks, heal and clone, single-photo JPEG/PNG export, and sequential batch JPEG delivery. Video is a V1/A1 timeline with color, waveform, and fades; it is deferred until the photo gates pass, except that the proxy pipeline was pulled forward as its prerequisite. On branch `feat/video-proxies` (pending merge), video proxies (ProRes 422 Proxy) are generated automatically and can be toggled with "Proxies" in the timeline toolbar. Proxies are used only for playback; sound always comes from the originals, and the originals are kept for export once video export exists. Hands-on UI walkthrough is NOT VERIFIED.
 
 ## Verification
 
 | Gate | Result |
 |---|---|
 | GitHub CI (macOS 15, Swift 6.1.2) | PASS: 320 tests, 292 executed / 28 skipped (no private RAW inputs on CI) |
-| Local `./scripts/qa.sh` | PASS as of 2026-10-10: 302 executed / 18 skipped |
+| Local `./scripts/qa.sh` | Last PASS 2026-10-10 (302 executed / 18 skipped); not re-run since, and not runnable on this Mac's Command Line Tools |
 | 100 distinct S5 RAWs on the M1/8 GB target (import, cull, edit, export) | PASS: 100/100 full-resolution JPEGs; all original hashes unchanged; whole-app peak 1.53 GiB |
 | Genuine single 100–200-photo shoot | NOT VERIFIED |
 | Agreed performance thresholds | NOT VERIFIED (observations only; see [PERFORMANCE_TARGETS](PERFORMANCE_TARGETS.md)) |
+| Video proxies (branch `feat/video-proxies`, pending merge): unit/integration and real S5 media (frame-exact, 68.5 fps at `.utility` QoS vs 28.8 fps gate) | PASS (full suite via CLT wrapper on 2026-10-16: 374 tests, 351 executed / 23 skipped, 0 failed; `qa.sh` itself not runnable on this Mac) |
+| Video proxies (branch `feat/video-proxies`, pending merge): Runtime/UI walkthrough, UI responsiveness during generation | NOT VERIFIED |
+| Video proxies of full-range sources (S5 V-Log), branch `feat/video-proxies` | FIXED 2026-10-16. Proxies made before it are about 17% too bright (AVFoundation's x422 read of a full-range source adds 64 to luma without rescaling). Real `P1107158` proxy now within 1.8/1023 of the original (104.5 before). The proxy key version is 2, so old proxies regenerate; the v1 files stay in the cache folder until "remove all proxies". 378 tests, 0 failed (CLT wrapper, 2026-10-16) |
 | Distribution signing and notarization | NOT VERIFIED |
 
 ## Open problems

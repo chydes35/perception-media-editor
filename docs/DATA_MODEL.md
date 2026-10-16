@@ -13,6 +13,6 @@ The integrated candidate uses schema **10**, preserving the advanced branch's re
 
 The schema version is defined in code. Check it before changing fields; do not assume an app bundle version and project schema version advance together. For a schema change, specify defaults, old-file loading, round-trip behavior, unsupported newer-file handling, and relink behavior in the ExecPlan.
 
-Thumbnails, waveforms, preview rasters, and brush rasters are disposable caches. Cache eviction must never remove edits or user source files. Undo/history is session state unless a feature explicitly changes that contract.
+Thumbnails, waveforms, preview rasters, brush rasters, and video proxies (content-keyed, see [decisions/2026-10-15-video-proxies.md](decisions/2026-10-15-video-proxies.md)) are disposable caches. Proxy keys carry a format version (`ProxyFingerprint.formatVersion`, now 2), so a generator fix regenerates proxies instead of reusing wrong ones; version-1 files are orphaned, not deleted. Cache eviction must never remove edits or user source files. Undo/history is session state unless a feature explicitly changes that contract.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for component ownership and [TESTING_STRATEGY.md](TESTING_STRATEGY.md) for compatibility gates.

@@ -75,6 +75,7 @@ struct VideoWorkspace: View {
                     VStack {
                         Spacer()
                         HStack {
+                            ProxyBadge(proxyStore: store.proxyStore, assetID: asset.id)
                             Spacer()
                             Text(formatTime(asset.durationSeconds ?? 0))
                                 .font(.system(size: 9, weight: .bold, design: .monospaced))
@@ -480,6 +481,14 @@ private struct EditorTimelineView: View {
             .disabled(!store.canMoveSelectedTimelineClip(by: 1))
             .help("Move selected clip later")
             .accessibilityLabel("Move selected clip later")
+            Toggle(isOn: $store.usesProxiesForPlayback) {
+                Label("Proxies", systemImage: "bolt")
+            }
+            .toggleStyle(.button)
+            .controlSize(.small)
+            .help(store.timelineUsedProxyCount > 0
+                  ? "Playing \(store.timelineUsedProxyCount) clip(s) from proxies. Proxies are used only for playback; sound always comes from the originals."
+                  : "Play from proxies when they are ready. Proxies are used only for playback; sound always comes from the originals.")
             Button { store.toggleVideoPlayback() } label: {
                 Image(systemName: store.isVideoPlaying ? "pause.fill" : "play.fill")
             }
@@ -667,5 +676,35 @@ private struct AudioWaveformView: View {
                 context.stroke(path, with: .color(.white.opacity(0.82)), lineWidth: max(1, step * 0.54))
             }
         }
+    }
+}
+
+/// Observes ProxyStore directly because EditorStore does not republish progress ticks.
+private struct ProxyBadge: View {
+    @ObservedObject var proxyStore: ProxyStore
+    let assetID: UUID
+
+    var body: some View {
+        switch proxyStore.statuses[assetID] {
+        case .ready?:
+            label("PROXY", systemImage: "bolt.fill", tint: .green)
+        case .generating(let fraction)?:
+            label("\(Int(fraction * 100))%", systemImage: "gearshape.2", tint: .orange)
+        case .queued?:
+            label("QUEUED", systemImage: "clock", tint: .secondary)
+        case .failed(let reason)?:
+            label("NO PROXY", systemImage: "exclamationmark.triangle.fill", tint: .red).help(reason)
+        case .missing?, nil:
+            EmptyView()
+        }
+    }
+
+    private func label(_ text: String, systemImage: String, tint: Color) -> some View {
+        Label(text, systemImage: systemImage)
+            .font(.system(size: 9, weight: .bold, design: .monospaced))
+            .padding(.horizontal, 5)
+            .padding(.vertical, 3)
+            .background(.black.opacity(0.72), in: Capsule())
+            .foregroundStyle(tint)
     }
 }

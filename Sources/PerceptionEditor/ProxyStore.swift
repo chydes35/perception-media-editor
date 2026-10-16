@@ -78,7 +78,9 @@ final class ProxyStore: ObservableObject {
         let fresh = assets.filter { asset in
             guard asset.kind == .video, !pending.contains(asset.id) else { return false }
             switch statuses[asset.id] {
-            case .queued?, .generating?, .ready?: return false
+            case .queued?, .generating?: return false
+            // The cache folder may have been cleared since; a ready proxy without a file is stale.
+            case .ready(let url)?: return !FileManager.default.fileExists(atPath: url.path)
             default: return true
             }
         }
@@ -96,6 +98,16 @@ final class ProxyStore: ObservableObject {
             self.current = nil
         }
         statuses[assetID] = nil
+    }
+
+    /// Forget statuses (and pending work) for assets outside `assetIDs`, e.g. after opening another project.
+    func retainOnly(_ assetIDs: Set<UUID>) {
+        queue.removeAll { !assetIDs.contains($0.id) }
+        if let current, !assetIDs.contains(current.assetID) {
+            current.job.cancel()
+            self.current = nil
+        }
+        statuses = statuses.filter { assetIDs.contains($0.key) }
     }
 
     func cancelAll() {

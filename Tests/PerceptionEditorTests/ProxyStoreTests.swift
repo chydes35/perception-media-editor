@@ -82,6 +82,35 @@ struct ProxyStoreTests {
         #expect(FileManager.default.fileExists(atPath: url.path))
     }
 
+    /// The user cleared the cache folder mid-session: a plain enqueue must notice the missing file.
+    @Test func deletedProxyIsRegeneratedWithoutInvalidate() async throws {
+        let temp = try TempDirectory()
+        let store = try makeStore(temp)
+        let asset = try await video(temp, "A.MOV")
+        store.enqueue([asset])
+        guard case .ready(let url) = try await waitForProxy(store, asset.id) else { return }
+        try FileManager.default.removeItem(at: url)
+        store.enqueue([asset])
+        #expect(store.statuses[asset.id] == .queued, "A ready status whose file is gone is stale")
+        guard case .ready = try await waitForProxy(store, asset.id) else { Issue.record("not regenerated"); return }
+        #expect(FileManager.default.fileExists(atPath: url.path))
+    }
+
+    @Test func retainOnlyForgetsOtherAssets() async throws {
+        let temp = try TempDirectory()
+        let store = try makeStore(temp)
+        let a = try await video(temp, "A.MOV")
+        let b = try await video(temp, "B.MOV")
+        store.enqueue([a, b])
+        _ = try await waitForProxy(store, a.id)
+        _ = try await waitForProxy(store, b.id)
+        store.retainOnly([b.id])
+        #expect(store.statuses[a.id] == nil)
+        #expect(store.readyURL(for: b.id) != nil)
+        store.retainOnly([])
+        #expect(store.statuses.isEmpty)
+    }
+
     @Test func insufficientSpaceFailsWithoutWriting() async throws {
         let temp = try TempDirectory()
         let store = try makeStore(temp, free: 1_000_000)

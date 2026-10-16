@@ -779,6 +779,7 @@ final class EditorStore: ObservableObject {
         invalidateBatchExport()
         projectGeneration = UUID()
         proxyStore.cancelAll()
+        proxyStore.retainOnly([])
         projectSaveError = nil
         project = EditorProject(name: name)
         lastSavedProject = project
@@ -848,6 +849,7 @@ final class EditorStore: ObservableObject {
         invalidateBatchExport()
         projectGeneration = UUID()
         proxyStore.cancelAll()
+        proxyStore.retainOnly(Set(loaded.media.map(\.id)))
         projectSaveError = nil
         project = loaded
         lastSavedProject = project
@@ -1376,9 +1378,20 @@ final class EditorStore: ObservableObject {
     }
 
     private func playbackURL(for asset: MediaAsset) -> URL {
-        guard usesProxiesForPlayback, let proxy = proxyStore.readyURL(for: asset.id),
-              FileManager.default.fileExists(atPath: proxy.path) else { return asset.url }
-        return proxy
+        guard usesProxiesForPlayback else { return asset.url }
+        regenerateMissingProxies(for: [asset.id])
+        return proxyStore.readyURL(for: asset.id) ?? asset.url
+    }
+
+    /// A ready proxy whose file is gone (the user cleared the cache folder) is forgotten and queued
+    /// again, so playback falls back to the original until the new proxy is ready.
+    private func regenerateMissingProxies(for assetIDs: Set<UUID>) {
+        let stale = assetIDs.filter { id in
+            proxyStore.readyURL(for: id).map { !FileManager.default.fileExists(atPath: $0.path) } ?? false
+        }
+        guard !stale.isEmpty else { return }
+        for id in stale { proxyStore.invalidate(assetID: id) }
+        proxyStore.enqueue(project.media.filter { stale.contains($0.id) })
     }
 
     private func proxyBecameReady(_ assetID: UUID) {
@@ -1437,6 +1450,7 @@ final class EditorStore: ObservableObject {
         let media = project.media
         let adjustmentsByClipID = project.videoAdjustmentsByClipID
         let audioAdjustmentsByClipID = project.audioAdjustmentsByClipID
+        if usesProxiesForPlayback { regenerateMissingProxies(for: Set(clips.map(\.assetID))) }
         let proxyURLs = usesProxiesForPlayback ? proxyStore.readyURLs : [:]
         let requestID = UUID()
         playbackRequestID = requestID

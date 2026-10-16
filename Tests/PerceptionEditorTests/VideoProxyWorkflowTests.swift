@@ -131,6 +131,48 @@ struct VideoProxyWorkflowTests {
         #expect(store.videoPlayer === player)
     }
 
+    @Test func deletedProxyIsRegeneratedWhenTheTimelineRebuilds() async throws {
+        let temp = try TempDirectory()
+        let store = try makeStore(temp)
+        let movie = try await writeTestMovie(to: temp.url.appendingPathComponent("A.MOV"), frames: 48)
+        await store.importURLs([movie]).value
+        let asset = try #require(store.project.media.first)
+        guard case .ready(let proxy) = try await waitForProxy(store.proxyStore, asset.id) else { return }
+        store.addToTimeline(asset)
+        try await waitUntil { store.timelineUsedProxyCount == 1 }
+
+        try FileManager.default.removeItem(at: proxy) // The user cleared the cache folder.
+        store.updateSelectedAudioAdjustments { $0.volume = 0.5 } // Any edit rebuilds the timeline.
+        try await waitUntil { FileManager.default.fileExists(atPath: proxy.path) }
+        #expect(store.proxyStore.readyURL(for: asset.id) == proxy)
+        try await waitUntil { store.timelineUsedProxyCount == 1 }
+    }
+
+    @Test func deletedProxyIsRegeneratedWhenTheSourceViewerOpensIt() async throws {
+        let temp = try TempDirectory()
+        let store = try makeStore(temp)
+        let movie = try await writeTestMovie(to: temp.url.appendingPathComponent("A.MOV"), frames: 48)
+        await store.importURLs([movie]).value
+        let asset = try #require(store.project.media.first)
+        guard case .ready(let proxy) = try await waitForProxy(store.proxyStore, asset.id) else { return }
+
+        try FileManager.default.removeItem(at: proxy)
+        store.selectVideo(asset)
+        try await waitUntil { FileManager.default.fileExists(atPath: proxy.path) }
+        #expect(store.proxyStore.readyURL(for: asset.id) == proxy)
+    }
+
+    @Test func newProjectForgetsTheOldProjectsProxyStatuses() async throws {
+        let temp = try TempDirectory()
+        let store = try makeStore(temp)
+        let movie = try await writeTestMovie(to: temp.url.appendingPathComponent("A.MOV"), frames: 48)
+        await store.importURLs([movie]).value
+        let asset = try #require(store.project.media.first)
+        _ = try await waitForProxy(store.proxyStore, asset.id)
+        store.resetToEmptyProject(named: "Next")
+        #expect(store.proxyStore.statuses.isEmpty)
+    }
+
     @Test func newProjectCancelsPendingProxies() async throws {
         let temp = try TempDirectory()
         let store = try makeStore(temp)

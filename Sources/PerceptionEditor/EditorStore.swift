@@ -204,7 +204,11 @@ final class EditorStore: ObservableObject {
             .store(in: &cancellables)
 
         proxyStore.onReady = { [weak self] id in self?.proxyBecameReady(id) }
-        proxyStore.objectWillChange
+        // Forward only status-case changes; progress ticks would re-render the whole editor.
+        proxyStore.$statuses
+            .map { $0.mapValues(Self.proxyStatusKind) }
+            .removeDuplicates()
+            .dropFirst()
             .sink { [weak self] _ in self?.objectWillChange.send() }
             .store(in: &cancellables)
     }
@@ -1119,6 +1123,8 @@ final class EditorStore: ObservableObject {
             selectedAssetID = target.id
             refreshPreview()
         } else {
+            // Drop the old file's proxy right away so it is never shown for the relinked clip.
+            proxyStore.invalidate(assetID: target.id)
             Task {
                 let metadata = await videoMediaService.metadata(for: url)
                 guard let currentIndex = project.media.firstIndex(where: { $0.id == target.id }) else {
@@ -1127,7 +1133,6 @@ final class EditorStore: ObservableObject {
                 project.media[currentIndex].durationSeconds = metadata.durationSeconds
                 project.media[currentIndex].pixelWidth = metadata.pixelWidth
                 project.media[currentIndex].pixelHeight = metadata.pixelHeight
-                proxyStore.invalidate(assetID: target.id)
                 proxyStore.enqueue([project.media[currentIndex]])
                 if project.timelineClips.contains(where: { $0.assetID == target.id }) {
                     rebuildTimelinePlayback()
@@ -1360,6 +1365,16 @@ final class EditorStore: ObservableObject {
         replaceVideoPlayer(AVPlayer(url: playbackURL(for: asset)), timelineMode: false)
     }
 
+    private static func proxyStatusKind(_ status: ProxyStatus) -> Int {
+        switch status {
+        case .missing: 0
+        case .queued: 1
+        case .generating: 2
+        case .ready: 3
+        case .failed: 4
+        }
+    }
+
     private func playbackURL(for asset: MediaAsset) -> URL {
         guard usesProxiesForPlayback, let proxy = proxyStore.readyURL(for: asset.id),
               FileManager.default.fileExists(atPath: proxy.path) else { return asset.url }
@@ -1368,10 +1383,13 @@ final class EditorStore: ObservableObject {
 
     private func proxyBecameReady(_ assetID: UUID) {
         guard usesProxiesForPlayback else { return }
-        if project.timelineClips.contains(where: { $0.assetID == assetID }) {
-            rebuildTimelinePlayback() // Keeps position and play state.
-        } else if !isTimelinePlayback, selectedVideoAssetID == assetID, !isVideoPlaying,
+        if isTimelinePlayback {
+            if project.timelineClips.contains(where: { $0.assetID == assetID }) {
+                rebuildTimelinePlayback() // Keeps position and play state.
+            }
+        } else if selectedVideoAssetID == assetID, !isVideoPlaying,
                   let asset = project.media.first(where: { $0.id == assetID }) {
+            // A background proxy never switches the viewer into timeline mode.
             showSourceVideo(asset)
         }
     }

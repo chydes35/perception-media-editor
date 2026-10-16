@@ -32,6 +32,24 @@ struct ProxyStoreTests {
         #expect(store.statuses.count == 1, "Photos never get proxies")
     }
 
+    @Test func generatingProgressIsThrottled() async throws {
+        let temp = try TempDirectory()
+        let store = try makeStore(temp)
+        let url = try await writeTestMovie(to: temp.url.appendingPathComponent("L.MOV"), frames: 240)
+        let asset = MediaAsset(url: url, kind: .video, durationSeconds: 10)
+        var fractions: [Double] = []
+        let cancellable = store.$statuses.sink { statuses in
+            if case .generating(let f)? = statuses[asset.id] { fractions.append(f) }
+        }
+        store.enqueue([asset])
+        _ = try await waitForProxy(store, asset.id)
+        cancellable.cancel()
+        #expect(fractions.count <= 102, "Got \(fractions.count) progress updates")
+        for (previous, next) in zip(fractions, fractions.dropFirst()) {
+            #expect(next - previous >= 0.01 || next >= 1)
+        }
+    }
+
     @Test func movedSourceReusesProxy() async throws {
         let temp = try TempDirectory()
         let store = try makeStore(temp)

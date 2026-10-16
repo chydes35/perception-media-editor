@@ -150,7 +150,10 @@ final class ProxyStore: ObservableObject {
 
         let report: @Sendable (Double) -> Void = { [weak self] fraction in
             Task { @MainActor in
-                guard let self, self.current?.token == jobToken, case .generating = self.statuses[assetID] else { return }
+                guard let self, self.current?.token == jobToken,
+                      case .generating(let last)? = self.statuses[assetID] else { return }
+                // Throttle: publishing every frame would re-render every observer for nothing.
+                guard fraction >= 1 || fraction - last >= 0.01 else { return }
                 self.statuses[assetID] = .generating(fraction)
             }
         }

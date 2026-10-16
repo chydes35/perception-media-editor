@@ -67,6 +67,70 @@ struct VideoProxyWorkflowTests {
         #expect(abs(store.timelinePlaybackPositionSeconds - 2.0) < 0.1)
     }
 
+    @Test func proxyReadyRebuildKeepsPlayState() async throws {
+        let temp = try TempDirectory()
+        let store = try makeStore(temp)
+        let movie = try await writeTestMovie(to: temp.url.appendingPathComponent("A.MOV"), frames: 240)
+        await store.importURLs([movie]).value
+        let asset = try #require(store.project.media.first)
+        store.proxyStore.cancelAll()
+        store.addToTimeline(asset)
+        try await waitUntil { store.isTimelinePlayback && store.timelinePlaybackDurationSeconds > 2 }
+        store.seekTimeline(to: 2.0)
+        store.toggleVideoPlayback()
+        try await waitUntil { store.isVideoPlaying }
+        let before = try #require(store.videoPlayer)
+
+        store.proxyStore.invalidate(assetID: asset.id)
+        store.proxyStore.enqueue([asset])
+        _ = try await waitForProxy(store.proxyStore, asset.id)
+        try await waitUntil { store.timelineUsedProxyCount == 1 && store.videoPlayer !== before }
+        try await waitUntil { store.isVideoPlaying }
+        #expect(store.isTimelinePlayback)
+        #expect(store.timelinePlaybackPositionSeconds >= 1.9)
+    }
+
+    @Test func progressTicksDoNotFanOutToEditorObservers() async throws {
+        let temp = try TempDirectory()
+        let store = try makeStore(temp)
+        let movie = try await writeTestMovie(to: temp.url.appendingPathComponent("A.MOV"), frames: 240)
+        // No import: that would start a player whose 100 ms monitor publishes on its own.
+        let asset = MediaAsset(url: movie, kind: .video, durationSeconds: 10)
+        store.project.media.append(asset)
+        var emissions = 0
+        let cancellable = store.objectWillChange.sink { emissions += 1 }
+        store.proxyStore.enqueue([asset])
+        _ = try await waitForProxy(store.proxyStore, asset.id)
+        try await Task.sleep(for: .milliseconds(200))
+        cancellable.cancel()
+        // queued, generating, ready (plus the source refresh on ready); per-percent fan-out is ~100.
+        #expect(emissions <= 10, "Got \(emissions) emissions")
+    }
+
+    @Test func backgroundProxyNeverSwitchesViewerToTimelineMode() async throws {
+        let temp = try TempDirectory()
+        let store = try makeStore(temp)
+        let a = try await writeTestMovie(to: temp.url.appendingPathComponent("A.MOV"), frames: 48)
+        let b = try await writeTestMovie(to: temp.url.appendingPathComponent("B.MOV"), frames: 48)
+        await store.importURLs([a, b]).value
+        store.proxyStore.cancelAll()
+        let assetA = try #require(store.project.media.first { $0.url == a })
+        let assetB = try #require(store.project.media.first { $0.url == b })
+        store.proxyStore.invalidate(assetID: assetA.id)
+        store.proxyStore.invalidate(assetID: assetB.id)
+        store.addToTimeline(assetB)
+        try await waitUntil { store.isTimelinePlayback && store.timelinePlaybackDurationSeconds > 0 }
+        store.selectVideo(assetA) // Viewer now shows the source clip, not the timeline.
+        #expect(!store.isTimelinePlayback)
+        let player = try #require(store.videoPlayer)
+
+        store.proxyStore.enqueue([assetB])
+        _ = try await waitForProxy(store.proxyStore, assetB.id)
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(!store.isTimelinePlayback)
+        #expect(store.videoPlayer === player)
+    }
+
     @Test func newProjectCancelsPendingProxies() async throws {
         let temp = try TempDirectory()
         let store = try makeStore(temp)

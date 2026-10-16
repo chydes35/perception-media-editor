@@ -34,6 +34,10 @@ struct ProxyFingerprintTests {
 }
 
 struct ProxyGeneratorTests {
+    @Test func generationRunsAtUtilityQoS() {
+        #expect(ProxyGenerator.workQoS == .utility, "Proxy generation is background work; it must not compete with editing")
+    }
+
     @Test func sizeFitsInsideTheLimitWithEvenDimensionsAndNeverUpscales() {
         #expect(ProxyGenerator.proxySize(for: CGSize(width: 3840, height: 2160)) == CGSize(width: 1920, height: 1080))
         #expect(ProxyGenerator.proxySize(for: CGSize(width: 4096, height: 2160)) == CGSize(width: 1920, height: 1012))

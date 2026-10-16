@@ -35,6 +35,8 @@ enum ProxyGenerator {
     static let defaultMaximumSize = CGSize(width: 1920, height: 1080)
     /// Measured on Lumix S5 UHD 23.976 footage: 44 MB per 10 s of 1080p ProRes 422 Proxy.
     static let bytesPerSecondAt1080p: Double = 4_500_000
+    /// Generation is background work: one job at a time, never competing with editing for the CPU.
+    static let workQoS: DispatchQoS = .utility
 
     static func proxySize(for source: CGSize, maximum: CGSize = defaultMaximumSize) -> CGSize {
         guard source.width > 0, source.height > 0 else { return maximum }
@@ -181,7 +183,7 @@ enum ProxyGenerator {
 /// only on `queue` while the job runs. `cancelled` is the one cross-thread member. Once `finish` resumes
 /// the continuation, the job never touches the writer again, so `generate` may use it afterwards.
 private final class SampleCopyJob: @unchecked Sendable {
-    let queue = DispatchQueue(label: "PerceptionEditor.ProxyGenerator.samples", qos: .userInitiated)
+    let queue = DispatchQueue(label: "PerceptionEditor.ProxyGenerator.samples", qos: ProxyGenerator.workQoS)
     private let cancelled = Atomic<Bool>(false)
     private let reader: AVAssetReader
     private let output: AVAssetReaderTrackOutput
@@ -265,7 +267,7 @@ private final class SampleCopyJob: @unchecked Sendable {
 
 /// Confinement: `reader` and `output` are used only on `queue`, in `run`.
 private final class FrameCountJob: @unchecked Sendable {
-    let queue = DispatchQueue(label: "PerceptionEditor.ProxyGenerator.frameCount", qos: .userInitiated)
+    let queue = DispatchQueue(label: "PerceptionEditor.ProxyGenerator.frameCount", qos: ProxyGenerator.workQoS)
     private let reader: AVAssetReader
     private let output: AVAssetReaderTrackOutput
 

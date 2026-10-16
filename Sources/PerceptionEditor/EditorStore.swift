@@ -1450,6 +1450,7 @@ final class EditorStore: ObservableObject {
                 media: media,
                 adjustmentsByClipID: adjustmentsByClipID,
                 audioAdjustmentsByClipID: audioAdjustmentsByClipID,
+                quality: .preview,
                 proxyURLsByAssetID: proxyURLs
             )
             guard !Task.isCancelled, playbackRequestID == requestID else { return }

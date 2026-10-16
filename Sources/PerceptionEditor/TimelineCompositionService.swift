@@ -58,12 +58,14 @@ final class TimelineCompositionService {
         return ClipSourceURLs(video: proxyURL, audio: asset.url, usesProxy: true)
     }
 
+    /// `quality` has no default: a caller that renders deliverables must say `.export` explicitly
+    /// rather than silently inheriting proxies.
     func makePlayerItem(
         clips: [TimelineClip],
         media: [MediaAsset],
         adjustmentsByClipID: [UUID: PhotoAdjustments] = [:],
         audioAdjustmentsByClipID: [UUID: ClipAudioAdjustments] = [:],
-        quality: MediaQuality = .preview,
+        quality: MediaQuality,
         proxyURLsByAssetID: [UUID: URL] = [:]
     ) async -> TimelineCompositionResult {
         let composition = AVMutableComposition()

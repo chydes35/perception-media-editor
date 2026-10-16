@@ -38,7 +38,7 @@ struct TimelineProxyCompositionTests {
         let clip = TimelineClip(assetID: asset.id, durationSeconds: 1.0)
         let service = TimelineCompositionService.shared
 
-        let preview = await service.makePlayerItem(clips: [clip], media: [asset], proxyURLsByAssetID: [asset.id: proxy])
+        let preview = await service.makePlayerItem(clips: [clip], media: [asset], quality: .preview, proxyURLsByAssetID: [asset.id: proxy])
         #expect(videoSourceURLs(preview.playerItem) == [proxy])
         #expect(preview.usedProxyCount == 1)
 
@@ -56,6 +56,7 @@ struct TimelineProxyCompositionTests {
         let result = await TimelineCompositionService.shared.makePlayerItem(
             clips: [TimelineClip(assetID: asset.id, durationSeconds: 1.0)],
             media: [asset],
+            quality: .preview,
             proxyURLsByAssetID: [asset.id: proxy]
         )
         #expect(videoSourceURLs(result.playerItem) == [asset.url])
@@ -74,7 +75,7 @@ struct TimelineProxyCompositionTests {
             TimelineClip(assetID: b.id, timelineStartSeconds: 1.0, durationSeconds: 1.0)
         ]
         let result = await TimelineCompositionService.shared.makePlayerItem(
-            clips: clips, media: [a, b], proxyURLsByAssetID: [a.id: proxyA]
+            clips: clips, media: [a, b], quality: .preview, proxyURLsByAssetID: [a.id: proxyA]
         )
         let item = try #require(result.playerItem)
         let videoComposition = try #require(item.videoComposition)
@@ -103,6 +104,7 @@ struct TimelineProxyCompositionTests {
         let result = await TimelineCompositionService.shared.makePlayerItem(
             clips: [TimelineClip(assetID: asset.id, durationSeconds: 1.0)],
             media: [asset],
+            quality: .preview,
             proxyURLsByAssetID: [asset.id: proxy]
         )
         let item = try #require(result.playerItem)

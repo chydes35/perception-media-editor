@@ -68,6 +68,17 @@ Probes: [`scripts/video-probes/`](../../scripts/video-probes). Build them with `
 - Real `P1107158`: cell-mean difference 1.8/1023, against 104.5 with the old generator.
 - Throughput on the 10 s UHD trim: 72.0 fps debug and 79.6 fps release, up from 68.5 debug.
 
+## Task 3 result: video color kernels
+
+`MetalPipelineCache`, `MetalShaderSources` and `VideoColorKernels` convert 12 bi-planar Y'CbCr formats (8/10-bit × 4:2:0/4:2:2/4:4:4 × video/full range) to unclamped `rgba16Float`, encode to `x422`, and fit a frame to a render size. Notes:
+
+- **Range comes from the buffer's pixel format**, not from a descriptor, because Task 0 showed that an `x422` buffer from a full-range file is shifted by 64 and an `xf22` one is exact. The matrix comes from the caller (the descriptor, or Rec. 709 when unlabeled).
+- **Tolerance is 0.3/1023, not the plan's 0.25.** Half-float storage rounds values in [0.5, 1) to a multiple of 2^-11, which alone costs up to 0.25 of a 10-bit step. A real frame measured 0.249.
+- **Not an actor.** The compositor calls from a synchronous request queue, so `MetalPipelineCache` is a class with a lock. The `CIContext` the plan listed for it is deferred to Task 4, which is its first user.
+- **GPU cost:** decoding a 3840×2160 `xf22` frame takes a median 1.87 ms on the M1 (release build, 10 runs), against 21 ms of frame time at 47 fps.
+- **Fit** is bilinear, which suits fitting a frame to the render size (1:1 up to about 2×); it is not a high-quality large reduction.
+- Chroma siting is left, as in the camera files (4:2:0 also half a row down). Reading the siting from the format description is not done, because every source seen so far is `Left`.
+
 ## Verification still owed
 
 Task 0 measures feasibility only. G1–G9 in the plan remain open. The `VTDecoderXPCService` footprints are single samples taken mid-run. G7 must repeat them as peaks over whole runs.

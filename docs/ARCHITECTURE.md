@@ -46,7 +46,9 @@ Develop preview completion is bound to the project generation, selected asset an
 - `CullWorkspace.swift` and `ImportSheet.swift`: the loupe, compare view, filmstrip, filter bar, and import dialog.
 - `ThumbnailCache.swift`: stable, adjustment-aware JPEG thumbnails in Application Support and one 32 MiB LRU memory budget shared by photo/video thumbnails. The store publishes completion revisions instead of retaining duplicate image dictionaries.
 - `UserPresetRepository.swift`: persistent user presets backed by app preferences.
-- `VideoMediaService.swift`: AVFoundation metadata and poster-frame extraction.
+- `VideoMediaService.swift`: AVFoundation metadata (duration, size, exact frame rate and count, source color) and poster-frame extraction.
+- `SourceColor.swift`: what a video file's code values mean. It reads the camera's own metadata (Lumix files tag V-Log as BT.709 but name it in `com.panasonic.Semi-Pro.metadata.xml`) plus range, matrix, bit depth and chroma from the format description and codec configuration.
+- `MetalShaderSources.swift`, `MetalPipelineCache.swift`, `VideoColorKernels.swift`: the video color GPU runtime. Shaders ship as strings and compile at first use, because the Command Line Tools have no `metal` compiler. Kernels convert 8/10-bit bi-planar Y'CbCr to unclamped half-float R'G'B' (explicit range, matrix and chroma siting), encode back to video-range 10-bit 4:2:2 for export, and fit a frame to the render size. They are not yet used by playback; the custom compositor (plan Task 4) will call them.
 - `AudioWaveformService.swift`: asynchronous PCM peak extraction with stable memory and Application Support disk caches.
 - `TimelineCompositionService.swift`: translates persistent V1/A1 clip metadata into a playable AVMutableComposition and reports recoverable media warnings.
 - `VideoWorkspace.swift`: source viewer, media bin, inspector, and persistent V1/A1 timeline controls.

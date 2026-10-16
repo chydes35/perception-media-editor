@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task by task. Steps use checkbox (`- [ ]`) syntax for tracking. Task 0 is a measurement spike whose results can change Tasks 3–4. Do not skip it.
 
-Status: active (Tasks 0, 1 and 2 done 2026-10-16; see the [compositor](../../docs/decisions/2026-10-16-10bit-compositor.md) and [timing](../../docs/decisions/2026-10-16-frame-exact-timing.md) decision records. Task 3 next. Task 13, Apple Log, is blocked on a real iPhone 15 Pro clip)
+Status: active (Tasks 0–3 done 2026-10-16; see the [compositor](../../docs/decisions/2026-10-16-10bit-compositor.md) and [timing](../../docs/decisions/2026-10-16-frame-exact-timing.md) decision records. Task 4 next. Task 13, Apple Log, is blocked on a real iPhone 15 Pro clip)
 Roadmap sources: [V0.2 — LUT import and intensity control](../../docs/ROADMAP.md), [V0.3 — 1080p and 4K export](../../docs/ROADMAP.md). The 10-bit compositor, frame-exact timing, OCIO and scopes are new V0.3 work and must be added to the roadmap (Task 12).
 Builds on: [video-proxy-pipeline.md](video-proxy-pipeline.md) (branch `feat/video-proxies`: `MediaQuality`, proxy-aware `TimelineCompositionService`)
 Owner: video engine
@@ -202,10 +202,16 @@ enum ColorInputTransform: Codable, Hashable, Sendable {
 
 ### Task 3: Metal runtime, YCbCr decode kernel
 
-- [ ] `MetalPipelineCache` (an actor; created once): device, one `MTLCommandQueue` shared with a `CIContext(mtlCommandQueue:options: [.workingFormat: CIFormat.RGBAh, .workingColorSpace: extendedLinearSRGB, .cacheIntermediates: false])`, a `CVMetalTextureCache`, and compiled pipelines keyed by function name. Shader source uses MSL 2.4 (or Task 0's choice) and half precision for storage, float for math.
-- [ ] Kernel `decodeYCbCr`: takes luma (`r16Unorm`) and chroma (`rg16Unorm`) textures (10-bit formats keep the value in the **upper** 10 bits of each 16-bit sample, so code value = `round(v · 65535 / 64)`; 8-bit `420v` uses `r8Unorm`/`rg8Unorm`), the range, the matrix coefficients (Kr, Kb for 709/601/2020) and the bit depth. It outputs R'G'B' half float, unclamped. Chroma is upsampled bilinearly for 4:2:2 and 4:2:0 with siting from the format description (default: left/co-sited for 4:2:2).
-- [ ] Kernel `encodeYCbCr` (for `x422` output to export): R'G'B' half float → BT.709 video-range Y'CbCr 10-bit with 4:2:2 chroma averaging (co-sited), clamped to 4–1019 as ProRes allows. Kernel `fitToRenderSize` (aspect-fit with black, bilinear) replaces the Core Image transform-and-composite in today's handler.
-- [ ] Tests (`MetalColorKernelTests`): `encodeYCbCr(decodeYCbCr(x))` round-trips 10-bit code values within 1. Synthetic CVPixelBuffers (xf22, x422, 420v) with known code values decode to expected R'G'B' within 0.25/1023. Neutral grey stays neutral. Black, white and 75% bars match BT.709 equations computed in Double. The tests skip with a recorded reason when no Metal device is present, so CI reports "skipped", not "pass".
+**Done 2026-10-16.** See the decision record's "Task 3 result". Differences from the sketch below:
+- `MetalPipelineCache` is a lock-protected class, not an actor, so the compositor's synchronous queue can call it. The shared `CIContext` moves to Task 4.
+- All 12 bi-planar formats are supported, including 8-bit 4:2:2/4:4:4 and 10-bit 4:4:4. Range comes from the buffer's pixel format.
+- The tolerance is 0.3/1023 because half-float storage alone costs 0.25. A real UHD V-Log frame measured 0.249/1023 and 1.87 ms GPU time.
+- The real-footage test is `RealVideoColorTests.gpuDecodeOfARealFullRangeFrameMatchesTheEquations`.
+
+- [x] `MetalPipelineCache` (an actor; created once): device, one `MTLCommandQueue` shared with a `CIContext(mtlCommandQueue:options: [.workingFormat: CIFormat.RGBAh, .workingColorSpace: extendedLinearSRGB, .cacheIntermediates: false])`, a `CVMetalTextureCache`, and compiled pipelines keyed by function name. Shader source uses MSL 2.4 (or Task 0's choice) and half precision for storage, float for math.
+- [x] Kernel `decodeYCbCr`: takes luma (`r16Unorm`) and chroma (`rg16Unorm`) textures (10-bit formats keep the value in the **upper** 10 bits of each 16-bit sample, so code value = `round(v · 65535 / 64)`; 8-bit `420v` uses `r8Unorm`/`rg8Unorm`), the range, the matrix coefficients (Kr, Kb for 709/601/2020) and the bit depth. It outputs R'G'B' half float, unclamped. Chroma is upsampled bilinearly for 4:2:2 and 4:2:0 with siting from the format description (default: left/co-sited for 4:2:2).
+- [x] Kernel `encodeYCbCr` (for `x422` output to export): R'G'B' half float → BT.709 video-range Y'CbCr 10-bit with 4:2:2 chroma averaging (co-sited), clamped to 4–1019 as ProRes allows. Kernel `fitToRenderSize` (aspect-fit with black, bilinear) replaces the Core Image transform-and-composite in today's handler.
+- [x] Tests (`MetalColorKernelTests`): `encodeYCbCr(decodeYCbCr(x))` round-trips 10-bit code values within 1. Synthetic CVPixelBuffers (xf22, x422, 420v) with known code values decode to expected R'G'B' within 0.25/1023. Neutral grey stays neutral. Black, white and 75% bars match BT.709 equations computed in Double. The tests skip with a recorded reason when no Metal device is present, so CI reports "skipped", not "pass".
 
 ### Task 4: Custom compositor replaces the CIFilter handler
 

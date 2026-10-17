@@ -423,7 +423,7 @@ Root cause: the 48³ trilinear cube interpolates a function with a hue discontin
 
 #### 13.5 Real gates
 
-- [ ] **G10–G13** below, on the target M1.
+- [ ] **G10–G13** below, on the target M1. Status 2026-10-17: G10 PASS, G11 PASS, G13 PASS, **G12 FAIL** (export 10.8 fps vs about 90; G7 memory over; proxy 0 dropped over 25 s x 3, not 60 s). Left open until G12 is tuned or its bar is changed by the owner.
 
 **Files:** modify `SourceColor.swift`, `MetalShaderSources.swift`, `TimelineVideoCompositor.swift`, `TimelineCompositionInstruction.swift`, `TimelineCompositionService.swift`, `ProxyGenerator.swift` and `scripts/ocio/generate-shaders.py`. Regenerate `OCIOGeneratedShaders.swift`. Create `scripts/video-probes/applelogprobe.swift` and `docs/decisions/2026-10-xx-apple-log.md`.
 

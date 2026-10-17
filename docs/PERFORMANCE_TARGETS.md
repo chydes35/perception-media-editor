@@ -20,6 +20,8 @@ UI responsiveness during generation is NOT VERIFIED.
 
 ## Video compositor (branch `plan/10bit-vlog-color`)
 
+**Caveat (found 2026-10-17):** the external SSD holding the clips (a Samsung T7) was linked at USB 2.0 (480 Mb/s, about 38 MB/s) through a USB-C adaptor's hub for every video measurement below. That bounds reading `P1107157` (151 Mb/s) to about 47 fps, so the decode ceilings and the G1 export numbers may be the link, not the Mac. Re-run them with the drive at USB 3 or faster. See the [Apple Log record](decisions/2026-10-17-apple-log.md).
+
 Lumix S5 `P1107157.MOV`, a 10 s UHD V-Log passthrough trim, `RealVideoCompositorTests`, release build, 8 GB M1, one case per process (`PME_COMPOSITOR_CASE`). Speeds vary 20–40% between runs on this passively cooled Mac.
 
 | Case | Speed | App footprint |

@@ -107,7 +107,10 @@ struct RealVideoCompositorTests {
         try await run("4K original, ACES graded, preview", quality: .preview, format: kCVPixelFormatType_64RGBAHalf, adjustments: graded, ocio: true)
         try await run("4K original, ACES, export", quality: .export, format: kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange, adjustments: .neutral, ocio: true)
         // A 1080p ProRes proxy, graded, as timeline playback with proxies uses it.
+        if let only, !"1080p proxy".contains(only) && !only.contains("proxy") { return }
+        let proxyStart = Date()
         let proxy = try await ProxyGenerator.generate(source: trimmed, destination: temp.url.appendingPathComponent("proxy.mov")).url
+        print("COMPOSITOR proxy generation: \(frames) frames in \(String(format: "%.1f", Date().timeIntervalSince(proxyStart))) s")
         try await run("1080p proxy, graded, preview", quality: .preview, format: kCVPixelFormatType_64RGBAHalf, adjustments: graded, proxy: proxy)
         try await run("1080p proxy, neutral, preview", quality: .preview, format: kCVPixelFormatType_64RGBAHalf, adjustments: .neutral, proxy: proxy)
         try await run("1080p proxy, ACES graded, preview", quality: .preview, format: kCVPixelFormatType_64RGBAHalf, adjustments: graded, proxy: proxy, ocio: true)

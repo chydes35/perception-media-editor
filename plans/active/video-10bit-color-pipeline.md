@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task by task. Steps use checkbox (`- [ ]`) syntax for tracking. Task 0 is a measurement spike whose results can change Tasks 3–4. Do not skip it.
 
-Status: active (Tasks 0–9 done 2026-10-16 (G5 visual part, LUT, scope, export and source-color UI walkthroughs, G8, and G9's black level open; G1 and G7 FAIL on the M1; G4 PASS); see the [compositor](../../docs/decisions/2026-10-16-10bit-compositor.md) and [timing](../../docs/decisions/2026-10-16-frame-exact-timing.md) decision records. Task 10 next. Task 13, Apple Log, is blocked on a real iPhone 15 Pro clip)
+Status: active (Tasks 0–10 done 2026-10-16/17 (G5 visual part, LUT, scope, export and source-color UI walkthroughs, G8, and G9's black level open; G1 and G7 FAIL on the M1; G4 PASS); see the [compositor](../../docs/decisions/2026-10-16-10bit-compositor.md), [timing](../../docs/decisions/2026-10-16-frame-exact-timing.md) and [OCIO](../../docs/decisions/2026-10-17-ocio-generated-shaders.md) decision records. Task 11 next. Task 13, Apple Log, is blocked on a real iPhone 15 Pro clip)
 Roadmap sources: [V0.2 — LUT import and intensity control](../../docs/ROADMAP.md), [V0.3 — 1080p and 4K export](../../docs/ROADMAP.md). The 10-bit compositor, frame-exact timing, OCIO and scopes are new V0.3 work and must be added to the roadmap (Task 12).
 Builds on: [video-proxy-pipeline.md](video-proxy-pipeline.md) (branch `feat/video-proxies`: `MediaQuality`, proxy-aware `TimelineCompositionService`)
 Owner: video engine
@@ -80,7 +80,7 @@ AVAsset track ──(xf22 / x422 / 420v; never BGRA)──► TimelineVideoCompo
 | Create `scripts/ocio/generate-shaders.py`, `scripts/ocio/requirements.txt` (pinned with hashes) | Offline OCIO shader generator |
 | Modify `TimelineCompositionService.swift`, `EditorModels.swift`, `ProjectDocument.swift`, `EditorStore.swift`, `ColorGrading.swift`, `MediaColorRenderer.swift`, `ProxyGenerator.swift`, `ProxyFingerprint.swift`, `VideoWorkspace.swift`, `PhotoWorkspace.swift` | Integration |
 | Tests: `FrameTimeTests`, `TimelineFrameExactTests`, `ProjectMigration11Tests`, `SourceColorTests`, `CubeLUTTests`, `MetalColorKernelTests`, `TimelineVideoCompositorTests`, `ColorGradingTests` (extend), `OCIOShaderTests`, `ScopeRendererTests`, `TimelineExporterTests`, `RealVideoColorTests` (opt-in) | See Test strategy |
-| Docs: `docs/decisions/2026-10-xx-10bit-compositor.md`, `…-ocio-generated-shaders.md`, `…-frame-exact-timing.md`; update `DATA_MODEL.md`, `ARCHITECTURE.md`, `PERFORMANCE_TARGETS.md`, `TESTING_STRATEGY.md`, `CURRENT_STATUS.md`, `ROADMAP.md` | Contracts |
+| Docs: `docs/decisions/2026-10-16-10bit-compositor.md`, `2026-10-17-ocio-generated-shaders.md`, `…-frame-exact-timing.md`; update `DATA_MODEL.md`, `ARCHITECTURE.md`, `PERFORMANCE_TARGETS.md`, `TESTING_STRATEGY.md`, `CURRENT_STATUS.md`, `ROADMAP.md` | Contracts |
 
 **Test command on this Mac** (`scripts/test.sh` fails as written with CLT only):
 
@@ -312,7 +312,8 @@ Root cause: the 48³ trilinear cube interpolates a function with a hue discontin
 
 ### Task 10: OpenColorIO, Phase B2 — runtime library (decision only, deferred)
 
-- [ ] Write `docs/decisions/2026-10-xx-ocio-generated-shaders.md`. It explains why shaders are generated rather than linked: no cmake or Xcode on the target, the "no third-party packages" rule, and C++ interop cost. It names the trigger for B2 (the user needs custom `.ocio` configs or camera IDTs beyond the generated set) and the B2 path: a static OCIO built by script into an XCFramework `binaryTarget`, a small C shim, and minizip/expat/yaml-cpp/pystring/Imath built statically, all with notices. Nothing is implemented in this milestone.
+- [x] Write `docs/decisions/2026-10-xx-ocio-generated-shaders.md`. It explains why shaders are generated rather than linked: no cmake or Xcode on the target, the "no third-party packages" rule, and C++ interop cost. It names the trigger for B2 (the user needs custom `.ocio` configs or camera IDTs beyond the generated set) and the B2 path: a static OCIO built by script into an XCFramework `binaryTarget`, a small C shim, and minizip/expat/yaml-cpp/pystring/Imath built statically, all with notices. Nothing is implemented in this milestone.
+- [x] Done 2026-10-17 as [2026-10-17-ocio-generated-shaders.md](../../docs/decisions/2026-10-17-ocio-generated-shaders.md): keep B1, add cameras and views through the generator, and defer B2 until user configs, run-time camera choice or dynamic transforms are needed. The XCFramework-without-Xcode step is NOT VERIFIED; a B2 spike must show it first.
 
 ### Task 11: Memory pressure and performance instrumentation
 

@@ -96,6 +96,20 @@ final class ScopeTap: @unchecked Sendable {
         return texture
     }
 
+    /// Drops the ring and the latest capture, for memory pressure. Captures still referenced by
+    /// frames on the GPU or by the scope worker live until those finish; the next capture
+    /// allocates afresh.
+    func releaseTextures() {
+        lock.withLock {
+            ring.removeAll()
+            latestTexture = nil
+            next = 0
+        }
+    }
+
+    /// The number of capture textures the tap holds.
+    var heldTextureCount: Int { lock.withLock { ring.count } }
+
     /// The capture is complete on the GPU: it becomes the latest, and the listener hears of it.
     func publish(_ texture: MTLTexture) {
         lock.lock()

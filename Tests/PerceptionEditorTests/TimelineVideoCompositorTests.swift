@@ -498,6 +498,29 @@ struct TimelineVideoCompositorTests {
 
     // MARK: Requests
 
+    /// Every finished frame reports its GPU time to the composition's counters (Task 11).
+    @Test func finishedFramesRecordTheirGPUTime() async throws {
+        let temp = try TempDirectory()
+        let asset = try await patternAsset(temp)
+        let clip = TimelineClip(assetID: asset.id, durationFrames: 12)
+        let key = UUID()
+        let (item, _) = try await compose([clip], [asset], adjustments: [clip.id: goldenGradeAdjustments()], statisticsKey: key)
+        let frames = try await allFrames(item, pixelFormat: kCVPixelFormatType_64RGBAHalf)
+        let statistics = TimelineVideoCompositor.statistics(for: key)
+        print("GPU time per frame: \(statistics)")
+        #expect(frames.count == 12)
+        #expect(statistics.gpuMilliseconds.count == statistics.finished)
+        #expect(statistics.gpuMilliseconds.allSatisfy { $0 > 0 && $0 < 1000 })
+        #expect(statistics.medianGPUMilliseconds != nil)
+    }
+
+    @Test func gpuSamplesAreBounded() {
+        var statistics = CompositorStatistics()
+        for index in 0 ..< CompositorStatistics.gpuSampleLimit + 5 { statistics.recordGPU(Double(index)) }
+        #expect(statistics.gpuMilliseconds.count == CompositorStatistics.gpuSampleLimit)
+        #expect(statistics.gpuMilliseconds.first == 5, "The oldest samples go first")
+    }
+
     @Test func manyQuickSeeksLeaveNothingPending() async throws {
         let temp = try TempDirectory()
         let numbers = try await numberedAsset(temp)
@@ -582,5 +605,19 @@ struct VideoCompositingEnginePressureTests {
         #expect(engine.pool.freeCount > 0)
         VideoCompositingEngine.releaseMemoryUnderPressure()
         #expect(engine.pool.freeCount == 0)
+    }
+
+    /// Pressure also drops the scope captures; the next capture allocates afresh.
+    @Test(.enabled(if: MTLCreateSystemDefaultDevice() != nil))
+    func memoryPressureDropsTheScopeCaptures() throws {
+        let tap = ScopeTap(minimumInterval: 0)
+        let device = try #require(MTLCreateSystemDefaultDevice())
+        for _ in 0 ..< ScopeTap.ringSize { _ = tap.captureTexture(device: device, width: 64, height: 36) }
+        tap.publish(try #require(tap.captureTexture(device: device, width: 64, height: 36)))
+        #expect(tap.heldTextureCount == ScopeTap.ringSize && tap.latest != nil)
+        tap.releaseTextures()
+        #expect(tap.heldTextureCount == 0 && tap.latest == nil)
+        #expect(tap.captureTexture(device: device, width: 64, height: 36) != nil)
+        #expect(tap.heldTextureCount == 1)
     }
 }

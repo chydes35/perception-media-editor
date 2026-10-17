@@ -23,6 +23,11 @@ final class ColorGradeStage: @unchecked Sendable {
         ])
     }
 
+    /// Releases Core Image's cached intermediates and kernels' state, for memory pressure.
+    func clearCaches() {
+        context.clearCaches()
+    }
+
     /// Reads `input` and writes the graded frame into `output` (same size), both `rgba16Float`.
     /// With an `inputLUT`, the frame's values are code values: the LUT maps them first, and its
     /// output is then treated as Rec. 709. With `sceneLinear`, both frames hold scene-linear

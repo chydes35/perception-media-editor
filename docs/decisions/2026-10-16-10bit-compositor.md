@@ -143,6 +143,22 @@ Probes: [`scripts/video-probes/`](../../scripts/video-probes). Build them with `
 - **Speed (release, M1, 10 s of 4K V-Log from `P1107157`).** Neutral: 78.6 fps without ACES and 35.7 with it (preview), 35.9 fps for export frames. Graded: 25.1 fps without ACES and 15.9 with it. The 1080p proxy, graded, runs at 94.6 fps without ACES and 49–50 fps with it. The ACES 2.0 output transform costs about 15 ms per 4K frame, mostly the JMh gamut compression and its table search. Through ACES, G1's 38 fps export target is missed at 4K, and graded 4K originals cannot play in real time. Proxy playback is fine. If Task 11 needs the time back, the next step is to bake the output transform into a shaper plus a 3D LUT and gate it against the golden data. Peak app footprint: about 490 MB neutral and 1.2 GB graded at 4K (873 MB graded without ACES), because of two more 4K half-float working frames.
 - **Not verified:** the source-color picker and its hints in the running app; G8 (the owner's visual comparison of LUT and ACES on `P1107210` and `P1107158`); the ACES path's memory under G7's method (`profile-video.sh`, which includes `VTDecoderXPCService`).
 
+## Task 11 result: instrumentation, memory pressure, playback gates
+
+- **Instrumentation.** `VideoCompositorDiagnostics` emits a "VideoCompositor" signpost interval per frame request (ending "finished", "cancelled" or "failed") and a "GPU" event with the command buffer's `gpuEndTime − gpuStartTime`. The compositor's counters (`CompositorStatistics`) keep each finished frame's GPU time (the most recent 20 000), with median and maximum. Log lines (frame time, GPU time, cancellations, failures, memory-pressure releases) are opt-in with `PME_VIDEO_DIAGNOSTICS=1` or the `PerceptionVideoDiagnostics` bundle key, like the photo preview's.
+- **Memory pressure.** `VideoCompositingEngine.releaseMemoryUnderPressure` now also clears the grade stage's Core Image caches and drops the scope tap's ring and latest capture, besides the waiting pool frames and CoreVideo's texture cache. Frames on the GPU keep what they hold. This is unit-tested; a real macOS pressure event during playback is NOT VERIFIED.
+- **Profiling.** `scripts/profile-video.sh` gained `PME_PROFILE=playback`, which runs the new `RealVideoPlaybackTests` and samples the test process plus new `VTDecoderXPCService`s. That test plays a graded 1080p proxy of 60 s of `P1107157` (the golden grade with HSL and curves, the source color, and the scopes) with AVPlayer in real time, 10 times. A video output pulls frames at 120 Hz, and a clip frame it never receives counts as dropped (AVPlayer's own count needs a display). The first profile counted the in-test trim and proxy generation (+706 MB, decoder 430 MB). The test now creates a marker file when playback starts, and playback memory is measured from there.
+- **Gate G1, playback part: FAIL** (release, 8 GB M1, 10 × 60 s, 14 380 frames per case).
+
+  | Source color | Dropped frames | GPU per frame | Scopes |
+  | --- | --- | --- | --- |
+  | Panasonic V-Log to V-709 LUT (G1's case) | 6 (5 in the first run, 1 in the fourth) | median 5.3 ms, p99 10.9 ms, max 23.7 ms | 13.7 Hz |
+  | ACES 2.0 (OCIO) | 1 (second run) | median 6.4 ms, p99 13.4 ms, max 29.0 ms | 13.7 Hz |
+
+  The LUT case meets the 12 ms GPU limit at p99 but drops frames. ACES misses both limits. The drops are rare and cluster in the first run, so warm-up (first-use pipelines, pool growth) is the first suspect, but this is not established.
+- **Gate G7, playback part: FAIL.** From the start of playback (LUT case): +513 MB, against a limit of +350 MB (app peak 481 MB, decoder peak 182 MB), with 31 000 pages swapped out during the run. The app's footprint after each run went 330, 349 and then 365 MB for runs 3–10, so it is a plateau, not a leak. That is still 35 MB over 10 runs against the 20 MB limit, so the growth check fails as written. ACES: 392 → 395 MB (2.9 MB growth).
+- **G7, export part:** unchanged (Task 8: about 1.5 GB over idle, FAIL). This task added no memory reduction; the overruns now have the tooling to be worked on.
+
 ## Verification still owed
 
 Task 0 measures feasibility only. G1–G9 in the plan remain open. The `VTDecoderXPCService` footprints are single samples taken mid-run. G7 must repeat them as peaks over whole runs.

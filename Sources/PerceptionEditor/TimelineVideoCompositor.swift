@@ -2,6 +2,7 @@
 import CoreVideo
 import Foundation
 import Metal
+import OSLog
 
 /// Counters for one composition's compositor, read by tests through `statisticsKey`.
 struct CompositorStatistics: Equatable, CustomStringConvertible, Sendable {
@@ -11,12 +12,24 @@ struct CompositorStatistics: Equatable, CustomStringConvertible, Sendable {
     var failed = 0
     var inFlight = 0
     var maximumInFlight = 0
+    /// GPU time of each finished frame (`gpuEndTime − gpuStartTime`), the most recent `gpuSampleLimit`.
+    var gpuMilliseconds: [Double] = []
+    static let gpuSampleLimit = 20_000
 
     /// Requests AVFoundation has handed over that have not been answered.
     var pending: Int { started - finished - cancelled - failed }
 
+    var medianGPUMilliseconds: Double? { gpuMilliseconds.isEmpty ? nil : gpuMilliseconds.sorted()[gpuMilliseconds.count / 2] }
+    var maximumGPUMilliseconds: Double? { gpuMilliseconds.max() }
+
     var description: String {
-        "started \(started), finished \(finished), cancelled \(cancelled), failed \(failed), max in flight \(maximumInFlight)"
+        let gpu = medianGPUMilliseconds.map { String(format: ", GPU median %.2f ms, max %.2f ms", $0, maximumGPUMilliseconds ?? 0) } ?? ""
+        return "started \(started), finished \(finished), cancelled \(cancelled), failed \(failed), max in flight \(maximumInFlight)\(gpu)"
+    }
+
+    mutating func recordGPU(_ milliseconds: Double) {
+        if gpuMilliseconds.count >= Self.gpuSampleLimit { gpuMilliseconds.removeFirst(gpuMilliseconds.count - Self.gpuSampleLimit + 1) }
+        gpuMilliseconds.append(milliseconds)
     }
 }
 
@@ -68,10 +81,16 @@ final class VideoCompositingEngine: @unchecked Sendable {
         Self.created = self
     }
 
-    /// Drops the waiting working frames and CoreVideo's cached textures. Frames being rendered are untouched.
+    /// Drops the waiting working frames, CoreVideo's cached textures, Core Image's caches and the
+    /// scope captures. Frames being rendered keep what they hold until the GPU is done with them.
     static func releaseMemoryUnderPressure() {
-        created?.pool.flush()
-        created?.kernels.runtime.flush()
+        ScopeTap.shared.releaseTextures()
+        guard let engine = created else { return }
+        let waiting = engine.pool.freeCount
+        engine.pool.flush()
+        engine.kernels.runtime.flush()
+        engine.grader.clearCaches()
+        VideoCompositorDiagnostics.record("memory pressure: released \(waiting) waiting frames, the texture cache and Core Image's caches")
     }
 
     /// What an encoded frame keeps alive until the GPU is done with it.
@@ -254,9 +273,11 @@ class TimelineVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable
         let box = Unchecked(value: request)
         let key = (request.videoCompositionInstruction as? TimelineCompositionInstruction)?.statisticsKey
         let expected = currentGeneration()
+        let signposter = VideoCompositorDiagnostics.signposter
+        let interval = signposter.beginInterval("Frame", id: signposter.makeSignpostID(), "\(request.compositionTime.seconds, format: .fixed(precision: 3)) s")
         unanswered.enter()
         CompositorStatisticsStore.shared.update(key) { $0.started += 1 }
-        queue.async { [self] in render(box.value, key: key, generation: expected) }
+        queue.async { [self] in render(box.value, key: key, generation: expected, interval: interval) }
     }
 
     func cancelAllPendingVideoCompositionRequests() {
@@ -280,40 +301,47 @@ class TimelineVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable
         case failure(any Error)
     }
 
-    private func answer(_ request: AVAsynchronousVideoCompositionRequest, key: UUID?, _ answer: Answer) {
+    private func answer(_ request: AVAsynchronousVideoCompositionRequest, key: UUID?, interval: OSSignpostIntervalState, _ answer: Answer) {
+        let signposter = VideoCompositorDiagnostics.signposter
+        let time = request.compositionTime.seconds
         switch answer {
         case .frame(let buffer):
             CompositorStatisticsStore.shared.update(key) { $0.finished += 1 }
+            signposter.endInterval("Frame", interval, "finished")
             request.finish(withComposedVideoFrame: buffer)
         case .cancelled:
             CompositorStatisticsStore.shared.update(key) { $0.cancelled += 1 }
+            signposter.endInterval("Frame", interval, "cancelled")
+            VideoCompositorDiagnostics.record(String(format: "frame %.3f s cancelled", time))
             request.finishCancelledRequest()
         case .failure(let error):
             CompositorStatisticsStore.shared.update(key) { $0.failed += 1 }
+            signposter.endInterval("Frame", interval, "failed")
+            VideoCompositorDiagnostics.record(String(format: "frame %.3f s failed: ", time) + error.localizedDescription)
             request.finish(with: error)
         }
         unanswered.leave()
     }
 
-    private func render(_ request: AVAsynchronousVideoCompositionRequest, key: UUID?, generation expected: Int) {
-        guard currentGeneration() == expected else { return answer(request, key: key, .cancelled) }
-        guard let engine = VideoCompositingEngine.shared else { return answer(request, key: key, .failure(VideoColorError.noMetalDevice)) }
+    private func render(_ request: AVAsynchronousVideoCompositionRequest, key: UUID?, generation expected: Int, interval: OSSignpostIntervalState) {
+        guard currentGeneration() == expected else { return answer(request, key: key, interval: interval, .cancelled) }
+        guard let engine = VideoCompositingEngine.shared else { return answer(request, key: key, interval: interval, .failure(VideoColorError.noMetalDevice)) }
         guard let instruction = request.videoCompositionInstruction as? TimelineCompositionInstruction else {
-            return answer(request, key: key, .failure(VideoColorError.sizeMismatch("an instruction that is not a timeline instruction")))
+            return answer(request, key: key, interval: interval, .failure(VideoColorError.sizeMismatch("an instruction that is not a timeline instruction")))
         }
         guard let output = request.renderContext.newPixelBuffer() else {
-            return answer(request, key: key, .failure(VideoColorError.textureCreationFailed(kCVReturnAllocationFailed)))
+            return answer(request, key: key, interval: interval, .failure(VideoColorError.textureCreationFailed(kCVReturnAllocationFailed)))
         }
         let source = instruction.recipe == nil ? nil : request.sourceFrame(byTrackID: instruction.sourceTrackID)
 
         gpuSlots.wait()
         guard currentGeneration() == expected else {
             gpuSlots.signal()
-            return answer(request, key: key, .cancelled)
+            return answer(request, key: key, interval: interval, .cancelled)
         }
         guard let commandBuffer = engine.kernels.runtime.queue.makeCommandBuffer() else {
             gpuSlots.signal()
-            return answer(request, key: key, .failure(VideoColorError.noMetalDevice))
+            return answer(request, key: key, interval: interval, .failure(VideoColorError.noMetalDevice))
         }
         do {
             // A clip whose frame is missing shows black rather than stopping playback.
@@ -331,22 +359,28 @@ class TimelineVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable
             let held = Unchecked(value: (source, output, resources))
             commandBuffer.addCompletedHandler { [self] buffer in
                 engine.release(held.value.2)
-                CompositorStatisticsStore.shared.update(key) { $0.inFlight -= 1 }
+                let gpuMilliseconds = (buffer.gpuEndTime - buffer.gpuStartTime) * 1000
+                VideoCompositorDiagnostics.signposter.emitEvent("GPU", "\(gpuMilliseconds, format: .fixed(precision: 2)) ms")
+                CompositorStatisticsStore.shared.update(key) {
+                    $0.inFlight -= 1
+                    if buffer.status == .completed { $0.recordGPU(gpuMilliseconds) }
+                }
+                VideoCompositorDiagnostics.record(String(format: "frame %.3f s GPU %.2f ms", box.value.compositionTime.seconds, gpuMilliseconds))
                 gpuSlots.signal()
                 if currentGeneration() != expected {
-                    answer(box.value, key: key, .cancelled)
+                    answer(box.value, key: key, interval: interval, .cancelled)
                 } else if buffer.status == .completed {
                     if let capture = held.value.2.scopeCapture { ScopeTap.shared.publish(capture) }
-                    answer(box.value, key: key, .frame(held.value.1))
+                    answer(box.value, key: key, interval: interval, .frame(held.value.1))
                 } else {
-                    answer(box.value, key: key, .failure(buffer.error ?? VideoColorError.noMetalDevice))
+                    answer(box.value, key: key, interval: interval, .failure(buffer.error ?? VideoColorError.noMetalDevice))
                 }
                 withExtendedLifetime(held) {}
             }
             commandBuffer.commit()
         } catch {
             gpuSlots.signal()
-            answer(request, key: key, .failure(error))
+            answer(request, key: key, interval: interval, .failure(error))
         }
     }
 }

@@ -33,6 +33,28 @@ struct RealVideoColorTests {
         #expect(color.range == .video && color.matrix == .rec2020 && color.bitDepth == 10 && color.chroma == .yuv422)
     }
 
+    /// The same iPhone with Log off: ProRes encoding HDR is HLG (PME_IPHONE_HLG=…/IMG_0005.MOV) and
+    /// SDR is Rec. 709 (PME_IPHONE_SDR=…/IMG_0006.MOV). Neither may be taken for Apple Log.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["PME_IPHONE_HLG"] != nil))
+    func iPhoneHLGIsHDRNotLog() async throws {
+        let url = URL(fileURLWithPath: ProcessInfo.processInfo.environment["PME_IPHONE_HLG"]!)
+        let metadata = await VideoMediaService.shared.metadata(for: url)
+        let color = try #require(metadata.sourceColor)
+        print("iPhone HLG sample: \(color.summary), \(metadata.frameRate.map { "\($0)" } ?? "no rate")")
+        #expect(color.transfer == .hlg && color.gamut == .rec2020 && color.matrix == .rec2020 && color.range == .video)
+        #expect(color.isHDR && !color.isLog && !color.isUnsupportedLog && color.detectedFrom == .formatDescription)
+        #expect(metadata.frameRate == FrameRate(frameDuration: 1, timescale: 24))
+    }
+
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["PME_IPHONE_SDR"] != nil))
+    func iPhoneSDRIsRec709() async throws {
+        let url = URL(fileURLWithPath: ProcessInfo.processInfo.environment["PME_IPHONE_SDR"]!)
+        let color = try #require(await VideoMediaService.shared.metadata(for: url).sourceColor)
+        print("iPhone SDR sample: \(color.summary)")
+        #expect(color.transfer == .rec709 && color.gamut == .rec709 && color.matrix == .rec709)
+        #expect(!color.isHDR && !color.isLog && color.detectedFrom == .formatDescription)
+    }
+
     @Test(.enabled(if: ProcessInfo.processInfo.environment["PME_REC709_8BIT"] != nil))
     func lumixStandardGammaStaysRec709() async throws {
         let url = URL(fileURLWithPath: ProcessInfo.processInfo.environment["PME_REC709_8BIT"]!)

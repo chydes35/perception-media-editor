@@ -1446,7 +1446,8 @@ final class EditorStore: ObservableObject {
 
         let url = playbackURL(for: asset)
         let inputLUT = resolvedInputLUTs().resolved[asset.id]
-        if inputLUT != nil || scopesVisible {
+        let ocioInput = resolvedOCIOInputs()[asset.id]
+        if inputLUT != nil || ocioInput != nil || scopesVisible {
             // Source color and the scopes need the compositor, so the viewer plays a one-clip timeline.
             let player = AVPlayer()
             replaceVideoPlayer(player, timelineMode: false)
@@ -1459,7 +1460,8 @@ final class EditorStore: ObservableObject {
                 let result = await service.makePlayerItem(
                     clips: [clip], media: [asset], quality: .preview,
                     proxyURLsByAssetID: proxy.map { [asset.id: $0] } ?? [:], renderingPath: .compositor,
-                    inputLUTsByAssetID: inputLUT.map { [asset.id: $0] } ?? [:]
+                    inputLUTsByAssetID: inputLUT.map { [asset.id: $0] } ?? [:],
+                    ocioInputsByAssetID: ocioInput.map { [asset.id: $0] } ?? [:]
                 )
                 guard !Task.isCancelled, playbackRequestID == requestID, videoPlayer === player else { return }
                 player.replaceCurrentItem(with: result.playerItem ?? AVPlayerItem(url: asset.url))
@@ -1583,6 +1585,7 @@ final class EditorStore: ObservableObject {
         let clips = project.timelineClips
         let sequenceRate = project.sequenceFrameRate
         let inputLUTs = resolvedInputLUTs()
+        let ocioInputs = resolvedOCIOInputs()
         let renderingPath: TimelineRenderingPath = scopesVisible ? .compositor : .automatic
         let media = project.media
         let adjustmentsByClipID = project.videoAdjustmentsByClipID
@@ -1605,7 +1608,8 @@ final class EditorStore: ObservableObject {
                 proxyURLsByAssetID: proxyURLs,
                 sequenceFrameRate: sequenceRate,
                 renderingPath: renderingPath,
-                inputLUTsByAssetID: inputLUTs.resolved
+                inputLUTsByAssetID: inputLUTs.resolved,
+                ocioInputsByAssetID: ocioInputs
             )
             guard !Task.isCancelled, playbackRequestID == requestID else { return }
 

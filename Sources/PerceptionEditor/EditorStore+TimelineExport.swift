@@ -48,7 +48,8 @@ extension EditorStore {
             clips: project.timelineClips, media: project.media,
             adjustmentsByClipID: project.videoAdjustmentsByClipID,
             audioAdjustmentsByClipID: project.audioAdjustmentsByClipID,
-            sequenceFrameRate: project.sequenceFrameRate, inputLUTsByAssetID: inputLUTs.resolved
+            sequenceFrameRate: project.sequenceFrameRate, inputLUTsByAssetID: inputLUTs.resolved,
+            ocioInputsByAssetID: resolvedOCIOInputs()
         )
         let settings = timelineExportSettings
         let exporter = timelineExporter

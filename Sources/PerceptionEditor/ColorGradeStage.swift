@@ -12,6 +12,8 @@ import Metal
 final class ColorGradeStage: @unchecked Sendable {
     private let context: CIContext
     private let space: CGColorSpace
+    /// Scene-linear Rec. 709 (sRGB primaries), unclamped: what OCIO's V-Log input transform writes.
+    private let linearSpace = CGColorSpace(name: CGColorSpace.extendedLinearSRGB)!
 
     init(queue: MTLCommandQueue) {
         space = CGColorSpace(name: CGColorSpace.coreMedia709) ?? CGColorSpace(name: CGColorSpace.itur_709)!
@@ -23,17 +25,20 @@ final class ColorGradeStage: @unchecked Sendable {
 
     /// Reads `input` and writes the graded frame into `output` (same size), both `rgba16Float`.
     /// With an `inputLUT`, the frame's values are code values: the LUT maps them first, and its
-    /// output is then treated as Rec. 709. Returns false when Core Image cannot wrap the texture.
+    /// output is then treated as Rec. 709. With `sceneLinear`, both frames hold scene-linear
+    /// Rec. 709 instead (the OCIO path), which is Core Image's own working space, so nothing is
+    /// converted on the way in or out. Returns false when Core Image cannot wrap the texture.
     @discardableResult
     func grade(
-        _ input: MTLTexture, adjustments: PhotoAdjustments, inputLUT: ResolvedLUT? = nil,
+        _ input: MTLTexture, adjustments: PhotoAdjustments, inputLUT: ResolvedLUT? = nil, sceneLinear: Bool = false,
         into output: MTLTexture, commandBuffer: MTLCommandBuffer
     ) -> Bool {
+        let space = sceneLinear ? linearSpace : self.space
         let bounds = CGRect(x: 0, y: 0, width: input.width, height: input.height)
         // Textures have a top-left origin and Core Image a bottom-left one: flip in, grade, flip out.
         let flip = CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: 0, ty: CGFloat(input.height))
         var image: CIImage
-        if let inputLUT {
+        if let inputLUT, !sceneLinear {
             // Untagged, so Core Image does not linearize the log values before the LUT sees them.
             guard let raw = CIImage(mtlTexture: input, options: [.colorSpace: NSNull()]),
                   let mapped = LUTKernel.apply(inputLUT.lut, cacheKey: inputLUT.hash, intensity: 1, to: raw.transformed(by: flip)),

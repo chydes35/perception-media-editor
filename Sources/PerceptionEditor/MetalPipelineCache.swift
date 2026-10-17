@@ -36,8 +36,22 @@ final class MetalPipelineCache: @unchecked Sendable {
     let queue: MTLCommandQueue
     private let textureCache: CVMetalTextureCache
     private let lock = NSLock()
-    private var library: MTLLibrary?
+    private var libraries: [ShaderLibrary: MTLLibrary] = [:]
     private var pipelines: [String: MTLComputePipelineState] = [:]
+
+    /// The video color kernels, and OCIO's generated transforms in a library of their own so a
+    /// failure to compile them cannot take the rest of the video pipeline down.
+    enum ShaderLibrary: Hashable, Sendable {
+        case videoColor
+        case ocio
+
+        var source: String {
+            switch self {
+            case .videoColor: MetalShaderSources.videoColor
+            case .ocio: MetalShaderSources.ocio
+            }
+        }
+    }
 
     init(device: MTLDevice? = MTLCreateSystemDefaultDevice()) throws {
         guard let device, let queue = device.makeCommandQueue() else { throw VideoColorError.noMetalDevice }
@@ -57,14 +71,15 @@ final class MetalPipelineCache: @unchecked Sendable {
         for name in ["decodeYCbCr", "encodeLuma", "encodeChroma422", "fitToRenderSize", "fillBlack", "downsampleForScope", "waveformAccumulate", "vectorscopeAccumulate", "renderWaveform", "renderVectorscope"] { _ = try pipeline(named: name) }
     }
 
-    func pipeline(named name: String) throws -> MTLComputePipelineState {
+    func pipeline(named name: String, in shaderLibrary: ShaderLibrary = .videoColor) throws -> MTLComputePipelineState {
         lock.lock()
         defer { lock.unlock() }
-        if let cached = pipelines[name] { return cached }
-        let library = try loadLibrary()
+        let key = "\(shaderLibrary)/\(name)"
+        if let cached = pipelines[key] { return cached }
+        let library = try loadLibrary(shaderLibrary)
         guard let function = library.makeFunction(name: name) else { throw VideoColorError.missingFunction(name) }
         let pipeline = try device.makeComputePipelineState(function: function)
-        pipelines[name] = pipeline
+        pipelines[key] = pipeline
         return pipeline
     }
 
@@ -92,13 +107,13 @@ final class MetalPipelineCache: @unchecked Sendable {
         CVMetalTextureCacheFlush(textureCache, 0)
     }
 
-    private func loadLibrary() throws -> MTLLibrary {
-        if let library { return library }
+    private func loadLibrary(_ shaderLibrary: ShaderLibrary) throws -> MTLLibrary {
+        if let library = libraries[shaderLibrary] { return library }
         let options = MTLCompileOptions()
         options.languageVersion = .version2_4 // What Task 0 verified for OCIO's generated shaders too.
         do {
-            let compiled = try device.makeLibrary(source: MetalShaderSources.videoColor, options: options)
-            library = compiled
+            let compiled = try device.makeLibrary(source: shaderLibrary.source, options: options)
+            libraries[shaderLibrary] = compiled
             return compiled
         } catch {
             throw VideoColorError.shaderCompilationFailed(error.localizedDescription)

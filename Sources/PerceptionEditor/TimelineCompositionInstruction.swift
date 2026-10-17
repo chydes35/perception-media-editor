@@ -16,6 +16,9 @@ struct ClipRenderRecipe: Sendable {
     /// Source color: a LUT applied to the decoded code values (such as V-Log to V-709) before
     /// anything treats them as Rec. 709.
     var inputLUT: ResolvedLUT? = nil
+    /// Source color through OpenColorIO instead: the grade runs in scene-linear Rec. 709 between
+    /// the input transform and the ACES output transform. Takes the place of `inputLUT`.
+    var ocioInput: OCIOInputTransform? = nil
 }
 
 /// One stretch of the timeline: either a clip's recipe, or (with no recipe) black for a gap.

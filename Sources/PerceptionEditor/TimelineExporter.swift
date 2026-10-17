@@ -49,6 +49,7 @@ struct TimelineExportJob: Sendable {
     var audioAdjustmentsByClipID: [UUID: ClipAudioAdjustments] = [:]
     var sequenceFrameRate: FrameRate?
     var inputLUTsByAssetID: [UUID: ResolvedLUT] = [:]
+    var ocioInputsByAssetID: [UUID: OCIOInputTransform] = [:]
 }
 
 struct TimelineExportResult: Sendable {
@@ -130,7 +131,8 @@ actor TimelineExporter {
         let composed = await TimelineCompositionService.shared.makePlayerItem(
             clips: job.clips, media: job.media, adjustmentsByClipID: job.adjustmentsByClipID,
             audioAdjustmentsByClipID: job.audioAdjustmentsByClipID, quality: .export,
-            sequenceFrameRate: job.sequenceFrameRate, renderingPath: .compositor, inputLUTsByAssetID: job.inputLUTsByAssetID
+            sequenceFrameRate: job.sequenceFrameRate, renderingPath: .compositor, inputLUTsByAssetID: job.inputLUTsByAssetID,
+            ocioInputsByAssetID: job.ocioInputsByAssetID
         )
         guard let item = composed.playerItem else {
             throw TimelineExportError.nothingToExport(composed.warnings.first ?? "The timeline has no clips to export.")

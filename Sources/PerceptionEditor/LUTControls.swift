@@ -59,8 +59,8 @@ struct LUTControls: View {
     }
 }
 
-/// How a video's code values become picture color: as recorded, or through a LUT such as
-/// Panasonic's V-Log to V-709.
+/// How a video's code values become picture color: as recorded, through OpenColorIO's V-Log to
+/// ACES 2.0 Rec. 709, or through a LUT such as Panasonic's V-Log to V-709.
 struct SourceColorPicker: View {
     @EnvironmentObject private var store: EditorStore
     let asset: MediaAsset
@@ -79,6 +79,7 @@ struct SourceColorPicker: View {
                 Picker("Source color", selection: Binding(get: { current }, set: { store.setColorInput($0, forAssets: [asset.id]) })) {
                     Text("Automatic").tag(ColorInputTransform.automatic)
                     Text("As recorded").tag(ColorInputTransform.none)
+                    Text("V-Log → Rec. 709 (ACES 2.0)").tag(ColorInputTransform.aces)
                     ForEach(choices) { reference in
                         Text("LUT: \(reference.displayName)").tag(ColorInputTransform.lut(reference))
                     }
@@ -98,7 +99,12 @@ struct SourceColorPicker: View {
                     .font(.caption)
                     .foregroundStyle(.orange)
             } else if current == .automatic, asset.sourceColor?.isLog == true {
-                Text("Log footage shows as recorded (flat) until you choose a LUT.")
+                Text("V-Log is shown through ACES 2.0 (OpenColorIO). Choose As recorded for the flat log image.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else if current == .automatic, asset.sourceColor?.detectedFrom != .panasonicMetadata {
+                // Only the camera's own metadata rules out log; container tags do not (Lumix V-Log is tagged BT.709).
+                Text("Set source color if this is log footage.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

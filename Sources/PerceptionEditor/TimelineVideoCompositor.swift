@@ -52,6 +52,7 @@ final class VideoCompositingEngine: @unchecked Sendable {
         _ = shared
         _ = HSLColorKernel.isAvailable
         _ = LUTKernel.isAvailable
+        _ = OCIOColorKernels.shared
     }
     /// Set once the engine exists, so memory pressure can release its textures without creating it.
     nonisolated(unsafe) private static weak var created: VideoCompositingEngine?
@@ -120,7 +121,10 @@ final class VideoCompositingEngine: @unchecked Sendable {
             }
             let sourceWidth = CVPixelBufferGetWidth(source), sourceHeight = CVPixelBufferGetHeight(source)
             let needsFit = !(recipe.orientation.isIdentity && sourceWidth == renderWidth && sourceHeight == renderHeight)
-            let needsGrade = recipe.adjustments != .neutral || recipe.inputLUT != nil
+            // Without OCIO's shaders (they failed to compile) log footage shows as recorded; the
+            // composition has already warned.
+            let ocio = recipe.ocioInput.flatMap { _ in OCIOColorKernels.shared }
+            let needsGrade = ocio != nil || recipe.adjustments != .neutral || recipe.inputLUT != nil
 
             // Each stage writes the next stage's input; the last writes `final`.
             let decoded = (needsFit || needsGrade) ? temporary(sourceWidth, sourceHeight) : final
@@ -134,7 +138,19 @@ final class VideoCompositingEngine: @unchecked Sendable {
                     try kernels.fit(current, orientation: recipe.orientation, into: fitted, commandBuffer: commandBuffer)
                     current = fitted
                 }
-                if needsGrade {
+                if let ocio, let transform = recipe.ocioInput {
+                    if recipe.adjustments == .neutral {
+                        try ocio.toDisplay(current, from: transform, into: final, commandBuffer: commandBuffer)
+                    } else {
+                        // Grade in scene-linear Rec. 709, between OCIO's input and output transforms.
+                        let linear = temporary(renderWidth, renderHeight), graded = temporary(renderWidth, renderHeight)
+                        try ocio.toSceneLinear(current, from: transform, into: linear, commandBuffer: commandBuffer)
+                        guard grader.grade(linear, adjustments: recipe.adjustments, sceneLinear: true, into: graded, commandBuffer: commandBuffer) else {
+                            throw VideoColorError.textureCreationFailed(kCVReturnError)
+                        }
+                        try ocio.toDisplay(graded, into: final, commandBuffer: commandBuffer)
+                    }
+                } else if needsGrade {
                     guard grader.grade(current, adjustments: recipe.adjustments, inputLUT: recipe.inputLUT, into: final, commandBuffer: commandBuffer) else {
                         throw VideoColorError.textureCreationFailed(kCVReturnError)
                     }

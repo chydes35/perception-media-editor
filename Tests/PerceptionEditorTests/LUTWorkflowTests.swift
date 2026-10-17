@@ -91,4 +91,40 @@ struct LUTWorkflowTests {
         #expect(store.project.colorInputByAssetID[asset.id] == nil)
         store.proxyStore.cancelAll()
     }
+
+    /// Automatic sends detected V-Log through OCIO; ACES chosen by hand does so for any clip (log
+    /// whose metadata was lost); As recorded and LUTs do not.
+    @Test func ocioSourceColorFollowsTheChoiceAndTheDetection() throws {
+        let temp = try TempDirectory()
+        let store = try makeStore(temp)
+        func video(_ name: String, log: Bool) -> MediaAsset {
+            var asset = MediaAsset(url: temp.url.appendingPathComponent(name), kind: .video)
+            asset.sourceColor = SourceColorDescriptor(
+                bitDepth: 10, chroma: .yuv422, range: log ? .full : .video, matrix: .rec709,
+                transfer: log ? .vLog : .rec709, gamut: log ? .vGamut : .rec709, detectedFrom: .panasonicMetadata
+            )
+            return asset
+        }
+        let log = video("P1107158.MOV", log: true), flat = video("P1107159.MOV", log: true)
+        let rec709 = video("P1107172.MOV", log: false), untagged = video("P1107173.MOV", log: false)
+        let graded = video("P1107174.MOV", log: true)
+        store.project.media = [log, flat, rec709, untagged, graded]
+        store.setColorInput(.none, forAssets: [flat.id])
+        store.setColorInput(.aces, forAssets: [untagged.id])
+        store.setColorInput(.lut(LUTReference(contentHash: LUTLibrary.hash(Data("x".utf8)), displayName: "V709")), forAssets: [graded.id])
+        #expect(store.resolvedOCIOInputs() == [log.id: .vLogVGamut, untagged.id: .vLogVGamut])
+    }
+
+    @Test func theACESChoiceSurvivesSaveAndReopen() throws {
+        let temp = try TempDirectory()
+        let store = try makeStore(temp)
+        let video = MediaAsset(url: temp.url.appendingPathComponent("P1.MOV"), kind: .video)
+        store.project.media.append(video)
+        store.setColorInput(.aces, forAssets: [video.id])
+        let projectFile = try temp.subdirectory("Shoot").appendingPathComponent("Shoot.pmedit")
+        #expect(store.saveProject(to: projectFile))
+        let reopened = try makeStore(temp, library: "Other Library")
+        try reopened.loadProject(from: projectFile)
+        #expect(reopened.project.colorInput(for: video.id) == .aces)
+    }
 }

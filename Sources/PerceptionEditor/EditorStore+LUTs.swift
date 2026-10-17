@@ -105,6 +105,18 @@ extension EditorStore {
         return (resolved, warnings.sorted())
     }
 
+    /// Media shown through OpenColorIO: chosen as ACES, or left on Automatic and detected as V-Log.
+    /// (ACES chosen by hand covers V-Log whose camera metadata was lost.)
+    func resolvedOCIOInputs() -> [UUID: OCIOInputTransform] {
+        project.media.reduce(into: [:]) { result, asset in
+            switch project.colorInput(for: asset.id) {
+            case .aces: result[asset.id] = .vLogVGamut
+            case .automatic where asset.sourceColor?.isLog == true: result[asset.id] = .vLogVGamut
+            default: break
+            }
+        }
+    }
+
     /// Copies the project's LUTs into a `LUTs` folder next to the saved project. Best effort: a
     /// failure leaves the project saved and says so.
     func copyReferencedLUTs(nextTo projectFile: URL) {

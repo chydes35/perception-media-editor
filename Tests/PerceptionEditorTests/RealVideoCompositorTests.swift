@@ -78,13 +78,15 @@ struct RealVideoCompositorTests {
         let only = ProcessInfo.processInfo.environment["PME_COMPOSITOR_CASE"]
         // PME_VLOG_LUT adds cases with Panasonic's V-Log to V-709 as the source color.
         let vLogLUT = try ProcessInfo.processInfo.environment["PME_VLOG_LUT"].map { ResolvedLUT(hash: "throughput", lut: try CubeLUT(contentsOf: URL(fileURLWithPath: $0))) }
-        func run(_ title: String, quality: MediaQuality, format: OSType, adjustments: PhotoAdjustments, proxy: URL? = nil, inputLUT: ResolvedLUT? = nil) async throws {
+        func run(_ title: String, quality: MediaQuality, format: OSType, adjustments: PhotoAdjustments, proxy: URL? = nil, inputLUT: ResolvedLUT? = nil, ocio: Bool = false) async throws {
             if let only, !title.contains(only) { return }
             let result = await service.makePlayerItem(
                 clips: [clip], media: [asset], adjustmentsByClipID: [clip.id: adjustments], quality: quality,
                 proxyURLsByAssetID: proxy.map { [asset.id: $0] } ?? [:], renderingPath: .compositor,
-                inputLUTsByAssetID: inputLUT.map { [asset.id: $0] } ?? [:]
+                inputLUTsByAssetID: inputLUT.map { [asset.id: $0] } ?? [:],
+                ocioInputsByAssetID: ocio ? [asset.id: .vLogVGamut] : [:]
             )
+            #expect(result.warnings.isEmpty, "\(title): \(result.warnings)")
             let m = try await measure(try #require(result.playerItem), pixelFormat: format, frames: frames)
             print("COMPOSITOR \(title): \(m.count) frames, \(String(format: "%.1f", m.fps)) fps, app footprint \(String(format: "%.0f", m.baselineMB)) -> peak \(String(format: "%.0f", m.peakMB)) MB")
             #expect(m.count == frames, "\(title) produced \(m.count) of \(frames) frames")
@@ -100,9 +102,14 @@ struct RealVideoCompositorTests {
             try await run("4K original, V-Log LUT, preview", quality: .preview, format: kCVPixelFormatType_64RGBAHalf, adjustments: .neutral, inputLUT: vLogLUT)
             try await run("4K original, V-Log LUT, export", quality: .export, format: kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange, adjustments: .neutral, inputLUT: vLogLUT)
         }
+        // OpenColorIO's V-Log to ACES 2.0 Rec. 709; graded clips go through Core Image in scene-linear between.
+        try await run("4K original, ACES, preview", quality: .preview, format: kCVPixelFormatType_64RGBAHalf, adjustments: .neutral, ocio: true)
+        try await run("4K original, ACES graded, preview", quality: .preview, format: kCVPixelFormatType_64RGBAHalf, adjustments: graded, ocio: true)
+        try await run("4K original, ACES, export", quality: .export, format: kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange, adjustments: .neutral, ocio: true)
         // A 1080p ProRes proxy, graded, as timeline playback with proxies uses it.
         let proxy = try await ProxyGenerator.generate(source: trimmed, destination: temp.url.appendingPathComponent("proxy.mov")).url
         try await run("1080p proxy, graded, preview", quality: .preview, format: kCVPixelFormatType_64RGBAHalf, adjustments: graded, proxy: proxy)
         try await run("1080p proxy, neutral, preview", quality: .preview, format: kCVPixelFormatType_64RGBAHalf, adjustments: .neutral, proxy: proxy)
+        try await run("1080p proxy, ACES graded, preview", quality: .preview, format: kCVPixelFormatType_64RGBAHalf, adjustments: graded, proxy: proxy, ocio: true)
     }
 }

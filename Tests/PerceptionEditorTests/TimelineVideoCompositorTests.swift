@@ -289,6 +289,65 @@ struct TimelineVideoCompositorTests {
         #expect(worst <= 1.0 / 1023, "The input LUT departs from the reference by \(worst * 1023) of 1023 levels")
     }
 
+    /// OCIO source color through the compositor equals the OCIO kernel run on the decoded frame:
+    /// the compositor feeds it code values (not Core Image's linearized ones) and nothing else.
+    @Test func ocioSourceColorRunsTheACESTransformsOnTheCodeValues() async throws {
+        let temp = try TempDirectory()
+        guard let asset = try await fullRangeAsset(temp) else { Issue.record("No full-range 10-bit HEVC encoder"); return }
+        let clip = TimelineClip(assetID: asset.id, durationFrames: 6)
+        let result = await service.makePlayerItem(
+            clips: [clip], media: [asset], quality: .preview, renderingPath: .automatic, ocioInputsByAssetID: [asset.id: .vLogVGamut]
+        )
+        #expect(result.warnings.isEmpty, "\(result.warnings)")
+        let item = try #require(result.playerItem)
+        let output = halfPixels(try #require(try await allFrames(item, pixelFormat: kCVPixelFormatType_64RGBAHalf).first), row: 0)
+        let decoded = try await referenceRow(decoding: try await sourceFirstFrame(asset.url))
+        let expected = try await ocioRow(decoded) { kernels, input, output, commandBuffer in
+            try kernels.toDisplay(input, from: .vLogVGamut, into: output, commandBuffer: commandBuffer)
+        }
+        let worst = zip(output, expected).map { simd_abs($0 - $1).max() }.max() ?? .infinity
+        #expect(worst == 0, "The compositor's OCIO output departs from the kernel's by \(worst)")
+        // And it is no longer the flat log image: V-Log 0.5 is well above Rec. 709 0.5 after the view.
+        #expect(output != decoded)
+    }
+
+    /// The grade runs in scene-linear light between OCIO's transforms: +1 EV doubles the linear
+    /// values before the ACES view, exactly what Core Image's exposure filter does in linear.
+    @Test func ocioClipsAreGradedInSceneLinear() async throws {
+        let temp = try TempDirectory()
+        guard let asset = try await fullRangeAsset(temp) else { Issue.record("No full-range 10-bit HEVC encoder"); return }
+        let clip = TimelineClip(assetID: asset.id, durationFrames: 6)
+        let result = await service.makePlayerItem(
+            clips: [clip], media: [asset], adjustmentsByClipID: [clip.id: PhotoAdjustments(exposure: 1)], quality: .preview,
+            renderingPath: .automatic, ocioInputsByAssetID: [asset.id: .vLogVGamut]
+        )
+        let item = try #require(result.playerItem)
+        let output = halfPixels(try #require(try await allFrames(item, pixelFormat: kCVPixelFormatType_64RGBAHalf).first), row: 0)
+        let decoded = try await referenceRow(decoding: try await sourceFirstFrame(asset.url))
+        let linear = try await ocioRow(decoded) { kernels, input, output, commandBuffer in
+            try kernels.toSceneLinear(input, from: .vLogVGamut, into: output, commandBuffer: commandBuffer)
+        }
+        let expected = try await ocioRow(linear.map { $0 * 2 }) { kernels, input, output, commandBuffer in
+            try kernels.toDisplay(input, into: output, commandBuffer: commandBuffer)
+        }
+        let worst = zip(output, expected).map { simd_abs($0 - $1).max() }.max() ?? .infinity
+        print("OCIO + exposure +1 EV in the compositor: worst \(worst * 1023) of 1023")
+        #expect(worst <= 2.0 / 1023, "Grading is not in scene-linear light: off by \(worst * 1023) of 1023")
+    }
+
+    /// One row of pixels through an OCIO kernel, as a 1-pixel-high frame.
+    private func ocioRow(
+        _ pixels: [SIMD3<Float>],
+        _ body: @escaping @Sendable (OCIOColorKernels, MTLTexture, MTLTexture, MTLCommandBuffer) throws -> Void
+    ) async throws -> [SIMD3<Float>] {
+        let rows = pixels.map { [$0.x, $0.y, $0.z] }
+        let out = try await offMain {
+            let kernels = try #require(OCIOColorKernels.shared)
+            return try OCIOShaderTests.run(rows, kernels: kernels) { try body(kernels, $0, $1, $2) }
+        }
+        return out.map { SIMD3($0[0], $0[1], $0[2]) }
+    }
+
     // MARK: Look
 
     /// Every stage of the color chain except HSL, against the old CIFilter handler: the pipeline

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task by task. Steps use checkbox (`- [ ]`) syntax for tracking. Task 0 is a measurement spike whose results can change Tasks 3–4. Do not skip it.
 
-Status: active (Tasks 0–8 done 2026-10-16 (G5 visual part, LUT, scope and export UI walkthroughs, and G9's black level open; G1 and G7 FAIL on the M1); see the [compositor](../../docs/decisions/2026-10-16-10bit-compositor.md) and [timing](../../docs/decisions/2026-10-16-frame-exact-timing.md) decision records. Task 9 next. Task 13, Apple Log, is blocked on a real iPhone 15 Pro clip)
+Status: active (Tasks 0–9 done 2026-10-16 (G5 visual part, LUT, scope, export and source-color UI walkthroughs, G8, and G9's black level open; G1 and G7 FAIL on the M1; G4 PASS); see the [compositor](../../docs/decisions/2026-10-16-10bit-compositor.md) and [timing](../../docs/decisions/2026-10-16-frame-exact-timing.md) decision records. Task 10 next. Task 13, Apple Log, is blocked on a real iPhone 15 Pro clip)
 Roadmap sources: [V0.2 — LUT import and intensity control](../../docs/ROADMAP.md), [V0.3 — 1080p and 4K export](../../docs/ROADMAP.md). The 10-bit compositor, frame-exact timing, OCIO and scopes are new V0.3 work and must be added to the roadmap (Task 12).
 Builds on: [video-proxy-pipeline.md](video-proxy-pipeline.md) (branch `feat/video-proxies`: `MediaQuality`, proxy-aware `TimelineCompositionService`)
 Owner: video engine
@@ -105,6 +105,7 @@ Below, `run-tests <Suite>` means that command. Fixing `scripts/test.sh` to detec
 | `PME_IPHONE_HLG` | iPhone 15 Pro ProRes with Log off (HLG) (optional) | Telling HLG and Apple Log apart |
 | `PME_APPLELOG_LUT` | the user's downloaded Apple Log → Rec.709 `.cube` from Apple | Apple Log LUT gate |
 | `PME_VIDEO_OUTPUT_DIR` | disposable directory outside `110_PANA` | Exports and reference frames |
+| `PME_OCIO_PYTHON` | the venv python with `scripts/ocio/requirements.txt` installed | G4 reference values (`RealVideoOCIOTests`) |
 
 ---
 
@@ -298,16 +299,16 @@ Root cause: the 48³ trilinear cube interpolates a function with a hue discontin
 
 ### Task 9: OpenColorIO, Phase B1 — generated MSL shaders
 
-- [ ] `scripts/ocio/generate-shaders.py` runs in an isolated venv in the scratchpad (`python3 -I`, `pip install -r scripts/ocio/requirements.txt --require-hashes`, `opencolorio==2.5.2` and `numpy`, which `Texture.getValues()` needs). For each transform it builds a `GpuShaderDesc` with `language=GPU_LANGUAGE_MSL_2_0`, a unique `functionName`/`resourcePrefix`, and `getShaderText()`. It writes `Sources/PerceptionEditor/OCIOGeneratedShaders.swift` (string constants plus a header recording the OCIO version, config name and script hash). Any 1D/3D LUT textures go to `Resources/OCIO/<prefix>_<name>.bin` as half floats, with a JSON manifest. It also writes **golden data**: 4 096 seeded inputs and outputs from `processor.getDefaultCPUProcessor()`, into `Tests/PerceptionEditorTests/Fixtures/ocio-golden.json`.
-- [ ] Transforms (from the built-in `ocio://studio-config-latest`, recording the resolved version):
+- [x] `scripts/ocio/generate-shaders.py` runs in an isolated venv in the scratchpad (`python3 -I`, `pip install -r scripts/ocio/requirements.txt --require-hashes`, `opencolorio==2.5.2` and `numpy`, which `Texture.getValues()` needs). For each transform it builds a `GpuShaderDesc` with `language=GPU_LANGUAGE_MSL_2_0`, a unique `functionName`/`resourcePrefix`, and `getShaderText()`. It writes `Sources/PerceptionEditor/OCIOGeneratedShaders.swift` (string constants plus a header recording the OCIO version, config name and script hash). Any 1D/3D LUT textures go to `Resources/OCIO/<prefix>_<name>.bin` as half floats, with a JSON manifest. It also writes **golden data**: 4 096 seeded inputs and outputs from `processor.getDefaultCPUProcessor()`, into `Tests/PerceptionEditorTests/Fixtures/ocio-golden.json`.
+- [x] Transforms (from the built-in `ocio://studio-config-latest`, recording the resolved version):
   1. `vlog_vgamut_to_lin_rec709`: built-in `PANASONIC_VLOG-VGAMUT_to_ACES2065-1`, then ACES2065-1 → linear Rec.709. Unclamped. Feeds Core Image.
   2. `lin_rec709_to_rec1886_aces20`: `DisplayViewTransform` from `Linear Rec.709 (sRGB)` to display `Rec.1886 Rec.709 - Display`, view `ACES 2.0 - SDR 100 nits (Rec.709)`. Task 0 found that the 2.5 studio config (`studio-config-v4.0.0_aces-v2.0_ocio-v2.5`) has no ACES 1.3 view. This transform needs the two `texture1d` tables (`reach_m_table_0`, 363 entries, red channel; `gamut_cusp_table_0`, 363 entries, RGB). Upload the RGB table as `rgba32Float`.
   3. Optional: ACES 1.3 SDR from `ocio://studio-config-v2.2.0_aces-v1.3_ocio-v2.4 (the newest ACES 1.3 built-in config in 2.5.2)`, if the owner prefers the older look (G8).
-- [ ] Runtime: `MetalPipelineCache` concatenates the OCIO function text with our kernel wrapper and binds textures by the manifest. The compositor runs steps 3 and 5 for `ColorInputTransform.aces`.
-- [ ] Shader regeneration is a manual, documented step. CI checks that the generated file's recorded script hash matches the script, so generator edits cannot drift silently.
-- [ ] Licensing: add `Resources/ThirdPartyNotices/OpenColorIO-BSD-3.txt` and mention it in the About window or the existing notices location.
-- [ ] Tests (`OCIOShaderTests`): each GPU transform matches the golden CPU outputs within 1e-3 absolute (half float) in the 0…1 encoded range and 0.2% relative above it. An independent Swift Double V-Log oracle (`10^((x−d)/c) − b`, with OCIO's linear segment below the break) plus the V-Gamut→Rec.709 Bradford matrix agree with transform 1 within 1e-4. The integration test asserts that 18% grey (code 433/1023) through transform 1 gives linear about 0.18.
-- [ ] Real gate **G4**.
+- [x] Runtime: `MetalPipelineCache` concatenates the OCIO function text with our kernel wrapper and binds textures by the manifest. The compositor runs steps 3 and 5 for `ColorInputTransform.aces`.
+- [x] Shader regeneration is a manual, documented step. CI checks that the generated file's recorded script hash matches the script, so generator edits cannot drift silently.
+- [x] Licensing: add `Resources/ThirdPartyNotices/OpenColorIO-BSD-3.txt` and mention it in the About window or the existing notices location.
+- [x] Tests (`OCIOShaderTests`): each GPU transform matches the golden CPU outputs within 1e-3 absolute (half float) in the 0…1 encoded range and 0.2% relative above it. An independent Swift Double V-Log oracle (`10^((x−d)/c) − b`, with OCIO's linear segment below the break) plus the V-Gamut→Rec.709 Bradford matrix agree with transform 1 within 1e-4. The integration test asserts that 18% grey (code 433/1023) through transform 1 gives linear about 0.18.
+- [x] Real gate **G4**: PASS (0.49 of the limit on 6 912 real pixels). Done 2026-10-16 with deviations (tables as float literals in the generated Swift, golden data in `Tests/Fixtures/`, no ACES 1.3 transform, Automatic = ACES for detected V-Log) and a speed finding (the ACES 2.0 output costs about 15 ms per 4K frame on the M1); see the [compositor decision record](../../docs/decisions/2026-10-16-10bit-compositor.md).
 
 ### Task 10: OpenColorIO, Phase B2 — runtime library (decision only, deferred)
 

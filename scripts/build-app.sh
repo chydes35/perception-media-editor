@@ -26,6 +26,7 @@ cp "$ROOT_DIR/Resources/AppIcon.icns" "$APP_BUNDLE/Contents/Resources/AppIcon.ic
 mkdir -p "$APP_BUNDLE/Contents/Resources/Models"
 cp -R "$MODEL_DIR/SkySegmentation.mlmodelc" "$APP_BUNDLE/Contents/Resources/Models/"
 cp -R "$ROOT_DIR/Resources/ModelNotices" "$APP_BUNDLE/Contents/Resources/"
+cp -R "$ROOT_DIR/Resources/ThirdPartyNotices" "$APP_BUNDLE/Contents/Resources/"
 codesign --force --deep --sign - "$APP_BUNDLE"
 
 echo "Built $APP_BUNDLE"

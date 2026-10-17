@@ -111,7 +111,8 @@ final class TimelineCompositionService {
         sequenceFrameRate: FrameRate? = nil,
         renderingPath: TimelineRenderingPath = .automatic,
         statisticsKey: UUID? = nil,
-        inputLUTsByAssetID: [UUID: ResolvedLUT] = [:]
+        inputLUTsByAssetID: [UUID: ResolvedLUT] = [:],
+        ocioInputsByAssetID: [UUID: OCIOInputTransform] = [:]
     ) async -> TimelineCompositionResult {
         let sequenceRate = sequenceFrameRate ?? clips.first?.frameRate ?? .ntsc23976
         let composition = AVMutableComposition()
@@ -236,7 +237,8 @@ final class TimelineCompositionService {
                     adjustments: adjustmentsByClipID[clip.id] ?? .neutral,
                     orientation: SourceOrientation(preferredTransform: transform, sourceSize: naturalSize),
                     matrix: mediaAsset.sourceColor?.matrix ?? .rec709,
-                    inputLUT: inputLUTsByAssetID[mediaAsset.id]
+                    inputLUT: inputLUTsByAssetID[mediaAsset.id],
+                    ocioInput: ocioInputsByAssetID[mediaAsset.id]
                 ),
                 transform: transform,
                 usesProxy: sources.usesProxy,
@@ -325,7 +327,7 @@ final class TimelineCompositionService {
         guard let first = segments.first else { return }
         let proxied = segments.first(where: \.usesProxy)
         let needsCompositor = renderingPath == .compositor || segments.contains {
-            $0.usesProxy || $0.isLog || $0.recipe.inputLUT != nil || $0.recipe.adjustments != .neutral
+            $0.usesProxy || $0.isLog || $0.recipe.inputLUT != nil || $0.recipe.ocioInput != nil || $0.recipe.adjustments != .neutral
                 || $0.recipe.orientation != first.recipe.orientation
         }
         guard needsCompositor else {
@@ -336,6 +338,11 @@ final class TimelineCompositionService {
             warnings.append("The GPU is unavailable, so clip color and proxies cannot be previewed.")
             track.preferredTransform = first.transform
             return
+        }
+        // Compiles OCIO's shaders on first use; this runs off the main actor.
+        if segments.contains(where: { $0.recipe.ocioInput != nil }), OCIOColorKernels.shared == nil {
+            let reason = OCIOColorKernels.loadError?.localizedDescription ?? "unknown error"
+            warnings.append("The OpenColorIO shaders are unavailable (\(reason)), so V-Log clips show as recorded.")
         }
 
         // Proxies are smaller than their originals, so a timeline with one renders at the proxy's size.

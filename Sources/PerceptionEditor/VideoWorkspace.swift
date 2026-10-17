@@ -522,6 +522,8 @@ private struct EditorTimelineView: View {
             }
             .disabled(store.selectedTimelineClip == nil)
             .help("Ripple delete selected clip")
+            Divider().frame(height: 16)
+            TimelineExportControls()
         }
         .buttonStyle(.borderless)
         .padding(.horizontal, 12)
@@ -731,5 +733,44 @@ private struct ProxyBadge: View {
             .padding(.vertical, 3)
             .background(.black.opacity(0.72), in: Capsule())
             .foregroundStyle(tint)
+    }
+}
+
+/// Export settings and progress in the timeline toolbar.
+private struct TimelineExportControls: View {
+    @EnvironmentObject private var store: EditorStore
+
+    var body: some View {
+        if store.timelineExport.isRunning {
+            HStack(spacing: 6) {
+                ProgressView(value: store.timelineExport.fraction)
+                    .frame(width: 90)
+                Text("\(Int(store.timelineExport.fraction * 100))%")
+                    .font(.system(size: 10, design: .monospaced))
+                Button("Cancel Export", systemImage: "xmark.circle.fill") { store.cancelTimelineExport() }
+                    .labelStyle(.iconOnly)
+                    .help("Stop the export; nothing is left behind")
+            }
+        } else {
+            Menu {
+                Picker("Format", selection: $store.timelineExportSettings.preset) {
+                    ForEach(TimelineExportPreset.allCases) { Text($0.rawValue).tag($0) }
+                }
+                Picker("Size", selection: $store.timelineExportSettings.size) {
+                    ForEach(TimelineExportSize.allCases) { Text($0.rawValue).tag($0) }
+                }
+                Divider()
+                Button("Export Timeline…") { store.chooseTimelineExportDestination() }
+                if case .finished(let url) = store.timelineExport.phase {
+                    Button("Show Last Export in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+                }
+            } label: {
+                Label("Export", systemImage: "square.and.arrow.up")
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .disabled(store.project.timelineClips.isEmpty || store.isExporting)
+            .help("Export the timeline from the camera originals: 10-bit ProRes 422 HQ or HEVC Main10, Rec. 709")
+        }
     }
 }

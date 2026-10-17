@@ -34,6 +34,17 @@ Lumix S5 `P1107157.MOV`, a 10 s UHD V-Log passthrough trim, `RealVideoCompositor
 
 The grade is the heavy test chain (exposure, contrast, highlights, shadows, temperature, tint, vibrance, saturation, curves, HSL, sharpness, vignette). It costs about 20–30 ms per 4K frame, so graded 4K originals sit at or below real time; playback should use proxies. Graded 4K adds about 770–860 MB over idle, above G7's 600 MB export budget; the likely cause is Core Image's half-float intermediates at 4K. The decoder process (`VTDecoderXPCService`, about 250 MB) is not included. Both are open work for Tasks 5 and 11.
 
+## Timeline export (branch `plan/10bit-vlog-color`)
+
+`RealVideoExportTests.uhdExportThroughput` under `scripts/profile-video.sh`: 60 s (1 439 frames) of `P1107157` UHD V-Log, Panasonic's V-Log to V-709 LUT, exported at UHD, release build, 8 GB M1. Memory is the test process plus `VTDecoderXPCService`, sampled twice a second.
+
+| Format | Speed (G1 target 38 fps) | Size | Peak over idle (G7 limit 600 MB) |
+|---|---|---|---|
+| ProRes 422 HQ | 8.8 fps (software encoder: the M1 has no ProRes engine) | 5.13 GB | about 1 500 MB (app 1 003, decoder 539) |
+| HEVC Main10 | 34.4 fps (hardware encoder) | 363 MB | about 1 500 MB (app 994, decoder 535) |
+
+Both gates FAIL on this Mac. The memory overrun is open work for Task 11.
+
 ## Scopes (branch `plan/10bit-vlog-color`)
 
 Gate G9, `RealVideoScopeTests` with `PME_VLOG_SHORT=P1107158.MOV`, release, 8 GB M1, frames pulled at 24 fps through the compositor. Target: at least 10 updates a second, at most 2 ms GPU per update at 1080p.

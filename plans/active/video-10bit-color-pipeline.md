@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task by task. Steps use checkbox (`- [ ]`) syntax for tracking. Task 0 is a measurement spike whose results can change Tasks 3–4. Do not skip it.
 
-Status: active (Tasks 0–7 done 2026-10-16 (G5 visual part, LUT and scope UI walkthroughs, and G9's black level open); see the [compositor](../../docs/decisions/2026-10-16-10bit-compositor.md) and [timing](../../docs/decisions/2026-10-16-frame-exact-timing.md) decision records. Task 8 next. Task 13, Apple Log, is blocked on a real iPhone 15 Pro clip)
+Status: active (Tasks 0–8 done 2026-10-16 (G5 visual part, LUT, scope and export UI walkthroughs, and G9's black level open; G1 and G7 FAIL on the M1); see the [compositor](../../docs/decisions/2026-10-16-10bit-compositor.md) and [timing](../../docs/decisions/2026-10-16-frame-exact-timing.md) decision records. Task 9 next. Task 13, Apple Log, is blocked on a real iPhone 15 Pro clip)
 Roadmap sources: [V0.2 — LUT import and intensity control](../../docs/ROADMAP.md), [V0.3 — 1080p and 4K export](../../docs/ROADMAP.md). The 10-bit compositor, frame-exact timing, OCIO and scopes are new V0.3 work and must be added to the roadmap (Task 12).
 Builds on: [video-proxy-pipeline.md](video-proxy-pipeline.md) (branch `feat/video-proxies`: `MediaQuality`, proxy-aware `TimelineCompositionService`)
 Owner: video engine
@@ -291,10 +291,10 @@ Root cause: the 48³ trilinear cube interpolates a function with a hue discontin
 
 ### Task 8: 10-bit timeline export
 
-- [ ] `TimelineExporter` (an actor): `makePlayerItem(… quality: .export)` builds the composition. Frames flow through `AVAssetReaderVideoCompositionOutput` (the same compositor and instructions, `x422` output) into `AVAssetWriter`. Presets: **ProRes 422 HQ** (`.proRes422HQ`) and **HEVC Main10** (`.hevc`, `AVVideoProfileLevelKey: kVTProfileLevel_HEVC_Main10_AutoLevel`). Both are tagged Rec.709, with sizes UHD and 1080p. Audio is passed through as AAC or LPCM from the composition's audio mix.
-- [ ] Safety: write to `<name>.partial.mov` in the chosen folder and publish atomically with the existing `ExportFileSafety` patterns. Never use a source path as output. Use a disk guard like the proxy store's. Show progress and support cancel. Only one export runs at a time, and proxy generation pauses while exporting.
-- [ ] Tests (`TimelineExporterTests`): exporting the frame-numbered fixture keeps frame k as source k. Frame count = Σ durationFrames. The ProRes output is 10-bit (`kCVPixelFormatType_422YpCbCr10` readback) and its distinct-level count on the ramp fixture is ≥ 1 000. Cancel leaves no `.partial.mov`. Export never opens proxies, even when proxy URLs are passed.
-- [ ] Real gates **G1**, **G6** and **G7**.
+- [x] `TimelineExporter` (an actor): `makePlayerItem(… quality: .export)` builds the composition. Frames flow through `AVAssetReaderVideoCompositionOutput` (the same compositor and instructions, `x422` output) into `AVAssetWriter`. Presets: **ProRes 422 HQ** (`.proRes422HQ`) and **HEVC Main10** (`.hevc`, `AVVideoProfileLevelKey: kVTProfileLevel_HEVC_Main10_AutoLevel`). Both are tagged Rec.709, with sizes UHD and 1080p. Audio is passed through as AAC or LPCM from the composition's audio mix.
+- [x] Safety: write to `<name>.partial.mov` in the chosen folder and publish atomically with the existing `ExportFileSafety` patterns. Never use a source path as output. Use a disk guard like the proxy store's. Show progress and support cancel. Only one export runs at a time, and proxy generation pauses while exporting.
+- [x] Tests (`TimelineExporterTests`): exporting the frame-numbered fixture keeps frame k as source k. Frame count = Σ durationFrames. The ProRes output is 10-bit (`kCVPixelFormatType_422YpCbCr10` readback) and its distinct-level count on the ramp fixture is ≥ 1 000. Cancel leaves no `.partial.mov`. Export never opens proxies, even when proxy URLs are passed.
+- [ ] Real gates **G1**, **G6** and **G7**: G6 PASS through export; G1 FAIL (ProRes 8.8 fps in software on the M1, HEVC Main10 34.4 fps) and G7 FAIL (about 1.5 GB over idle); see the [compositor decision record](../../docs/decisions/2026-10-16-10bit-compositor.md). The ≥ 1 000-level test was impossible in video range (877 codes); it asks for ≥ 860.
 
 ### Task 9: OpenColorIO, Phase B1 — generated MSL shaders
 

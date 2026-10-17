@@ -33,6 +33,10 @@ final class ProxyStore: ObservableObject {
     /// Jobs currently executing (test observability for the one-job-at-a-time rule).
     private(set) var activeJobs = 0
     private(set) var peakActiveJobs = 0
+    /// While paused (during a timeline export) nothing is generated; the job that was running goes
+    /// back to the front of the queue and starts over on resume.
+    private(set) var isPaused = false
+    private var currentAsset: MediaAsset?
 
     init(
         directory: URL = ProxyStore.defaultDirectory(),
@@ -110,6 +114,25 @@ final class ProxyStore: ObservableObject {
         statuses = statuses.filter { assetIDs.contains($0.key) }
     }
 
+    func pause() {
+        guard !isPaused else { return }
+        isPaused = true
+        if let current, let asset = currentAsset, current.assetID == asset.id {
+            current.job.cancel()
+            self.current = nil
+            queue.insert(asset, at: 0)
+            statuses[asset.id] = .queued
+        }
+        worker?.cancel()
+        worker = nil
+    }
+
+    func resume() {
+        guard isPaused else { return }
+        isPaused = false
+        startWorkerIfNeeded()
+    }
+
     func cancelAll() {
         worker?.cancel()
         worker = nil
@@ -137,13 +160,13 @@ final class ProxyStore: ObservableObject {
     }
 
     private func startWorkerIfNeeded() {
-        guard worker == nil, !queue.isEmpty else { return }
+        guard worker == nil, !isPaused, !queue.isEmpty else { return }
         let token = UUID()
         workerToken = token
         let prior = tail
         let newWorker = Task { [weak self] in
             await prior?.value
-            while let self, !Task.isCancelled, !self.queue.isEmpty {
+            while let self, !Task.isCancelled, !self.isPaused, !self.queue.isEmpty {
                 let asset = self.queue.removeFirst()
                 await self.process(asset)
             }
@@ -187,6 +210,7 @@ final class ProxyStore: ObservableObject {
             return try await ProxyGenerator.generate(source: asset.url, destination: destination, maximumSize: maximumSize, progress: report).url
         }
         current = (assetID, jobToken, job)
+        currentAsset = asset
         activeJobs += 1
         peakActiveJobs = max(peakActiveJobs, activeJobs)
 

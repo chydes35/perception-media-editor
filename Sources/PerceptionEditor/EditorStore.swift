@@ -139,6 +139,10 @@ final class EditorStore: ObservableObject {
     @Published var projectSaveError: String?
     @Published private(set) var isEditingCrop = false
     @Published var isExporting = false
+    @Published var timelineExportSettings = TimelineExportSettings()
+    @Published var timelineExport = TimelineExportState()
+    var timelineExportTask: Task<Void, Never>?
+    let timelineExporter: TimelineExporter
     @Published var batchExportState = BatchExportState()
     var batchExportTask: Task<Void, Never>?
     let batchPhotoExporter: BatchPhotoExporter?
@@ -199,9 +203,11 @@ final class EditorStore: ObservableObject {
             -> (RenderedImage?, PhotoPreviewResult?))? = nil,
         proxyStore: ProxyStore = ProxyStore(),
         proxyDefaults: UserDefaults = TestIsolation.isRunningTests ? TestIsolation.defaults : .standard,
-        lutLibrary: LUTLibrary = LUTLibrary()
+        lutLibrary: LUTLibrary = LUTLibrary(),
+        timelineExporter: TimelineExporter = .shared
     ) {
         self.proxyStore = proxyStore
+        self.timelineExporter = timelineExporter
         self.lutLibrary = lutLibrary
         availableLUTs = lutLibrary.references()
         // Shader compilation would otherwise happen on the main actor the first time video plays.
@@ -801,6 +807,7 @@ final class EditorStore: ObservableObject {
     func resetToEmptyProject(named name: String) {
         invalidateIngest()
         invalidateBatchExport()
+        invalidateTimelineExport()
         projectGeneration = UUID()
         proxyStore.cancelAll()
         proxyStore.retainOnly([])
@@ -871,6 +878,7 @@ final class EditorStore: ObservableObject {
         let loaded = try document.load(from: url)
         invalidateIngest()
         invalidateBatchExport()
+        invalidateTimelineExport()
         projectGeneration = UUID()
         proxyStore.cancelAll()
         proxyStore.retainOnly(Set(loaded.media.map(\.id)))

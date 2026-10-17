@@ -201,6 +201,101 @@ func writeFullRangeTestMovie(to url: URL, frames: Int = 6, width: Int = 640, hei
     return nil
 }
 
+/// Writes a video-range 10-bit ProRes 422 HQ movie like an iPhone's Apple Log files: luma ramps 64...940
+/// across the width, chroma ramps 128...896 down the height, BT.2020 tags and the Apple Log key on
+/// every buffer (AVFoundation copies it to the format description when the writer allows it).
+func writeVideoRangeLogTestMovie(to url: URL, frames: Int = 6, width: Int = 640, height: Int = 360) async throws -> URL {
+    try? FileManager.default.removeItem(at: url)
+    let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+    let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
+        AVVideoCodecKey: AVVideoCodecType.proRes422HQ,
+        AVVideoWidthKey: width,
+        AVVideoHeightKey: height
+    ])
+    input.expectsMediaDataInRealTime = false
+    let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [
+        kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange,
+        kCVPixelBufferWidthKey as String: width,
+        kCVPixelBufferHeightKey as String: height
+    ])
+    writer.add(input)
+    try #require(writer.startWriting())
+    writer.startSession(atSourceTime: .zero)
+    for index in 0 ..< frames {
+        while !input.isReadyForMoreMediaData { try await Task.sleep(for: .milliseconds(1)) }
+        var created: CVPixelBuffer?
+        let pool = try #require(adaptor.pixelBufferPool)
+        try #require(CVPixelBufferPoolCreatePixelBuffer(nil, pool, &created) == kCVReturnSuccess)
+        let buffer = try #require(created)
+        fillVideoRangeRamp(buffer)
+        CVBufferSetAttachment(buffer, kCVImageBufferColorPrimariesKey, kCVImageBufferColorPrimaries_ITU_R_2020, .shouldPropagate)
+        CVBufferSetAttachment(buffer, kCVImageBufferTransferFunctionKey, kCVImageBufferTransferFunction_ITU_R_2020, .shouldPropagate)
+        CVBufferSetAttachment(buffer, kCVImageBufferYCbCrMatrixKey, kCVImageBufferYCbCrMatrix_ITU_R_2020, .shouldPropagate)
+        CVBufferSetAttachment(buffer, kCVImageBufferLogTransferFunctionKey, kCVImageBufferLogTransferFunction_AppleLog, .shouldPropagate)
+        try #require(adaptor.append(buffer, withPresentationTime: CMTime(value: CMTimeValue(index), timescale: 24)))
+    }
+    input.markAsFinished()
+    await writer.finishWriting()
+    try #require(writer.status == .completed, "\(String(describing: writer.error))")
+    return url
+}
+
+private func fillVideoRangeRamp(_ buffer: CVPixelBuffer) {
+    CVPixelBufferLockBaseAddress(buffer, [])
+    defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
+    let width = CVPixelBufferGetWidth(buffer)
+    for plane in 0 ..< 2 {
+        let base = CVPixelBufferGetBaseAddressOfPlane(buffer, plane)!
+        let stride = CVPixelBufferGetBytesPerRowOfPlane(buffer, plane)
+        let rows = CVPixelBufferGetHeightOfPlane(buffer, plane)
+        let samples = plane == 0 ? width : CVPixelBufferGetWidthOfPlane(buffer, plane) * 2
+        for y in 0 ..< rows {
+            let row = base.advanced(by: y * stride).assumingMemoryBound(to: UInt16.self)
+            for x in 0 ..< samples {
+                let chroma = 128 + y * 768 / max(1, rows - 1)
+                let value = plane == 0 ? 64 + x * 876 / max(1, width - 1) : (x % 2 == 0 ? chroma : 1024 - chroma)
+                row[x] = UInt16(value << 6)
+            }
+        }
+    }
+}
+
+/// Frame 0's raw 10-bit codes (no color conversion) as a grid of (Y, Cb, Cr) cell means, read as the
+/// native video-range 4:2:2 format, so an original and its proxy can be compared code for code.
+func rawYCbCrCellMeans(_ url: URL, columns: Int = 16, rows: Int = 9) async throws -> [SIMD3<Float>] {
+    let asset = AVURLAsset(url: url)
+    let track = try #require(try await asset.loadTracks(withMediaType: .video).first)
+    let reader = try AVAssetReader(asset: asset)
+    let output = AVAssetReaderTrackOutput(track: track, outputSettings: [
+        kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange
+    ])
+    reader.add(output)
+    #expect(reader.startReading())
+    let sample = try #require(output.copyNextSampleBuffer())
+    reader.cancelReading()
+    let buffer = try #require(CMSampleBufferGetImageBuffer(sample))
+    CVPixelBufferLockBaseAddress(buffer, .readOnly)
+    defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+    let width = CVPixelBufferGetWidth(buffer), height = CVPixelBufferGetHeight(buffer)
+    let luma = try #require(CVPixelBufferGetBaseAddressOfPlane(buffer, 0))
+    let chroma = try #require(CVPixelBufferGetBaseAddressOfPlane(buffer, 1))
+    let lumaStride = CVPixelBufferGetBytesPerRowOfPlane(buffer, 0) / 2
+    let chromaStride = CVPixelBufferGetBytesPerRowOfPlane(buffer, 1) / 2
+    var sums = [SIMD3<Float>](repeating: .zero, count: columns * rows)
+    var counts = [Float](repeating: 0, count: columns * rows)
+    for y in 0 ..< height {
+        for x in 0 ..< width {
+            let cell = (y * rows / height) * columns + x * columns / width
+            let yv = luma.assumingMemoryBound(to: UInt16.self)[y * lumaStride + x] >> 6
+            let c = chroma.assumingMemoryBound(to: UInt16.self)
+            let cb = c[y * chromaStride + (x / 2) * 2] >> 6, cr = c[y * chromaStride + (x / 2) * 2 + 1] >> 6
+            sums[cell] += SIMD3(Float(yv), Float(cb), Float(cr))
+            counts[cell] += 1
+        }
+    }
+    return zip(sums, counts).map { $0 / $1 }
+}
+
 private func fillFullRangeRamp(_ buffer: CVPixelBuffer) {
     CVPixelBufferLockBaseAddress(buffer, [])
     defer { CVPixelBufferUnlockBaseAddress(buffer, []) }

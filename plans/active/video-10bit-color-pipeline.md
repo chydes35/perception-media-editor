@@ -418,8 +418,8 @@ Root cause: the 48³ trilinear cube interpolates a function with a hue discontin
 
 #### 13.4 Proxies
 
-- [ ] Proxies of ProRes sources keep the range and code values (`ProxyGeneratorTests`, using a video-range 10-bit fixture with the log key set). Proxy files are not re-detected. The descriptor stays on `MediaAsset`.
-- [ ] If 13.0 chose proxy-first preview for Apple Log, `MediaQuality` defaults to proxies for Apple Log assets once the proxy is ready. Export always uses originals.
+- [x] Proxies of ProRes sources keep the range and code values (`ProxyGeneratorTests.videoRangeLogSourceProxyKeepsCodeValues`: a video-range 10-bit ProRes 422 HQ fixture with the Apple Log key; the proxy's 10-bit codes match the original's within 0.43 of 1023 and it stays video range, BT.2020). Proxy files carry no log key, so they are not detected as Apple Log; the descriptor stays on `MediaAsset`. No code change was needed.
+- [x] (Not applicable: 13.0 chose no proxy-first rule, Decision 3.) If 13.0 chose proxy-first preview for Apple Log, `MediaQuality` defaults to proxies for Apple Log assets once the proxy is ready. Export always uses originals.
 
 #### 13.5 Real gates
 

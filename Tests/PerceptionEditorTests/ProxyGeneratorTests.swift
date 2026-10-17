@@ -109,6 +109,33 @@ struct ProxyGeneratorTests {
         #expect(worst <= 4.0 / 1023, "Proxy colors differ from the original by up to \(worst * 1023) of 1023 levels")
     }
 
+    /// iPhone Apple Log is already video range. The proxy must carry the same 10-bit codes (the compositor
+    /// applies the input transform to them) and stay video range. Proxy files carry no log key, so a
+    /// proxy is never detected as Apple Log by itself: the descriptor stays on the original's `MediaAsset`.
+    @Test func videoRangeLogSourceProxyKeepsCodeValues() async throws {
+        let temp = try TempDirectory()
+        let source = try await writeVideoRangeLogTestMovie(to: temp.url.appendingPathComponent("IMG.MOV"))
+        let sourceFormat = try await AVURLAsset(url: source).loadTracks(withMediaType: .video)[0].load(.formatDescriptions)[0]
+        try #require(CMFormatDescriptionGetExtension(sourceFormat, extensionKey: kCMFormatDescriptionExtension_LogTransferFunction) as? String
+            == (kCMFormatDescriptionLogTransferFunction_AppleLog as String), "The fixture carries the Apple Log key")
+        try #require(SourceColorDetector.descriptor(format: sourceFormat, panasonicXML: nil).transfer == .appleLog)
+
+        let destination = temp.url.appendingPathComponent("proxy.mov")
+        _ = try await ProxyGenerator.generate(
+            source: source, destination: destination, maximumSize: CGSize(width: 640, height: 360)
+        )
+
+        let proxyFormat = try await AVURLAsset(url: destination).loadTracks(withMediaType: .video)[0].load(.formatDescriptions)[0]
+        #expect(CMFormatDescriptionGetExtension(proxyFormat, extensionKey: kCMFormatDescriptionExtension_FullRangeVideo) as? Bool != true)
+        #expect(CMFormatDescriptionGetExtension(proxyFormat, extensionKey: kCMFormatDescriptionExtension_ColorPrimaries) as? String
+            == (kCMFormatDescriptionColorPrimaries_ITU_R_2020 as String))
+
+        let original = try await rawYCbCrCellMeans(source)
+        let proxy = try await rawYCbCrCellMeans(destination)
+        let worst = zip(original, proxy).map { abs($0 - $1).max() }.max() ?? .infinity
+        #expect(worst <= 1, "Proxy codes differ from the original by up to \(worst) of 1023 codes")
+    }
+
     @Test func fullRangeProxyIsTaggedVideoRange() async throws {
         let temp = try TempDirectory()
         guard let source = try await writeFullRangeTestMovie(to: temp.url.appendingPathComponent("VLOG.MOV")) else {

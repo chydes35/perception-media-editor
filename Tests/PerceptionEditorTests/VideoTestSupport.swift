@@ -286,10 +286,15 @@ func decodedRGBCellMeans(_ url: URL, columns: Int = 16, rows: Int = 9) async thr
 
 /// Writes a movie whose every frame shows its own index as 8 vertical bars (bit 7 on the left,
 /// white = 1), at 23.976 fps, so a test can tell exactly which source frame a composition showed.
+/// `rate` changes the frame rate and time base; `lateFrom` makes every frame from that index on
+/// `lateBy` ticks late, like the iPhone clip whose one 26/600 s frame shifted all later frames.
 @discardableResult
-func writeFrameNumberedMovie(to url: URL, frames: Int = 240, width: Int = 160, height: Int = 90) async throws -> URL {
+func writeFrameNumberedMovie(
+    to url: URL, frames: Int = 240, width: Int = 160, height: Int = 90,
+    rate: FrameRate = .ntsc23976, lateFrom: Int? = nil, lateBy: Int64 = 1
+) async throws -> URL {
     let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
-    writer.movieTimeScale = 24000
+    writer.movieTimeScale = rate.timescale
     let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
         AVVideoCodecKey: AVVideoCodecType.proRes422,
         AVVideoWidthKey: width,
@@ -297,7 +302,7 @@ func writeFrameNumberedMovie(to url: URL, frames: Int = 240, width: Int = 160, h
     ])
     input.expectsMediaDataInRealTime = false
     // Lumix files keep 1001/24000 frame times exactly; the writer's default 600 would round them.
-    input.mediaTimeScale = 24000
+    input.mediaTimeScale = rate.timescale
     let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [
         kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
         kCVPixelBufferWidthKey as String: width,
@@ -324,7 +329,8 @@ func writeFrameNumberedMovie(to url: URL, frames: Int = 240, width: Int = 160, h
             }
         }
         CVPixelBufferUnlockBaseAddress(buffer, [])
-        guard adaptor.append(buffer, withPresentationTime: CMTime(value: CMTimeValue(index) * 1001, timescale: 24000)) else {
+        let late = lateFrom.map { index >= $0 ? lateBy : 0 } ?? 0
+        guard adaptor.append(buffer, withPresentationTime: CMTime(value: CMTimeValue(index) * rate.frameDuration + late, timescale: rate.timescale)) else {
             throw writer.error ?? CocoaError(.fileWriteUnknown)
         }
     }

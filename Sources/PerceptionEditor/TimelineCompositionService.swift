@@ -197,10 +197,19 @@ final class TimelineCompositionService {
                 duration: CMTimeMinimum(rate.time(ofFrame: insertedFrames), slot.duration)
             )
             let insertionTime = slot.start
+            // Video reads each frame half a frame late. AVFoundation shows the last sample at or before
+            // the time asked for, so a sample stamped slightly late (an iPhone clip had one 26/600 s
+            // frame, which left every later frame 1/600 s behind the grid) would otherwise lose its
+            // slot to the previous frame. Asking mid-frame is exact while drift stays under half a
+            // frame. Nothing is asked for in the clip's last half frame, so the range may stop at the
+            // track's end. Audio keeps the exact range.
+            let halfFrame = CMTime(value: rate.frameDuration, timescale: rate.timescale * 2)
+            let videoStart = sourceRange.start + halfFrame
+            let videoSourceRange = CMTimeRange(start: videoStart, end: CMTimeMinimum(sourceRange.end + halfFrame, trackRange.end))
 
             do {
                 try compositionVideoTrack.insertTimeRange(
-                    sourceRange,
+                    videoSourceRange,
                     of: sourceVideoTrack,
                     at: insertionTime
                 )

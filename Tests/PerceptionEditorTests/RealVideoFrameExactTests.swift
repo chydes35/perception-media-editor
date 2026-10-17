@@ -44,6 +44,67 @@ struct RealVideoFrameExactTests {
         #expect(after[.modificationDate] as? Date == attributes[.modificationDate] as? Date, "The original must never change")
     }
 
+    /// Gate G6, iPhone case (Task 13.2b). `IMG_0001` has one 26/600 s frame at 8.877 s (decode index
+    /// 213), which leaves every later frame 1/600 s behind the 24 fps grid. Cuts on both sides of it
+    /// must show their own source frames. Run with
+    /// PME_APPLELOG_SHORT=/Volumes/ExSSD1/PMVideoTestFiles/IMG_0001.MOV.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["PME_APPLELOG_SHORT"] != nil))
+    func iPhoneCutsAfterAnIrregularFrameLandExactly() async throws {
+        let source = URL(fileURLWithPath: ProcessInfo.processInfo.environment["PME_APPLELOG_SHORT"]!)
+        let attributes = try FileManager.default.attributesOfItem(atPath: source.path)
+        var asset = MediaAsset(url: source, kind: .video)
+        asset.apply(await VideoMediaService.shared.metadata(for: source))
+        let rate = try #require(asset.frameRate)
+
+        // Each source frame's real presentation time, by decode index (asking at n / 24 is the bug).
+        let sourceAsset = AVURLAsset(url: source)
+        let track = try #require(try await sourceAsset.loadTracks(withMediaType: .video).first)
+        let reader = try AVAssetReader(asset: sourceAsset)
+        let samples = AVAssetReaderTrackOutput(track: track, outputSettings: nil)
+        samples.alwaysCopiesSampleData = false
+        reader.add(samples)
+        #expect(reader.startReading())
+        var times: [CMTime] = []
+        while let sample = samples.copyNextSampleBuffer() {
+            if CMSampleBufferGetNumSamples(sample) > 0 { times.append(sample.presentationTimeStamp) }
+        }
+        let late = times.indices.filter { times[$0] != rate.time(ofFrame: Int64($0), origin: times[0]) }
+        print("iPhone G6: \(times.count) frames at \(rate), \(late.count) off the grid from index \(late.first ?? -1)")
+        try #require(!late.isEmpty, "This clip should have frames off the grid")
+
+        let ranges: [(start: Int64, count: Int64)] = [(300, 12), (205, 15), (600, 8)]
+        var cursor: Int64 = 0
+        let clips = ranges.map { range -> TimelineClip in
+            defer { cursor += range.count }
+            return TimelineClip(assetID: asset.id, frameRate: rate, timelineStartFrame: cursor, sourceStartFrame: range.start, durationFrames: range.count)
+        }
+        let result = await TimelineCompositionService.shared.makePlayerItem(clips: clips, media: [asset], quality: .export)
+        let item = try #require(result.playerItem)
+
+        let timeline = imageGenerator(item.asset)
+        let original = imageGenerator(sourceAsset)
+        var checked = 0, wrong: [(Int64, Int64, Int64)] = []
+        var timelineFrame: Int64 = 0
+        for range in ranges {
+            for offset in 0 ..< range.count {
+                defer { timelineFrame += 1 }
+                let wanted = range.start + offset
+                let shown = try await luma(timeline, at: rate.time(ofFrame: timelineFrame))
+                var scores: [(frame: Int64, psnr: Double)] = []
+                for n in max(0, wanted - 2) ... min(Int64(times.count - 1), wanted + 2) {
+                    scores.append((n, psnr(shown, try await luma(original, at: times[Int(n)]))))
+                }
+                let best = try #require(scores.max { $0.psnr < $1.psnr })
+                if best.frame != wanted { wrong.append((timelineFrame, wanted, best.frame)) }
+                checked += 1
+            }
+        }
+        print("iPhone G6: \(checked) timeline frames checked, \(wrong.count) wrong")
+        #expect(wrong.isEmpty, "(timeline frame, wanted, shown): \(wrong.prefix(12))")
+        let after = try FileManager.default.attributesOfItem(atPath: source.path)
+        #expect(after[.modificationDate] as? Date == attributes[.modificationDate] as? Date, "The original must never change")
+    }
+
     private func imageGenerator(_ asset: AVAsset) -> AVAssetImageGenerator {
         let generator = AVAssetImageGenerator(asset: asset)
         generator.requestedTimeToleranceBefore = .zero

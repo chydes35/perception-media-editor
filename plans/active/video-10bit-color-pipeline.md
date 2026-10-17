@@ -379,14 +379,16 @@ Root cause: the 48³ trilinear cube interpolates a function with a hue discontin
 
 #### 13.1 Model and detection
 
-- [ ] Add `SourceTransfer.appleLog` and `SourceGamut.rec2020`. Add `SourceTransfer.hlg` and `.pq`, detected but not rendered (HDR stays excluded). Add `SourceTransfer.appleLog2` only if 13.0 found it on the 15 Pro; otherwise Apple Log 2 maps to `.unknown` with a hint. `detectedFrom` gains `"log-transfer-key"`.
-- [ ] Detection order in `SourceColor.swift`:
+- [x] Add `SourceTransfer.appleLog` and `SourceGamut.rec2020`. Add `SourceTransfer.hlg` and `.pq`, detected but not rendered (HDR stays excluded). Add `SourceTransfer.appleLog2` only if 13.0 found it on the 15 Pro; otherwise Apple Log 2 maps to `.unknown` with a hint. `detectedFrom` gains `"log-transfer-key"`.
+- [x] Detection order in `SourceColor.swift`:
   1. `kCMFormatDescriptionExtension_LogTransferFunction == AppleLog` → Apple Log / BT.2020.
   2. Panasonic XML (Task 2).
   3. Format-description tags.
   Use a device-model fallback (make Apple + an iPhone Pro model + ProRes + BT.2020 primaries + no HLG/PQ transfer) **only if** 13.0 shows real clips missing the key. Mark it as lower confidence and show the inline hint.
-- [ ] HLG/PQ iPhone clips: the descriptor records them and the clip shows "HDR source — shown without tone mapping" until HDR is in scope.
-- [ ] Tests (`SourceColorTests`): synthetic `CMVideoFormatDescription`s built with `CMVideoFormatDescriptionCreate` plus extensions, covering Apple Log, Apple Log 2, HLG, a 2020 tag with no log key, and a 709 tag. The descriptor comes from the original file and never from a proxy (a test with a proxy that lacks the key).
+- [x] HLG/PQ iPhone clips: the descriptor records them and the clip shows "HDR source — shown without tone mapping" until HDR is in scope.
+- [x] Tests (`SourceColorTests`): synthetic `CMVideoFormatDescription`s built with `CMVideoFormatDescriptionCreate` plus extensions, covering Apple Log, Apple Log 2, HLG, a 2020 tag with no log key, and a 709 tag. The descriptor comes from the original file and never from a proxy (a test with a proxy that lacks the key).
+
+**13.1 result (2026-10-17): done.** `SourceTransfer` gains `appleLog`, `hlg` and `pq`; `SourceGamut` gains `rec2020`; `detectedFrom` gains `log-transfer-key`. Apple Log 2 (or any unknown log key) stays `.unknown` and is flagged (`isUnsupportedLog`). The device-model fallback was not added, because 13.0's clips carry the key. Both real iPhone clips read as "Apple Log / BT.2020 (log transfer key), 10-bit 4:2:2, video range". Apple Log never goes through the V-Log OCIO transform (Automatic leaves it as recorded until 13.3, and the V-Log ACES choice is hidden for it), and the picker shows hints for Apple Log, HDR and unsupported log. The proxy case is covered by a test that 2020 tags without the key are not log; the descriptor still comes only from the original on import. The HLG case has no real clip yet.
 
 #### 13.2 Decode matrix and per-clip rotation
 
@@ -396,9 +398,11 @@ Root cause: the 48³ trilinear cube interpolates a function with a hue discontin
 
 #### 13.2b Frame exactness for irregular source timestamps (found in 13.0)
 
-- [ ] Red test first: a fixture with one frame lasting 26/600 s among 25/600 s frames; cut after it and check that each output frame is the chosen source frame (today: one frame early).
-- [ ] Map source frames to the samples' real times. Simplest candidate: request each source frame half a frame late (exact while drift stays under half a frame); otherwise read the sample table.
-- [ ] Add an iPhone case to G6 (`IMG_0001`, cuts after 8.9 s).
+- [x] Red test first: a fixture with one frame lasting 26/600 s among 25/600 s frames; cut after it and check that each output frame is the chosen source frame (today: one frame early).
+- [x] Map source frames to the samples' real times. Simplest candidate: request each source frame half a frame late (exact while drift stays under half a frame); otherwise read the sample table.
+- [x] Add an iPhone case to G6 (`IMG_0001`, cuts after 8.9 s).
+
+**13.2b result (2026-10-17): done.** Each clip's video source range now starts half a frame late (clamped to the track's end), so every request lands mid-frame. Audio keeps the exact range. A synthetic fixture with frames 100 onward one tick late failed on both paths (each frame after it showed its predecessor) and now passes. The existing frame-exact suites still pass. On the real `IMG_0001` (395 of 608 frames off the grid from index 213), cuts at 300, 205 and 600 give 0 of 35 frames wrong, and 27 of 35 wrong with the fix disabled. The S5 G6 runs were not repeated (the T7 is on USB 2.0); their frames are regular, and the synthetic regular-rate suites cover them.
 
 #### 13.3 Input transforms
 

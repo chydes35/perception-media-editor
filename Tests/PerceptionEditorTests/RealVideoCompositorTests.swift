@@ -84,7 +84,7 @@ struct RealVideoCompositorTests {
                 clips: [clip], media: [asset], adjustmentsByClipID: [clip.id: adjustments], quality: quality,
                 proxyURLsByAssetID: proxy.map { [asset.id: $0] } ?? [:], renderingPath: .compositor,
                 inputLUTsByAssetID: inputLUT.map { [asset.id: $0] } ?? [:],
-                ocioInputsByAssetID: ocio ? [asset.id: .vLogVGamut] : [:]
+                ocioInputsByAssetID: ocio ? [asset.id: asset.sourceColor?.transfer == .appleLog ? .appleLog : .vLogVGamut] : [:]
             )
             #expect(result.warnings.isEmpty, "\(title): \(result.warnings)")
             let m = try await measure(try #require(result.playerItem), pixelFormat: format, frames: frames)

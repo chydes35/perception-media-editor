@@ -263,6 +263,20 @@ struct LUTRenderTests {
         #expect(againstMath <= Float(1.0 / 256 / 8) + 0.5 / 1023)
     }
 
+    /// Large tables (Apple's Apple Log LUT is 65³) must look up the right lattice points: in a
+    /// 65² × 65 table image, coordinates past 2048 lost precision and picked the neighbouring red
+    /// entry (gate G11 found up to 14 of 1023 on a real frame).
+    @Test(arguments: [33, 65])
+    func largeTablesMatchTheInterpolation(size: Int) {
+        let lut = Self.table(size: size) { c in SIMD3(c.z * c.z, c.x * c.x, c.y * c.y) }
+        let colors = Self.randomColors(8192, seed: 11)
+        let output = Self.render(colors, lut)
+        let interpolated = colors.map { SIMD3<Float>(lut.evaluate(SIMD3<Double>($0))) }
+        let error = Self.worst(output, interpolated)
+        print("LUT \(size)³ swap+gamma: \(error * 1023) of 1023 against the tetrahedral reference")
+        #expect(error <= 0.5 / 1023, "\(size)³: \(error * 1023) of 1023")
+    }
+
     @Test func latticePointsComeOutExactly() {
         let lut = Self.table(size: 9) { c in SIMD3(sin(c.x * 1.3), c.y * c.z, 1 - c.x) }
         var colors: [SIMD3<Float>] = []

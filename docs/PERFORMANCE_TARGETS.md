@@ -64,6 +64,23 @@ The ACES 2.0 output transform costs about 15 ms per 4K frame on the M1.
 
 From the internal disk, the S5 4K V-Log H.264 decode ceiling is **82 fps** (2026-10-17; Task 0's 47 fps was the USB 2.0 link). iPhone 15 Pro Apple Log ProRes 422 HQ 4K decodes at 105–110 fps, and runs through the compositor at 99 fps.
 
+## Apple Log, gate G12 (branch `plan/10bit-vlog-color`)
+
+Measured 2026-10-17 on the base 8 GB M1 from an internal-disk copy of `IMG_0001` (4K Apple Log ProRes 422 HQ), release build. Bar: UHD export through the compositor at 85% of the internal-disk decode ceiling (about 90 fps), proxy preview with 0 dropped frames over 60 s, and G7's memory limits.
+
+| Case | Result |
+|---|---|
+| 4K original, neutral, preview | 48.7 fps (peak 521 MB) |
+| 4K original, ACES, preview | 29.7 fps (peak 547 MB) |
+| 4K original, ACES, compositor export path | 23.0 fps (peak 529 MB) |
+| 1080p proxy, ACES, graded, preview | 55.0 fps (peak 302 MB); proxy generation 240 frames in 10.8 s |
+| UHD ProRes 422 HQ export, 608 frames, Panasonic-style LUT | 10.8 fps (56.5 s, 2.16 GB) |
+| Proxy playback, 25 s x 3 runs, scopes on | 0 of 600 frames dropped in each run; GPU median 7.41, p99 14.30, max 21.56 ms; growth 18.6 MB |
+| G7 export | +1 291 MB over idle (limit 600) |
+| G7 playback | +445 MB over start of playback (limit 350) |
+
+**G12: FAIL.** Export reaches 10.8 fps and the compositor alone reaches 23-49 fps, against a bar of about 90 fps. G7 memory fails for export and playback. Proxy preview dropped 0 frames, but over 25 s x 3 runs, not the 60 s the gate names, so that part is NOT VERIFIED at 60 s. The earlier "compositor 99 fps" was the decode-only path; the full compositor with the colour kernels is slower. The runs were short (240 frames) and the machine swapped (245 580 pages during export), so the numbers are likely pessimistic. Tuning is left for the owner to direct.
+
 ## Proxy playback, gates G1 and G7 (branch `plan/10bit-vlog-color`)
 
 `PME_PROFILE=playback scripts/profile-video.sh` (`RealVideoPlaybackTests`): a 1080p proxy of 60 s of `P1107157` with the golden grade, source color and scopes, played by AVPlayer in real time 10 times, release, 8 GB M1. Targets: G1 0 dropped frames and GPU ≤ 12 ms per frame; G7 ≤ +350 MB from the start of playback (app plus decoder) and ≤ 20 MB growth over 10 runs.

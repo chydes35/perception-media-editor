@@ -79,10 +79,8 @@ struct SourceColorPicker: View {
                 Picker("Source color", selection: Binding(get: { current }, set: { store.setColorInput($0, forAssets: [asset.id]) })) {
                     Text("Automatic").tag(ColorInputTransform.automatic)
                     Text("As recorded").tag(ColorInputTransform.none)
-                    // Only the V-Log transform exists so far; Apple Log's comes with plan Task 13.3.
-                    if asset.sourceColor?.transfer != .appleLog || current == .aces {
-                        Text("V-Log → Rec. 709 (ACES 2.0)").tag(ColorInputTransform.aces)
-                    }
+                    Text(asset.sourceColor?.transfer == .appleLog ? "Apple Log → Rec. 709 (ACES 2.0)" : "V-Log → Rec. 709 (ACES 2.0)")
+                        .tag(ColorInputTransform.aces)
                     ForEach(choices) { reference in
                         Text("LUT: \(reference.displayName)").tag(ColorInputTransform.lut(reference))
                     }
@@ -106,7 +104,7 @@ struct SourceColorPicker: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else if current == .automatic, asset.sourceColor?.transfer == .appleLog {
-                Text("Apple Log shows as recorded (flat) for now. Import Apple's Apple Log to Rec. 709 LUT to view it normally.")
+                Text("Apple Log is shown through ACES 2.0 (OpenColorIO). Choose As recorded for the flat log image, or Apple's LUT.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else if asset.sourceColor?.isHDR == true {

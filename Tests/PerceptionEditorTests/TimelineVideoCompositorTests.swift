@@ -269,11 +269,14 @@ struct TimelineVideoCompositorTests {
         #expect(worst <= 1.0, "Full-range code values map onto 64…940 within \(worst) codes")
     }
 
-    @Test func aSourceColorLUTMapsTheDecodedCodeValues() async throws {
+    /// 65³ is Apple's Apple Log LUT size: in the compositor's half-float Core Image context its
+    /// lookups lost precision (gate G11 found up to 14 of 1023 on a real frame).
+    @Test(arguments: [33, 65])
+    func aSourceColorLUTMapsTheDecodedCodeValues(size: Int) async throws {
         let temp = try TempDirectory()
         guard let asset = try await fullRangeAsset(temp) else { Issue.record("No full-range 10-bit HEVC encoder"); return }
         // A channel swap with a gamma: if Core Image linearized the values first, this would be far off.
-        let lut = LUTRenderTests.table(size: 33) { c in SIMD3(c.z * c.z, c.x, c.y) }
+        let lut = LUTRenderTests.table(size: size) { c in SIMD3(c.z * c.z, c.x, c.y) }
         let resolved = ResolvedLUT(hash: LUTLibrary.hash(Data(UUID().uuidString.utf8)), lut: lut)
         let clip = TimelineClip(assetID: asset.id, durationFrames: 6)
         let result = await service.makePlayerItem(
@@ -285,7 +288,7 @@ struct TimelineVideoCompositorTests {
         let decoded = try await referenceRow(decoding: try await sourceFirstFrame(asset.url))
         let expected = decoded.map { SIMD3<Float>(lut.evaluate(SIMD3<Double>($0))) }
         let worst = zip(output, expected).map { simd_abs($0 - $1).max() }.max() ?? .infinity
-        print("Source-color LUT in the compositor: worst \(worst * 1023) of 1023")
+        print("Source-color LUT \(size)³ in the compositor: worst \(worst * 1023) of 1023")
         #expect(worst <= 1.0 / 1023, "The input LUT departs from the reference by \(worst * 1023) of 1023 levels")
     }
 

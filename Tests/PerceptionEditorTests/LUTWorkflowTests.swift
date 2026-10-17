@@ -119,8 +119,10 @@ struct LUTWorkflowTests {
         store.setColorInput(.none, forAssets: [flat.id])
         store.setColorInput(.aces, forAssets: [untagged.id])
         store.setColorInput(.lut(LUTReference(contentHash: LUTLibrary.hash(Data("x".utf8)), displayName: "V709")), forAssets: [graded.id])
-        // Apple Log never goes through the V-Log transform, chosen or automatic (Task 13.3 adds its own).
-        #expect(store.resolvedOCIOInputs() == [log.id: .vLogVGamut, untagged.id: .vLogVGamut])
+        // Apple Log gets its own transform, chosen or automatic (Task 13.3); never V-Log's.
+        #expect(store.resolvedOCIOInputs() == [
+            log.id: .vLogVGamut, untagged.id: .vLogVGamut, appleLog.id: .appleLog, appleLogACES.id: .appleLog
+        ])
     }
 
     @Test func theACESChoiceSurvivesSaveAndReopen() throws {

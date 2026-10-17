@@ -72,7 +72,7 @@ struct RealVideoPlaybackTests {
                 clips: [clip], media: [asset], adjustmentsByClipID: [clip.id: goldenGradeAdjustments()], quality: .preview,
                 proxyURLsByAssetID: [asset.id: proxy], renderingPath: .compositor, statisticsKey: key,
                 inputLUTsByAssetID: lut.map { [asset.id: $0] } ?? [:],
-                ocioInputsByAssetID: lut == nil ? [asset.id: .vLogVGamut] : [:]
+                ocioInputsByAssetID: lut == nil ? [asset.id: asset.sourceColor?.transfer == .appleLog ? .appleLog : .vLogVGamut] : [:]
             )
             #expect(result.warnings.isEmpty, "\(result.warnings)")
             let item = try #require(result.playerItem)

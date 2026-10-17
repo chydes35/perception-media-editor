@@ -26,17 +26,21 @@ struct OCIOGeneratedSourceTests {
         #expect(OCIOGeneratedShaders.configName.contains("aces-v2.0"))
     }
 
-    @Test func outputTransformTablesAreComplete() {
+    @Test func outputTransformTablesAreComplete() throws {
         let tables = OCIOGeneratedShaders.linearRec709ToRec1886ACES20.tables
         #expect(tables.map(\.channels) == [1, 3])
         for table in tables { #expect(table.values.count == table.width * table.channels, "\(table.name)") }
         #expect(OCIOGeneratedShaders.vLogVGamutToLinearRec709.tables.isEmpty)
+        // Apple Log's curve is a half-float-domain 1D table folded into a 2D texture, sampled linearly.
+        let appleLog = try #require(OCIOGeneratedShaders.appleLogRec2020ToLinearRec709.tables.first)
+        #expect(appleLog.twoD && appleLog.width == 4096 && appleLog.height == 17 && appleLog.interpolation == .linear)
+        #expect(appleLog.values.count == 4096 * 17)
     }
 
     /// OCIO's camera-log curve and V-Gamut primaries, written out in Double from Panasonic's V-Log
     /// definition, agree with OCIO's CPU processor.
     @Test func vLogOracleAgreesWithOCIO() throws {
-        let golden = try OCIOGolden.load().transform(MetalShaderSources.ocioInputTransform.name)
+        let golden = try OCIOGolden.load().transform(MetalShaderSources.ocioInputTransform(.vLogVGamut).name)
         var worst = 0.0
         for (input, expected) in zip(golden.inputs, golden.outputs) {
             let actual = VLogOracle.linearRec709(input.map(Double.init))
@@ -52,15 +56,37 @@ struct OCIOGeneratedSourceTests {
         let linear = VLogOracle.linearRec709([433.0 / 1023, 433.0 / 1023, 433.0 / 1023])
         for value in linear { #expect(abs(value - 0.18) < 0.001) }
     }
+
+    /// Apple's white paper decoding function and the BT.2020 → Rec. 709 matrix, in Double, agree
+    /// with OCIO's `APPLE_LOG_to_ACES2065-1` path (Task 13.3).
+    @Test func appleLogOracleAgreesWithOCIO() throws {
+        let golden = try OCIOGolden.load().transform(MetalShaderSources.ocioInputTransform(.appleLog).name)
+        var worst = 0.0
+        for (input, expected) in zip(golden.inputs, golden.outputs) {
+            let actual = AppleLogOracle.linearRec709(input.map(Double.init))
+            for channel in 0 ..< 3 { worst = max(worst, OCIOGolden.error(Double(expected[channel]), actual[channel])) }
+        }
+        #expect(worst <= 1e-4, "worst error \(worst)")
+    }
+
+    /// The white paper's reference values: 0% → P 0.150477, 18% → 0.488272, 90% → 0.681686.
+    @Test func appleLogReferenceValuesDecodeToTheirReflectances() {
+        for (p, reflectance) in [(0.150477, 0.0), (0.488272, 0.18), (0.681686, 0.90)] {
+            #expect(abs(AppleLogOracle.linear(p) - reflectance) < 1e-5, "P \(p)")
+            let grey = AppleLogOracle.linearRec709([p, p, p])
+            for value in grey { #expect(abs(value - reflectance) < 1e-5, "neutral stays neutral at P \(p)") }
+        }
+    }
 }
 
 @Suite(.enabled(if: MTLCreateSystemDefaultDevice() != nil))
 struct OCIOShaderTests {
-    @Test func inputTransformMatchesOCIO() throws {
+    @Test(arguments: OCIOInputTransform.allCases)
+    func inputTransformMatchesOCIO(camera: OCIOInputTransform) throws {
         let kernels = try #require(OCIOColorKernels.shared, "\(String(describing: OCIOColorKernels.loadError))")
-        let golden = try OCIOGolden.load().transform(MetalShaderSources.ocioInputTransform.name)
+        let golden = try OCIOGolden.load().transform(MetalShaderSources.ocioInputTransform(camera).name)
         let output = try Self.run(golden.inputs, kernels: kernels) { input, output, commandBuffer in
-            try kernels.toSceneLinear(input, from: .vLogVGamut, into: output, commandBuffer: commandBuffer)
+            try kernels.toSceneLinear(input, from: camera, into: output, commandBuffer: commandBuffer)
         }
         Self.expectAgreement(output, golden.outputs)
     }
@@ -76,11 +102,13 @@ struct OCIOShaderTests {
 
     /// The one-pass kernel against OCIO's CPU running both transforms. (The two passes differ from
     /// it by their half-float intermediate, which the gamut compression can magnify to 3e-3.)
-    @Test func fusedKernelMatchesBothTransforms() throws {
+    @Test(arguments: OCIOInputTransform.allCases)
+    func fusedKernelMatchesBothTransforms(camera: OCIOInputTransform) throws {
         let kernels = try #require(OCIOColorKernels.shared)
-        let golden = try OCIOGolden.load().transform("vlog_vgamut_to_rec1886_aces20")
+        let name = MetalShaderSources.ocioInputTransform(camera).name.replacingOccurrences(of: "lin_rec709", with: "rec1886_aces20")
+        let golden = try OCIOGolden.load().transform(name)
         let output = try Self.run(golden.inputs, kernels: kernels) { input, output, commandBuffer in
-            try kernels.toDisplay(input, from: .vLogVGamut, into: output, commandBuffer: commandBuffer)
+            try kernels.toDisplay(input, from: camera, into: output, commandBuffer: commandBuffer)
         }
         Self.expectAgreement(output, golden.outputs)
     }
@@ -92,6 +120,11 @@ struct OCIOShaderTests {
             try kernels.toSceneLinear(input, from: .vLogVGamut, into: output, commandBuffer: commandBuffer)
         }
         for value in output[0] { #expect(abs(value - 0.18) < 0.002, "\(output[0])") }
+        let appleGrey = Float(0.488272)
+        let appleLog = try Self.run([[appleGrey, appleGrey, appleGrey]], kernels: kernels) { input, output, commandBuffer in
+            try kernels.toSceneLinear(input, from: .appleLog, into: output, commandBuffer: commandBuffer)
+        }
+        for value in appleLog[0] { #expect(abs(value - 0.18) < 0.002, "Apple Log grey: \(appleLog[0])") }
     }
 
     /// Within 1e-3 absolute in the 0…1 range and 0.2% relative above it (half-float output).
@@ -171,6 +204,29 @@ struct OCIOGolden: Decodable {
     static func error(_ expected: Double, _ actual: Double) -> Double {
         abs(expected) > 1 ? abs(actual - expected) / abs(expected) : abs(actual - expected)
     }
+}
+
+/// Apple Log to linear (Apple Log Profile White Paper, September 2023, decoding function) and
+/// BT.2020 to Rec. 709 primaries, in Double. Constants from the white paper, not from OCIO.
+enum AppleLogOracle {
+    static let (r0, rt, c, beta, gamma, delta) = (-0.05641088, 0.01, 47.28711236, 0.00964052, 0.08550479, 0.69336945)
+    static let pt = c * (rt - r0) * (rt - r0)
+
+    static func linear(_ p: Double) -> Double {
+        if p >= pt { return pow(2, (p - delta) / gamma) - beta }
+        return p >= 0 ? (p / c).squareRoot() + r0 : r0
+    }
+
+    static func linearRec709(_ codes: [Double]) -> [Double] {
+        let lin = codes.map(linear)
+        return (0 ..< 3).map { row in (0 ..< 3).reduce(0) { $0 + rec2020ToRec709[row][$1] * lin[$1] } }
+    }
+
+    static let rec2020ToRec709: [[Double]] = {
+        let rec2020 = VLogOracle.npm(red: (0.708, 0.292), green: (0.170, 0.797), blue: (0.131, 0.046))
+        let rec709 = VLogOracle.npm(red: (0.640, 0.330), green: (0.300, 0.600), blue: (0.150, 0.060))
+        return VLogOracle.multiply(VLogOracle.invert(rec709), rec2020)
+    }()
 }
 
 /// Panasonic V-Log to linear, and V-Gamut to Rec. 709 primaries, in Double. Written from the

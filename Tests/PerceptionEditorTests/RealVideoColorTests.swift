@@ -179,16 +179,51 @@ struct RealVideoColorTests {
                    && MTLCreateSystemDefaultDevice() != nil))
     func panasonicLUTMatchesFFmpeg() async throws {
         let environment = ProcessInfo.processInfo.environment
-        let clip = URL(fileURLWithPath: environment["PME_VLOG_SHORT"]!)
-        let referenceURL = URL(fileURLWithPath: environment["PME_LUT_REFERENCE"]!)
-        let lut = try CubeLUT(contentsOf: URL(fileURLWithPath: environment["PME_VLOG_LUT"]!))
+        try await Self.lutMatchesFFmpeg(
+            label: "G3", clip: environment["PME_VLOG_SHORT"]!, lut: environment["PME_VLOG_LUT"]!, reference: environment["PME_LUT_REFERENCE"]!
+        )
+    }
+
+    /// Gate G11, LUT part (Task 13.3): Apple's Apple Log to Rec. 709 LUT on the first frame of
+    /// PME_APPLELOG_SHORT through the compositor, against ffmpeg's tetrahedral `lut3d`. Make the
+    /// reference with `ffmpeg-lut-reference.sh <clip> <lut> <out.raw> 0 limited bt2020`.
+    @Test(.enabled(if: ["PME_APPLELOG_SHORT", "PME_APPLELOG_LUT", "PME_APPLELOG_LUT_REFERENCE"].allSatisfy { ProcessInfo.processInfo.environment[$0] != nil }))
+    func appleLUTMatchesFFmpeg() async throws {
+        let environment = ProcessInfo.processInfo.environment
+        try await Self.lutMatchesFFmpeg(
+            label: "G11 LUT", clip: environment["PME_APPLELOG_SHORT"]!, lut: environment["PME_APPLELOG_LUT"]!,
+            reference: environment["PME_APPLELOG_LUT_REFERENCE"]!
+        )
+    }
+
+    /// Gate G10 (Task 13.3): the compositor's decode of Apple Log (no source color) against the exact
+    /// BT.2020 video-range decode of the same codes (`<reference>-decoded.raw`, written by
+    /// `ffmpeg-lut-reference.sh … limited bt2020`): within 1/1023.
+    @Test(.enabled(if: ["PME_APPLELOG_SHORT", "PME_APPLELOG_LUT_REFERENCE"].allSatisfy { ProcessInfo.processInfo.environment[$0] != nil }))
+    func appleLogDecodeMatchesTheExactReference() async throws {
+        let environment = ProcessInfo.processInfo.environment
+        let decoded = environment["PME_APPLELOG_LUT_REFERENCE"]!.replacingOccurrences(of: ".raw", with: "-decoded.raw")
+        try await Self.lutMatchesFFmpeg(label: "G10 decode", clip: environment["PME_APPLELOG_SHORT"]!, lut: nil, reference: decoded,
+                                        limits: (p999: 1, worst: 1))
+    }
+
+    /// One source frame through a source-color LUT (or none) in the compositor, against a reference
+    /// frame, on the even columns: by default 99.9th percentile ≤ 2/1023 and maximum ≤ 4/1023.
+    private static func lutMatchesFFmpeg(
+        label: String, clip clipPath: String, lut lutPath: String?, reference referencePath: String,
+        limits: (p999: Float, worst: Float) = (2, 4)
+    ) async throws {
+        let clip = URL(fileURLWithPath: clipPath)
+        let referenceURL = URL(fileURLWithPath: referencePath)
+        let lut = try lutPath.map { try CubeLUT(contentsOf: URL(fileURLWithPath: $0)) }
 
         var asset = MediaAsset(url: clip, kind: .video)
         asset.apply(await VideoMediaService.shared.metadata(for: clip))
         let rate = try #require(asset.frameRate)
         let item = try #require(await TimelineCompositionService.shared.makePlayerItem(
             clips: [TimelineClip(assetID: asset.id, frameRate: rate, durationFrames: 1)], media: [asset], quality: .preview,
-            inputLUTsByAssetID: [asset.id: ResolvedLUT(hash: "g3-\(UUID())", lut: lut)]
+            inputLUTsByAssetID: lut.map { [asset.id: ResolvedLUT(hash: "\(label)-\(UUID())", lut: $0)] } ?? [:],
+            ocioInputsByAssetID: [:]
         ).playerItem)
         let reader = try AVAssetReader(asset: item.asset)
         let output = AVAssetReaderVideoCompositionOutput(
@@ -211,6 +246,7 @@ struct RealVideoColorTests {
         let stride = CVPixelBufferGetBytesPerRow(frame) / 2
         var differences: [Float] = []
         differences.reserveCapacity(width * height / 2)
+        var worstPixels: [(difference: Float, x: Int, y: Int, mine: SIMD3<Float>, theirs: SIMD3<Float>)] = []
         reference.withUnsafeBytes { raw in
             let planes = raw.bindMemory(to: Float.self)
             let plane = width * height
@@ -220,15 +256,20 @@ struct RealVideoColorTests {
                     let i = y * width + x, o = y * stride + x * 4
                     let theirs = SIMD3<Float>(planes[2 * plane + i], planes[i], planes[plane + i]) // R, G, B from G, B, R planes
                     let mine = SIMD3<Float>(Float(ours[o]), Float(ours[o + 1]), Float(ours[o + 2]))
-                    differences.append(simd_abs(mine - theirs).max())
+                    let difference = simd_abs(mine - theirs).max()
+                    differences.append(difference)
+                    if difference * 1023 > 6, worstPixels.count < 400 { worstPixels.append((difference, x, y, mine, theirs)) }
                 }
             }
         }
         differences.sort()
         let p999 = differences[Int(Double(differences.count - 1) * 0.999)] * 1023, worst = differences.last! * 1023
         let mean = differences.reduce(0, +) / Float(differences.count) * 1023
-        print("G3: \(differences.count) pixels, mean \(mean), 99.9th percentile \(p999), max \(worst) of 1023")
-        #expect(p999 <= 2 && worst <= 4, "99.9th percentile \(p999), max \(worst) of 1023 levels")
+        for pixel in worstPixels.sorted(by: { $0.difference > $1.difference }).prefix(5) {
+            print("\(label) worst: (\(pixel.x), \(pixel.y)) ours \(pixel.mine) ffmpeg \(pixel.theirs)")
+        }
+        print("\(label): \(differences.count) pixels, mean \(mean), 99.9th percentile \(p999), max \(worst) of 1023")
+        #expect(p999 <= limits.p999 && worst <= limits.worst, "99.9th percentile \(p999), max \(worst) of 1023 levels")
     }
 
     /// Grades a frame texture through `MediaColorRenderer` with Core Image, synchronously on the GPU.

@@ -30,8 +30,8 @@ final class VideoMediaService {
             if let format = (try? await videoTrack.load(.formatDescriptions))?.first {
                 sourceColor = SourceColorDetector.descriptor(format: format, panasonicXML: await panasonicXML(in: asset))
             }
-            if let (minimum, range) = try? await videoTrack.load(.minFrameDuration, .timeRange),
-               let rate = FrameRate(frameDuration: minimum) {
+            if let (minimum, nominal, range) = try? await videoTrack.load(.minFrameDuration, .nominalFrameRate, .timeRange),
+               let rate = FrameRate.detected(nominalFramesPerSecond: nominal, minimumFrameDuration: minimum) {
                 frameRate = rate
                 frameCount = rate.frame(containing: range.end, origin: range.start)
             }

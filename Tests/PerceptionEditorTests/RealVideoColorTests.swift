@@ -24,8 +24,11 @@ struct RealVideoColorTests {
     @Test(.enabled(if: ProcessInfo.processInfo.environment["PME_APPLELOG_SHORT"] != nil))
     func iPhoneAppleLogIsDetectedFromItsLogKey() async throws {
         let url = URL(fileURLWithPath: ProcessInfo.processInfo.environment["PME_APPLELOG_SHORT"]!)
-        let color = try #require(await VideoMediaService.shared.metadata(for: url).sourceColor)
-        print("Apple Log sample: \(color.summary)")
+        let metadata = await VideoMediaService.shared.metadata(for: url)
+        let color = try #require(metadata.sourceColor)
+        print("Apple Log sample: \(color.summary), \(metadata.frameRate.map { "\($0)" } ?? "no rate"), \(metadata.frameCount ?? 0) frames")
+        // iPhone clips at 24 fps can have a 24/600 s frame; the rate must still be 24 (Task 13.2).
+        #expect(metadata.frameRate == FrameRate(frameDuration: 1, timescale: 24))
         #expect(color.transfer == .appleLog && color.gamut == .rec2020 && color.detectedFrom == .logTransferKey)
         #expect(color.range == .video && color.matrix == .rec2020 && color.bitDepth == 10 && color.chroma == .yuv422)
     }

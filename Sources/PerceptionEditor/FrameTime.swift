@@ -40,6 +40,16 @@ struct FrameRate: Codable, Hashable, Sendable, CustomStringConvertible {
         self.init(frameDuration: time.value / divisor, timescale: Int32(Int64(time.timescale) / divisor))
     }
 
+    /// A track's rate. Its nominal rate wins when that is a standard rate: an iPhone clip at 24 fps
+    /// (nominal 23.9976) had one 24/600 s frame, exactly 1/25 s, so its minimum frame duration alone
+    /// read as 25 fps. Otherwise (variable-rate phone clips, odd rates) the minimum duration decides.
+    static func detected(nominalFramesPerSecond nominal: Float, minimumFrameDuration minimum: CMTime) -> FrameRate? {
+        if nominal > 0, let standard = standardRates.first(where: { abs($0.framesPerSecond - Double(nominal)) / $0.framesPerSecond < 0.0005 }) {
+            return standard
+        }
+        return FrameRate(frameDuration: minimum)
+    }
+
     var frameSeconds: Double { Double(frameDuration) / Double(timescale) }
     var framesPerSecond: Double { Double(timescale) / Double(frameDuration) }
     var frameTime: CMTime { CMTime(value: frameDuration, timescale: timescale) }

@@ -101,7 +101,7 @@ Below, `run-tests <Suite>` means that command. Fixing `scripts/test.sh` to detec
 | `PME_VLOG_LUT` | the user's downloaded `VLog_to_V709_forV35_ver100.cube` | LUT gates |
 | `PME_APPLELOG_SHORT` | `/Volumes/ExSSD1/PMVideoTestFiles/IMG_0001.MOV` (iPhone 15 Pro Apple Log ProRes 422 HQ, 4K24 landscape, 25.3 s, no grey card; one irregular frame at 8.877 s). `IMG_0002.MOV` (8.5 s, sky) is the banding clip | Apple Log detection, fidelity, LUT and OCIO gates |
 | `PME_APPLELOG_BLACK` | `/Volumes/ExSSD1/PMVideoTestFiles/IMG_0003.MOV` (Apple Log with the lenses covered, 5.9 s; `preferredTransform` rotated 180°) | Black level and normalization check; rotation (180°) |
-| `PME_APPLELOG_PORTRAIT` | iPhone 15 Pro Apple Log, portrait, about 5 s (optional) | Rotation gate |
+| `PME_APPLELOG_PORTRAIT` | `/Volumes/ExSSD1/PMVideoTestFiles/IMG_0004.MOV` (iPhone 15 Pro Apple Log, portrait (quarter turn), 16.75 s, 24 fps with one 24/600 s and two 26/600 s frames) | Rotation gate G13, frame-rate detection |
 | `PME_APPLELOG_4K60` | iPhone 15 Pro Apple Log 4K60 on an external drive (optional) | Software ProRes decode throughput |
 | `PME_IPHONE_HLG` | iPhone 15 Pro ProRes with Log off (HLG) (optional) | Telling HLG and Apple Log apart |
 | `PME_APPLELOG_LUT` | `/Volumes/ExSSD1/Developer/LUTs/AppleLog-LUTs-v1.0/AppleLogToRec709-v1.0.cube` (65³; downloaded by the owner, not redistributed) | Apple Log LUT gate |
@@ -392,15 +392,17 @@ Root cause: the 48³ trilinear cube interpolates a function with a hue discontin
 
 #### 13.2 Decode matrix and per-clip rotation
 
-- [ ] `decodeYCbCr` takes the BT.2020 non-constant-luminance coefficients from the descriptor. Extend `MetalColorKernelTests` with 2020 bars computed in Double.
-- [ ] `ClipRenderRecipe` carries the source's `preferredTransform`, and `fitToRenderSize` applies rotation (90/180/270 and mirroring) before fitting. Remove the single-track `preferredTransform` assignment once the compositor is used for every clip that needs rotation. Keep it on the neutral fast path only when every clip shares one transform.
-- [ ] Tests (`TimelineVideoCompositorTests`): a landscape clip, then a rotated-90° fixture, then a landscape clip. Every frame is upright at one render size, with letterbox or pillarbox as expected and no size change at the cuts.
+- [x] `decodeYCbCr` takes the BT.2020 non-constant-luminance coefficients from the descriptor. Extend `MetalColorKernelTests` with 2020 bars computed in Double.
+- [x] `ClipRenderRecipe` carries the source's `preferredTransform`, and `fitToRenderSize` applies rotation (90/180/270 and mirroring) before fitting. Remove the single-track `preferredTransform` assignment once the compositor is used for every clip that needs rotation. Keep it on the neutral fast path only when every clip shares one transform.
+- [x] Tests (`TimelineVideoCompositorTests`): a landscape clip, then a rotated-90° fixture, then a landscape clip. Every frame is upright at one render size, with letterbox or pillarbox as expected and no size change at the cuts.
 
 #### 13.2b Frame exactness for irregular source timestamps (found in 13.0)
 
 - [x] Red test first: a fixture with one frame lasting 26/600 s among 25/600 s frames; cut after it and check that each output frame is the chosen source frame (today: one frame early).
 - [x] Map source frames to the samples' real times. Simplest candidate: request each source frame half a frame late (exact while drift stays under half a frame); otherwise read the sample table.
 - [x] Add an iPhone case to G6 (`IMG_0001`, cuts after 8.9 s).
+
+**13.2 result (2026-10-17): done.** Most of it already existed from Task 4: each clip's recipe carries its own matrix and orientation, the fit kernel turns and fits every clip, and the single-track `preferredTransform` is set only on the native path, when every clip shares one transform. New tests: 75% BT.2020 bars in 10-bit 4:2:2 video range decode exactly with `.rec2020` (and visibly wrong as 709); each clip's recipe keeps its own matrix; and landscape → portrait → landscape stays at one size with the portrait clip upright and pillarboxed. **G13 on real clips** (`IMG_0001` landscape, `IMG_0004` portrait, `IMG_0002` landscape): 72 frames at one size, the portrait clip pillarboxed (edge luma 0) and upright on visual review. The portrait clip turned up a frame-rate bug: one 24/600 s frame made `minFrameDuration` read as 25 fps. Rates now come from the track's nominal rate when it is a standard rate (`FrameRate.detected`), otherwise from the minimum duration. Projects that imported an iPhone clip before this keep the rate they stored.
 
 **13.2b result (2026-10-17): done.** Each clip's video source range now starts half a frame late (clamped to the track's end), so every request lands mid-frame. Audio keeps the exact range. A synthetic fixture with frames 100 onward one tick late failed on both paths (each frame after it showed its predecessor) and now passes. The existing frame-exact suites still pass. On the real `IMG_0001` (395 of 608 frames off the grid from index 213), cuts at 300, 205 and 600 give 0 of 35 frames wrong, and 27 of 35 wrong with the fix disabled. The S5 G6 runs were not repeated (the T7 is on USB 2.0); their frames are regular, and the synthetic regular-rate suites cover them.
 
@@ -463,7 +465,7 @@ Rules: red tests first for the drift bug (Task 1) and the banding bug (Task 5). 
 | **G10 Apple Log fidelity** | Like G2 on `PME_APPLELOG_SHORT` with the BT.2020 matrix and the range 13.0 measured: within 1/1023 of ffmpeg's decode for originals and 2/1023 for proxies. | Task 13 harness |
 | **G11 Apple Log transforms** | The Apple LUT vs `ffmpeg lut3d` (tetrahedral) meets G3's thresholds. The OCIO Apple Log transform vs PyOpenColorIO CPU meets G4's thresholds. | Same harness |
 | **G12 Apple Log throughput and memory** | UHD Apple Log export through the compositor runs at ≥ 85% of 13.0's measured decode ceiling. Proxy preview drops 0 frames over 60 s. G7's memory limits hold, summed with `VTDecoderXPCService`. | `RealVideoColorTests`, `profile-video.sh` |
-| **G13 Rotation** | A landscape, portrait, landscape timeline: every frame is upright at one render size (the owner checks it visually), and no cut changes the size. | Test + human review |
+| **G13 Rotation** (PASS 2026-10-17, `RealVideoRotationTests`) | A landscape, portrait, landscape timeline: every frame is upright at one render size (the owner checks it visually), and no cut changes the size. | Test + human review |
 
 ## Original-media and project-data safety
 

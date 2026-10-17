@@ -256,6 +256,40 @@ struct MetalColorKernelTests {
         #expect(abs(as709.y - want.y) > 0.01, "The two matrices must differ for this color to prove anything")
     }
 
+    /// Task 13.2: 75% colour bars encoded with the BT.2020 coefficients (Apple Log's matrix) in
+    /// video-range 10-bit 4:2:2, the layout the iPhone writes. Decoding with `.rec2020` gives the
+    /// bars back within code rounding; decoding them as 709 would not.
+    @Test func rec2020BarsDecodeWithTheRec2020Matrix() throws {
+        let reference = Reference(kr: 0.2627, kb: 0.0593)
+        let bars: [SIMD3<Double>] = [[0.75, 0.75, 0.75], [0.75, 0.75, 0], [0, 0.75, 0.75], [0, 0.75, 0],
+                                     [0.75, 0, 0.75], [0.75, 0, 0], [0, 0, 0.75], [0, 0, 0]]
+        // Codes in Double first, rounded once, as an encoder would.
+        let codes = bars.map { bar -> (y: Int, cb: Int, cr: Int) in
+            let (r, g, b) = (bar.x, bar.y, bar.z)
+            let y = reference.kr * r + (1 - reference.kr - reference.kb) * g + reference.kb * b
+            let cb = (b - y) / (2 * (1 - reference.kb)), cr = (r - y) / (2 * (1 - reference.kr))
+            return (Int((64 + 876 * y).rounded()), Int((512 + 896 * cb).rounded()), Int((512 + 896 * cr).rounded()))
+        }
+        let barWidth = 8
+        let buffer = try Self.makeBuffer(format: kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange, width: barWidth * bars.count, height: 2,
+                                         luma: { x, _ in codes[x / barWidth].y },
+                                         chroma: { x, _ in let c = codes[x * 2 / barWidth]; return (c.cb, c.cr) })
+        let (_, pixels) = try Self.decode(buffer, matrix: .rec2020)
+        let (_, as709) = try Self.decode(buffer, matrix: .rec709)
+        var exact = 0.0, toBars = 0.0, misread = 0.0
+        for (index, code) in codes.enumerated() {
+            let x = index * barWidth + barWidth / 2 // Mid-bar, where 4:2:2 chroma is constant.
+            let decoded = SIMD3<Double>(Double(pixels[x].x), Double(pixels[x].y), Double(pixels[x].z))
+            let want = reference.videoRange10(y: code.y, cb: code.cb, cr: code.cr)
+            exact = max(exact, abs(decoded - want).max())
+            toBars = max(toBars, abs(decoded - bars[index]).max())
+            misread = max(misread, abs(SIMD3<Double>(Double(as709[x].x), Double(as709[x].y), Double(as709[x].z)) - bars[index]).max())
+        }
+        #expect(exact <= Self.tolerance, "Against the codes' exact R'G'B': \(exact * 1023) of 1023")
+        #expect(toBars <= 2.0 / 1023, "Against the bars: \(toBars * 1023) of 1023 (code rounding only)")
+        #expect(misread > 0.02, "Decoding 2020 bars as 709 must visibly misread them (\(misread))")
+    }
+
     // MARK: Encode
 
     @Test func encodeThenDecodeKeepsTenBitCodes() throws {

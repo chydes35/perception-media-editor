@@ -35,6 +35,19 @@ struct FrameTimeTests {
         #expect(FrameRate(frameDuration: .invalid) == nil)
     }
 
+    /// Task 13.2: an iPhone clip at 24 fps (nominal 23.9976) has one 24/600 s frame, which is exactly
+    /// 1/25 s, so its minimum frame duration alone says 25 fps. The nominal rate wins when it is a
+    /// standard rate; otherwise (variable-rate phone clips) the minimum duration still decides.
+    @Test func aShortFrameDoesNotChangeTheRate() {
+        let iPhone = FrameRate.detected(nominalFramesPerSecond: 23.997612, minimumFrameDuration: CMTime(value: 24, timescale: 600))
+        #expect(iPhone == FrameRate(frameDuration: 1, timescale: 24))
+        let lumix = FrameRate.detected(nominalFramesPerSecond: 23.976, minimumFrameDuration: CMTime(value: 1001, timescale: 24000))
+        #expect(lumix == .ntsc23976)
+        let variable = FrameRate.detected(nominalFramesPerSecond: 29.4, minimumFrameDuration: CMTime(value: 20, timescale: 600))
+        #expect(variable == FrameRate(frameDuration: 1, timescale: 30))
+        #expect(FrameRate.detected(nominalFramesPerSecond: 0, minimumFrameDuration: .invalid) == nil)
+    }
+
     @Test func secondsRoundToTheNearestFrame() {
         let rate = FrameRate.ntsc23976
         #expect(rate.nearestFrame(toSeconds: 1) == 24)

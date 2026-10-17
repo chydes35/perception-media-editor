@@ -348,6 +348,66 @@ struct TimelineVideoCompositorTests {
         return out.map { SIMD3($0[0], $0[1], $0[2]) }
     }
 
+    /// Task 13.2: landscape, then a portrait clip (stored landscape, tagged a quarter turn), then
+    /// landscape. Every frame has the first clip's render size; the portrait clip is upright and
+    /// pillarboxed (black left and right), and nothing changes size at the cuts.
+    @Test func aPortraitClipBetweenLandscapeClipsIsUprightAndPillarboxed() async throws {
+        let temp = try TempDirectory()
+        let landscape = try await patternAsset(temp, name: "landscape")
+        let portrait = try await patternAsset(temp, name: "portrait", transform: CGAffineTransform(a: 0, b: 1, c: -1, d: 0, tx: 108, ty: 0))
+        let clips = [TimelineClip(assetID: landscape.id, timelineStartFrame: 0, durationFrames: 6),
+                     TimelineClip(assetID: portrait.id, timelineStartFrame: 6, durationFrames: 6),
+                     TimelineClip(assetID: landscape.id, timelineStartFrame: 12, sourceStartFrame: 6, durationFrames: 6)]
+        let (item, _) = try await compose(clips, [landscape, portrait], path: .automatic)
+        #expect(item.videoComposition?.renderSize == CGSize(width: 192, height: 108))
+        let frames = try await allFrames(item, pixelFormat: kCVPixelFormatType_64RGBAHalf)
+        #expect(frames.count == 18)
+        #expect(frames.allSatisfy { CVPixelBufferGetWidth($0) == 192 && CVPixelBufferGetHeight($0) == 108 }, "One render size at every cut")
+
+        // Landscape frames: the pattern edge to edge. Portrait frames: a 60.75 px wide upright
+        // picture centred (x 65.6…126.4), black outside. Inside it, screen point (X, Y) is the
+        // portrait display's (u', v') = ((X − 65.6) / 60.75, Y / 108), which shows the source at
+        // (u, v) = (v', 1 − u') (see aRotatedClipComesOutUpright).
+        let left = (192 - 60.75) / 2
+        var worstLandscape = 0.0, worstPortrait = 0.0, brightestPillar: Float = 0
+        for (index, frame) in frames.enumerated() {
+            for Y in [20, 54, 88] {
+                let row = halfPixels(frame, row: Y)
+                if (6 ..< 12).contains(index) {
+                    brightestPillar = max(brightestPillar, row[4].max(), row[60].max(), row[131].max(), row[187].max())
+                    for X in [75, 96, 117] {
+                        let u = (Double(Y) + 0.5) / 108, v = 1 - (Double(X) + 0.5 - left) / 60.75
+                        let want = colorPatternRGB(u: u, v: v)
+                        worstPortrait = max(worstPortrait, abs(Double(row[X].x) - want.r), abs(Double(row[X].y) - want.g))
+                    }
+                } else {
+                    for X in [10, 96, 180] {
+                        let want = colorPatternRGB(u: (Double(X) + 0.5) / 192, v: (Double(Y) + 0.5) / 108)
+                        worstLandscape = max(worstLandscape, abs(Double(row[X].x) - want.r), abs(Double(row[X].y) - want.g))
+                    }
+                }
+            }
+        }
+        #expect(worstLandscape < 0.07, "Landscape frames differ from the pattern by \(worstLandscape)")
+        #expect(worstPortrait < 0.08, "The portrait clip is not upright: off by \(worstPortrait)")
+        #expect(brightestPillar < 0.01, "The pillars are not black: \(brightestPillar)")
+    }
+
+    /// Each clip's recipe carries its own source's matrix (BT.2020 for Apple Log), not the
+    /// composition's Rec. 709.
+    @Test func eachClipDecodesWithItsOwnMatrix() async throws {
+        let temp = try TempDirectory()
+        var appleLog = try await patternAsset(temp, name: "applelog")
+        appleLog.sourceColor = SourceColorDescriptor(bitDepth: 10, chroma: .yuv422, range: .video, matrix: .rec2020,
+                                                     transfer: .appleLog, gamut: .rec2020, detectedFrom: .logTransferKey)
+        let rec709 = try await patternAsset(temp, name: "rec709")
+        let clips = [TimelineClip(assetID: appleLog.id, timelineStartFrame: 0, durationFrames: 12),
+                     TimelineClip(assetID: rec709.id, timelineStartFrame: 12, durationFrames: 12)]
+        let (item, _) = try await compose(clips, [appleLog, rec709], path: .automatic)
+        let recipes = (item.videoComposition?.instructions ?? []).compactMap { ($0 as? TimelineCompositionInstruction)?.recipe }
+        #expect(recipes.map(\.matrix) == [.rec2020, .rec709])
+    }
+
     // MARK: Look
 
     /// Every stage of the color chain except HSL, against the old CIFilter handler: the pipeline

@@ -142,7 +142,7 @@ Video (V0.3 below) resumes after the photo phases. Lumix S5 10-bit 4:2:2 and V-L
 - [ ] Apple Log (iPhone 15 Pro ProRes): blocked on a real clip
 - [ ] Clip pan and advanced audio mixing
 - [ ] Titles, basic transitions, speed presets, and frame capture
-- [x] 1080p and 4K export (10-bit ProRes 422 HQ and HEVC Main10 on branch `plan/10bit-vlog-color`; frame-exact (G6 PASS); throughput and memory gates G1/G7 FAIL on the M1, Export menu NOT VERIFIED in the app)
+- [x] 1080p and 4K export (10-bit ProRes 422 HQ and HEVC Main10 on branch `plan/10bit-vlog-color`; frame-exact (G6 PASS); G1 throughput PASS from internal storage, G7 memory FAIL on the M1, Export menu NOT VERIFIED in the app)
 
 ## V1.0 — Perception Workflow
 

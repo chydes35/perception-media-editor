@@ -159,6 +159,10 @@ Probes: [`scripts/video-probes/`](../../scripts/video-probes). Build them with `
 - **Gate G7, playback part: FAIL.** From the start of playback (LUT case): +513 MB, against a limit of +350 MB (app peak 481 MB, decoder peak 182 MB), with 31 000 pages swapped out during the run. The app's footprint after each run went 330, 349 and then 365 MB for runs 3–10, so it is a plateau, not a leak. That is still 35 MB over 10 runs against the 20 MB limit, so the growth check fails as written. ACES: 392 → 395 MB (2.9 MB growth).
 - **G7, export part:** unchanged (Task 8: about 1.5 GB over idle, FAIL). This task added no memory reduction; the overruns now have the tooling to be worked on.
 
+## Correction, October 17: the external drive was on USB 2.0
+
+Every throughput number above was read from (and Task 8's exports written to) a Samsung T7 linked at USB 2.0, at about 38 MB/s. From the internal disk: S5 4K V-Log decode runs at 82 fps (not about 47), ProRes 422 HQ export at 52.1 fps (not 8.8; the M1's missing ProRes engine was not the cause), and HEVC Main10 export at 49.0 fps. **G1's export part now passes.** G7 still fails (about 1.55 GB over idle). See the [Apple Log record](2026-10-17-apple-log.md#re-measured-from-internal-storage-added-the-same-day).
+
 ## Verification still owed
 
 Task 0 measures feasibility only. G1–G9 in the plan remain open. The `VTDecoderXPCService` footprints are single samples taken mid-run. G7 must repeat them as peaks over whole runs.

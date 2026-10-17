@@ -20,7 +20,7 @@ UI responsiveness during generation is NOT VERIFIED.
 
 ## Video compositor (branch `plan/10bit-vlog-color`)
 
-**Caveat (found 2026-10-17):** the external SSD holding the clips (a Samsung T7) was linked at USB 2.0 (480 Mb/s, about 38 MB/s) through a USB-C adaptor's hub for every video measurement below. That bounds reading `P1107157` (151 Mb/s) to about 47 fps, so the decode ceilings and the G1 export numbers may be the link, not the Mac. Re-run them with the drive at USB 3 or faster. See the [Apple Log record](decisions/2026-10-17-apple-log.md).
+**Caveat (found 2026-10-17):** the external SSD holding the clips (a Samsung T7) was linked at USB 2.0 (480 Mb/s, about 38 MB/s) through a USB-C adaptor's hub for every video measurement below. That bounds reading `P1107157` (151 Mb/s) to about 47 fps, so the decode ceilings and the G1 export numbers were the link, not the Mac. The re-runs from the internal disk are in the export table and under "Source color through OpenColorIO". See the [Apple Log record](decisions/2026-10-17-apple-log.md).
 
 Lumix S5 `P1107157.MOV`, a 10 s UHD V-Log passthrough trim, `RealVideoCompositorTests`, release build, 8 GB M1, one case per process (`PME_COMPOSITOR_CASE`). Speeds vary 20–40% between runs on this passively cooled Mac.
 
@@ -42,10 +42,12 @@ The grade is the heavy test chain (exposure, contrast, highlights, shadows, temp
 
 | Format | Speed (G1 target 38 fps) | Size | Peak over idle (G7 limit 600 MB) |
 |---|---|---|---|
-| ProRes 422 HQ | 8.8 fps (software encoder: the M1 has no ProRes engine) | 5.13 GB | about 1 500 MB (app 1 003, decoder 539) |
-| HEVC Main10 | 34.4 fps (hardware encoder) | 363 MB | about 1 500 MB (app 994, decoder 535) |
+| ProRes 422 HQ, source and output on the T7 at USB 2.0 | 8.8 fps (limited by writing 5.1 GB at about 38 MB/s) | 5.13 GB | about 1 500 MB (app 1 003, decoder 539) |
+| HEVC Main10, T7 at USB 2.0 | 34.4 fps | 363 MB | about 1 500 MB (app 994, decoder 535) |
+| ProRes 422 HQ, internal disk (2026-10-17) | **52.1 fps** | 5.13 GB | 1 554 MB (app 1 010, decoder 550) |
+| HEVC Main10, internal disk (2026-10-17) | **49.0 fps** | 363 MB | 1 594 MB (app 1 045, decoder 551) |
 
-Both gates FAIL on this Mac. Task 11 added the instrumentation to work on the memory overrun but did not reduce it.
+G1 (export) PASSES from the internal disk. G7 (export) FAILS. Task 11 added the instrumentation to work on the memory overrun but did not reduce it.
 
 ## Source color through OpenColorIO (branch `plan/10bit-vlog-color`)
 
@@ -60,6 +62,8 @@ Same harness as the compositor table (10 s of `P1107157`, release, one case per 
 
 The ACES 2.0 output transform costs about 15 ms per 4K frame on the M1.
 
+From the internal disk, the S5 4K V-Log H.264 decode ceiling is **82 fps** (2026-10-17; Task 0's 47 fps was the USB 2.0 link). iPhone 15 Pro Apple Log ProRes 422 HQ 4K decodes at 105–110 fps, and runs through the compositor at 99 fps.
+
 ## Proxy playback, gates G1 and G7 (branch `plan/10bit-vlog-color`)
 
 `PME_PROFILE=playback scripts/profile-video.sh` (`RealVideoPlaybackTests`): a 1080p proxy of 60 s of `P1107157` with the golden grade, source color and scopes, played by AVPlayer in real time 10 times, release, 8 GB M1. Targets: G1 0 dropped frames and GPU ≤ 12 ms per frame; G7 ≤ +350 MB from the start of playback (app plus decoder) and ≤ 20 MB growth over 10 runs.
@@ -67,6 +71,7 @@ The ACES 2.0 output transform costs about 15 ms per 4K frame on the M1.
 | Source color | Dropped | GPU per frame | Over start of playback | Growth over 10 runs |
 |---|---|---|---|---|
 | Panasonic LUT | 6 of 14 380 | median 5.3, p99 10.9, max 23.7 ms | +513 MB (app 481, decoder 182 peak) | 35 MB (330 → 365 MB by run 3, then flat) |
+| Panasonic LUT, internal disk, heavy swapping (213 000 pages) | 8 of 14 380 | median 5.4, p99 13.1, max 16.0 ms | +691 MB (app 510, decoder 354 peak) | 1.2 MB |
 | ACES 2.0 | 1 of 14 380 | median 6.4, p99 13.4, max 29.0 ms | not measured from playback start | 2.9 MB |
 
 G1 (playback) and G7 (playback) FAIL. Scopes run at 13.7 Hz in both.

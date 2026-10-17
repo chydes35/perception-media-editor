@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task by task. Steps use checkbox (`- [ ]`) syntax for tracking. Task 0 is a measurement spike whose results can change Tasks 3–4. Do not skip it.
 
-Status: active (Tasks 0–10 done 2026-10-16/17 (G5 visual part, LUT, scope, export and source-color UI walkthroughs, G8, and G9's black level open; G1 and G7 FAIL on the M1; G4 PASS); see the [compositor](../../docs/decisions/2026-10-16-10bit-compositor.md), [timing](../../docs/decisions/2026-10-16-frame-exact-timing.md) and [OCIO](../../docs/decisions/2026-10-17-ocio-generated-shaders.md) decision records. Task 11 next. Task 13, Apple Log, is blocked on a real iPhone 15 Pro clip)
+Status: active (Tasks 0–12 done 2026-10-16/17 (G5 visual part, LUT, scope, export and source-color UI walkthroughs, G8, and G9's black level open; G1 and G7 FAIL on the M1, for export and for proxy playback; G4 PASS); see the [compositor](../../docs/decisions/2026-10-16-10bit-compositor.md), [timing](../../docs/decisions/2026-10-16-frame-exact-timing.md) and [OCIO](../../docs/decisions/2026-10-17-ocio-generated-shaders.md) decision records. Remaining: the owner's G8 review, the failed gates (G1, G7) and the unverified UI walkthroughs. Task 13, Apple Log, is blocked on a real iPhone 15 Pro clip)
 Roadmap sources: [V0.2 — LUT import and intensity control](../../docs/ROADMAP.md), [V0.3 — 1080p and 4K export](../../docs/ROADMAP.md). The 10-bit compositor, frame-exact timing, OCIO and scopes are new V0.3 work and must be added to the roadmap (Task 12).
 Builds on: [video-proxy-pipeline.md](video-proxy-pipeline.md) (branch `feat/video-proxies`: `MediaQuality`, proxy-aware `TimelineCompositionService`)
 Owner: video engine
@@ -317,16 +317,17 @@ Root cause: the 48³ trilinear cube interpolates a function with a hue discontin
 
 ### Task 11: Memory pressure and performance instrumentation
 
-- [ ] The compositor reports per-frame GPU time (`MTLCommandBuffer.gpuStartTime/gpuEndTime`) and dropped requests through `PhotoPreviewDiagnostics`-style logging (`os_signpost` with "VideoCompositor" intervals).
-- [ ] Memory-pressure source: flush the texture cache, clear CI caches, and drop the scope textures.
-- [ ] Extend `scripts/profile-memory.sh` (or add `scripts/profile-video.sh`) to record peak footprint for G7.
+- [x] The compositor reports per-frame GPU time (`MTLCommandBuffer.gpuStartTime/gpuEndTime`) and dropped requests through `PhotoPreviewDiagnostics`-style logging (`os_signpost` with "VideoCompositor" intervals).
+- [x] Memory-pressure source: flush the texture cache, clear CI caches, and drop the scope textures.
+- [x] Extend `scripts/profile-memory.sh` (or add `scripts/profile-video.sh`) to record peak footprint for G7.
+- [x] Done 2026-10-17. Playback gates measured with the new `RealVideoPlaybackTests` under `PME_PROFILE=playback scripts/profile-video.sh`: G1 playback FAIL (LUT: 6 of 14 380 frames dropped, GPU p99 10.9 ms; ACES: 1 dropped, p99 13.4 ms), G7 playback FAIL (+513 MB from the start of playback, limit 350; growth 35 MB, a plateau after run 3). A real memory-pressure event is NOT VERIFIED. See the [compositor decision record](../../docs/decisions/2026-10-16-10bit-compositor.md).
 
 ### Task 12: Docs and roadmap
 
-- [ ] `DATA_MODEL.md`: schema 11 (frames, `FrameRate`, descriptor, `colorInputByAssetID`, `PhotoAdjustments.lut`, the `LUTs/` folder), migration and offline behavior.
-- [ ] `ARCHITECTURE.md`: replace the "Core Image-backed `AVVideoComposition`" paragraph with the compositor pipeline, and update the `ColorGrading.swift` description (no 48-point cube).
-- [ ] `PERFORMANCE_TARGETS.md`: the G1/G7/G9 targets and measured results. `TESTING_STRATEGY.md`: the new env vars and opt-in suites. `ROADMAP.md`: tick V0.2 LUT import once G3 passes; add V0.3 items for the 10-bit compositor, V-Log color management, scopes and frame-exact timing. `CURRENT_STATUS.md`.
-- [ ] If Task 13 lands in this milestone: add Apple Log to `DATA_MODEL.md` (the new `SourceTransfer`/`SourceGamut` cases), `ROADMAP.md` and `CURRENT_STATUS.md`. If it is still blocked, list it in `CURRENT_STATUS.md` as blocked on a real clip.
+- [x] `DATA_MODEL.md`: schema 11 (frames, `FrameRate`, descriptor, `colorInputByAssetID`, `PhotoAdjustments.lut`, the `LUTs/` folder), migration and offline behavior.
+- [x] `ARCHITECTURE.md`: replace the "Core Image-backed `AVVideoComposition`" paragraph with the compositor pipeline, and update the `ColorGrading.swift` description (no 48-point cube).
+- [x] `PERFORMANCE_TARGETS.md`: the G1/G7/G9 targets and measured results. `TESTING_STRATEGY.md`: the new env vars and opt-in suites. `ROADMAP.md`: tick V0.2 LUT import once G3 passes; add V0.3 items for the 10-bit compositor, V-Log color management, scopes and frame-exact timing. `CURRENT_STATUS.md`.
+- [x] If Task 13 lands in this milestone: add Apple Log to `DATA_MODEL.md` (the new `SourceTransfer`/`SourceGamut` cases), `ROADMAP.md` and `CURRENT_STATUS.md`. If it is still blocked, list it in `CURRENT_STATUS.md` as blocked on a real clip.
 
 ### Task 13: Apple Log (iPhone 15 Pro ProRes) — blocked on a real clip
 

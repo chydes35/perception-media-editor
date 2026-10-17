@@ -120,14 +120,14 @@ Video (V0.3 below) resumes after the photo phases. Lumix S5 10-bit 4:2:2 and V-L
 
 - [ ] RAW-specific development controls and metadata panel
 - [ ] Batch selection, adjustment sync, and batch export
-- [ ] LUT import and intensity control (implemented on branch `plan/10bit-vlog-color` for photos and video, with the V-Log source-color LUT; G3 PASS; in-app UI walkthrough NOT VERIFIED)
+- [x] LUT import and intensity control (branch `plan/10bit-vlog-color`, photos and video, with the V-Log source-color LUT; G3 PASS; in-app UI walkthrough NOT VERIFIED)
 - [x] Persistent thumbnail cache and media relinking
 - [x] Before/after split and side-by-side views
 - [x] Interactive crop and straighten with preview zoom and pan
 - [x] Grouped photo edit undo and redo with direct adjustment values
 - [ ] Export presets, resize, watermark, and metadata controls
 
-## V0.3 — Video Editor (existing baseline; development deferred)
+## V0.3 — Video Editor (existing baseline; 10-bit and V-Log work pulled forward on branch `plan/10bit-vlog-color`)
 
 - [x] AVFoundation video import, thumbnails, metadata, and playback
 - [x] Persistent V1/A1 timeline model and interface
@@ -136,6 +136,10 @@ Video (V0.3 below) resumes after the photo phases. Lumix S5 10-bit 4:2:2 and V-L
 - [x] Shared color model for photos and video clips
 - [x] Waveform cache, clip volume, and fades
 - [x] Waveform and vectorscope (Metal, fed by the custom compositor; branch `plan/10bit-vlog-color`; G9 rate and cost PASS, in-app panel NOT VERIFIED)
+- [x] 10-bit custom compositor: Y'CbCr decoded on Metal in half float, never 8-bit; grade shared with photos (branch `plan/10bit-vlog-color`; on-screen playback in the app NOT VERIFIED)
+- [x] Frame-exact clip timing, schema 11 (branch `plan/10bit-vlog-color`; G6 PASS)
+- [x] V-Log color management: camera-metadata detection, Panasonic LUT or OpenColorIO ACES 2.0 as source color (branch `plan/10bit-vlog-color`; G3 and G4 PASS; G8 owner review open)
+- [ ] Apple Log (iPhone 15 Pro ProRes): blocked on a real clip
 - [ ] Clip pan and advanced audio mixing
 - [ ] Titles, basic transitions, speed presets, and frame capture
 - [x] 1080p and 4K export (10-bit ProRes 422 HQ and HEVC Main10 on branch `plan/10bit-vlog-color`; frame-exact (G6 PASS); throughput and memory gates G1/G7 FAIL on the M1, Export menu NOT VERIFIED in the app)

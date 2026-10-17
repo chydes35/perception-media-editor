@@ -43,7 +43,31 @@ The grade is the heavy test chain (exposure, contrast, highlights, shadows, temp
 | ProRes 422 HQ | 8.8 fps (software encoder: the M1 has no ProRes engine) | 5.13 GB | about 1 500 MB (app 1 003, decoder 539) |
 | HEVC Main10 | 34.4 fps (hardware encoder) | 363 MB | about 1 500 MB (app 994, decoder 535) |
 
-Both gates FAIL on this Mac. The memory overrun is open work for Task 11.
+Both gates FAIL on this Mac. Task 11 added the instrumentation to work on the memory overrun but did not reduce it.
+
+## Source color through OpenColorIO (branch `plan/10bit-vlog-color`)
+
+Same harness as the compositor table (10 s of `P1107157`, release, one case per process).
+
+| Case | Without ACES | With ACES (V-Log → ACES 2.0 Rec. 709) | App footprint with ACES |
+|---|---|---|---|
+| 4K original, neutral, preview | 78.6 fps | 35.7 fps | 12 → 494 MB |
+| 4K original, neutral, export | — | 35.9 fps | 12 → 490 MB |
+| 4K original, graded, preview | 25.1 fps | 15.9 fps | 12 → 1 231 MB |
+| 1080p proxy, graded, preview | 94.6 fps | 49–50 fps | 23 → 320 MB |
+
+The ACES 2.0 output transform costs about 15 ms per 4K frame on the M1.
+
+## Proxy playback, gates G1 and G7 (branch `plan/10bit-vlog-color`)
+
+`PME_PROFILE=playback scripts/profile-video.sh` (`RealVideoPlaybackTests`): a 1080p proxy of 60 s of `P1107157` with the golden grade, source color and scopes, played by AVPlayer in real time 10 times, release, 8 GB M1. Targets: G1 0 dropped frames and GPU ≤ 12 ms per frame; G7 ≤ +350 MB from the start of playback (app plus decoder) and ≤ 20 MB growth over 10 runs.
+
+| Source color | Dropped | GPU per frame | Over start of playback | Growth over 10 runs |
+|---|---|---|---|---|
+| Panasonic LUT | 6 of 14 380 | median 5.3, p99 10.9, max 23.7 ms | +513 MB (app 481, decoder 182 peak) | 35 MB (330 → 365 MB by run 3, then flat) |
+| ACES 2.0 | 1 of 14 380 | median 6.4, p99 13.4, max 29.0 ms | not measured from playback start | 2.9 MB |
+
+G1 (playback) and G7 (playback) FAIL. Scopes run at 13.7 Hz in both.
 
 ## Scopes (branch `plan/10bit-vlog-color`)
 

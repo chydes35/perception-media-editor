@@ -108,10 +108,18 @@ struct LUTWorkflowTests {
         let log = video("P1107158.MOV", log: true), flat = video("P1107159.MOV", log: true)
         let rec709 = video("P1107172.MOV", log: false), untagged = video("P1107173.MOV", log: false)
         let graded = video("P1107174.MOV", log: true)
-        store.project.media = [log, flat, rec709, untagged, graded]
+        var appleLog = video("IMG_0001.MOV", log: false), appleLogACES = video("IMG_0002.MOV", log: false)
+        for index in [0, 1] {
+            let color = SourceColorDescriptor(bitDepth: 10, chroma: .yuv422, range: .video, matrix: .rec2020,
+                                              transfer: .appleLog, gamut: .rec2020, detectedFrom: .logTransferKey)
+            if index == 0 { appleLog.sourceColor = color } else { appleLogACES.sourceColor = color }
+        }
+        store.project.media = [log, flat, rec709, untagged, graded, appleLog, appleLogACES]
+        store.setColorInput(.aces, forAssets: [appleLogACES.id])
         store.setColorInput(.none, forAssets: [flat.id])
         store.setColorInput(.aces, forAssets: [untagged.id])
         store.setColorInput(.lut(LUTReference(contentHash: LUTLibrary.hash(Data("x".utf8)), displayName: "V709")), forAssets: [graded.id])
+        // Apple Log never goes through the V-Log transform, chosen or automatic (Task 13.3 adds its own).
         #expect(store.resolvedOCIOInputs() == [log.id: .vLogVGamut, untagged.id: .vLogVGamut])
     }
 

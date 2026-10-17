@@ -6,10 +6,14 @@ enum YCbCrMatrix: String, Codable, Sendable { case rec709, rec601, rec2020, unkn
 enum ChromaSubsampling: String, Codable, Sendable {
     case yuv420 = "4:2:0", yuv422 = "4:2:2", yuv444 = "4:4:4"
 }
-/// Only what the pipeline renders. Anything else (HLG, PQ, other camera logs) is `.unknown`.
-enum SourceTransfer: String, Codable, Sendable { case rec709, vLog, unknown }
-enum SourceGamut: String, Codable, Sendable { case rec709, vGamut, unknown }
+/// What the pipeline knows. HLG and PQ are recorded but shown without tone mapping (HDR is out
+/// of scope); Apple Log 2 and other camera logs are `.unknown`.
+enum SourceTransfer: String, Codable, Sendable { case rec709, vLog, appleLog, hlg, pq, unknown }
+enum SourceGamut: String, Codable, Sendable { case rec709, vGamut, rec2020, unknown }
 enum SourceColorEvidence: String, Codable, Sendable {
+    /// The format description's log key (`kCMFormatDescriptionExtension_LogTransferFunction`),
+    /// which iPhone Apple Log clips carry.
+    case logTransferKey = "log-transfer-key"
     /// The camera's own clip metadata (Panasonic `CaptureGamma`/`CaptureGamut`).
     case panasonicMetadata = "panasonic-xml"
     /// The container's color tags, which the S5 sets to BT.709 even for V-Log.
@@ -27,17 +31,27 @@ struct SourceColorDescriptor: Codable, Hashable, Sendable {
     var gamut: SourceGamut
     var detectedFrom: SourceColorEvidence
 
-    var isLog: Bool { transfer == .vLog }
+    var isLog: Bool { transfer == .vLog || transfer == .appleLog }
+    var isHDR: Bool { transfer == .hlg || transfer == .pq }
+    /// The file says it is log footage, but in a curve the pipeline does not know (Apple Log 2).
+    var isUnsupportedLog: Bool { detectedFrom == .logTransferKey && transfer == .unknown }
 
     /// For the inspector, e.g. "V-Log / V-Gamut (camera metadata), 10-bit 4:2:2, full range".
     var summary: String {
         let curve: String = switch (transfer, gamut) {
         case (.vLog, .vGamut): "V-Log / V-Gamut"
         case (.vLog, _): "V-Log"
+        case (.appleLog, _): "Apple Log / BT.2020"
+        case (.hlg, _): "HDR (HLG)"
+        case (.pq, _): "HDR (PQ)"
         case (.rec709, _): "Rec. 709"
-        case (.unknown, _): "Unknown color"
+        case (.unknown, _): isUnsupportedLog ? "Unsupported log" : "Unknown color"
         }
-        let source = detectedFrom == .panasonicMetadata ? " (camera metadata)" : ""
+        let source = switch detectedFrom {
+        case .panasonicMetadata: " (camera metadata)"
+        case .logTransferKey: " (log transfer key)"
+        case .formatDescription: ""
+        }
         let format = [bitDepth.map { "\($0)-bit" }, chroma?.rawValue].compactMap { $0 }.joined(separator: " ")
         let rangeText = range == .full ? "full range" : "video range"
         return "\(curve)\(source), " + (format.isEmpty ? rangeText : "\(format), \(rangeText)")
@@ -108,7 +122,8 @@ struct PanasonicClipMetadata: Equatable, Sendable {
 }
 
 enum SourceColorDetector {
-    /// Camera metadata wins over container tags for transfer and gamut; range and matrix always come
+    /// Transfer and gamut come, in order, from the format description's log key (Apple Log), the
+    /// camera's clip metadata (Panasonic), and the container's tags. Range and matrix always come
     /// from the format description, which describes the encoded samples themselves.
     static func descriptor(format: CMFormatDescription, panasonicXML: String?) -> SourceColorDescriptor {
         func string(_ key: CFString) -> String? { CMFormatDescriptionGetExtension(format, extensionKey: key) as? String }
@@ -120,10 +135,17 @@ enum SourceColorDetector {
             kCMFormatDescriptionYCbCrMatrix_ITU_R_2020 as String: .rec2020
         ]
         let matrix = string(kCMFormatDescriptionExtension_YCbCrMatrix).flatMap { matrices[$0] } ?? .unknown
-        let taggedTransfer: SourceTransfer = string(kCMFormatDescriptionExtension_TransferFunction)
-            == (kCMFormatDescriptionTransferFunction_ITU_R_709_2 as String) ? .rec709 : .unknown
-        let taggedGamut: SourceGamut = string(kCMFormatDescriptionExtension_ColorPrimaries)
-            == (kCMFormatDescriptionColorPrimaries_ITU_R_709_2 as String) ? .rec709 : .unknown
+        let transfers: [String: SourceTransfer] = [
+            kCMFormatDescriptionTransferFunction_ITU_R_709_2 as String: .rec709,
+            kCMFormatDescriptionTransferFunction_ITU_R_2100_HLG as String: .hlg,
+            kCMFormatDescriptionTransferFunction_SMPTE_ST_2084_PQ as String: .pq
+        ]
+        let taggedTransfer = string(kCMFormatDescriptionExtension_TransferFunction).flatMap { transfers[$0] } ?? .unknown
+        let gamuts: [String: SourceGamut] = [
+            kCMFormatDescriptionColorPrimaries_ITU_R_709_2 as String: .rec709,
+            kCMFormatDescriptionColorPrimaries_ITU_R_2020 as String: .rec2020
+        ]
+        let taggedGamut = string(kCMFormatDescriptionExtension_ColorPrimaries).flatMap { gamuts[$0] } ?? .unknown
         let coded = codedFormat(format)
 
         var descriptor = SourceColorDescriptor(
@@ -131,6 +153,19 @@ enum SourceColorDetector {
             range: fullRange ? .full : .video, matrix: matrix,
             transfer: taggedTransfer, gamut: taggedGamut, detectedFrom: .formatDescription
         )
+        // iPhone Apple Log: BT.2020 primaries with no transfer tag, identified only by this key.
+        if let log = string(kCMFormatDescriptionExtension_LogTransferFunction) {
+            descriptor.detectedFrom = .logTransferKey
+            if log == (kCMFormatDescriptionLogTransferFunction_AppleLog as String) {
+                descriptor.transfer = .appleLog
+                descriptor.gamut = .rec2020
+            } else {
+                // Apple Log 2 (Apple Gamut) or a newer curve: log, but not one the pipeline renders.
+                descriptor.transfer = .unknown
+                descriptor.gamut = .unknown
+            }
+            return descriptor
+        }
         guard let camera = panasonicXML.flatMap(PanasonicClipMetadata.init(xml:)) else { return descriptor }
         descriptor.detectedFrom = .panasonicMetadata
         descriptor.bitDepth = descriptor.bitDepth ?? camera.bitDepth

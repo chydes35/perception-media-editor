@@ -20,6 +20,16 @@ struct RealVideoColorTests {
         #expect(color.range == .full && color.matrix == .rec709 && color.bitDepth == 10 && color.chroma == .yuv422)
     }
 
+    /// Task 13.1 on the owner's iPhone 15 Pro clip (PME_APPLELOG_SHORT=/Volumes/ExSSD1/PMVideoTestFiles/IMG_0001.MOV).
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["PME_APPLELOG_SHORT"] != nil))
+    func iPhoneAppleLogIsDetectedFromItsLogKey() async throws {
+        let url = URL(fileURLWithPath: ProcessInfo.processInfo.environment["PME_APPLELOG_SHORT"]!)
+        let color = try #require(await VideoMediaService.shared.metadata(for: url).sourceColor)
+        print("Apple Log sample: \(color.summary)")
+        #expect(color.transfer == .appleLog && color.gamut == .rec2020 && color.detectedFrom == .logTransferKey)
+        #expect(color.range == .video && color.matrix == .rec2020 && color.bitDepth == 10 && color.chroma == .yuv422)
+    }
+
     @Test(.enabled(if: ProcessInfo.processInfo.environment["PME_REC709_8BIT"] != nil))
     func lumixStandardGammaStaysRec709() async throws {
         let url = URL(fileURLWithPath: ProcessInfo.processInfo.environment["PME_REC709_8BIT"]!)

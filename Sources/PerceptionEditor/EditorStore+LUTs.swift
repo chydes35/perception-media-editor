@@ -106,12 +106,14 @@ extension EditorStore {
     }
 
     /// Media shown through OpenColorIO: chosen as ACES, or left on Automatic and detected as V-Log.
-    /// (ACES chosen by hand covers V-Log whose camera metadata was lost.)
+    /// (ACES chosen by hand covers V-Log whose camera metadata was lost.) Apple Log has no OCIO
+    /// transform yet (plan Task 13.3), so it is never sent through the V-Log one.
     func resolvedOCIOInputs() -> [UUID: OCIOInputTransform] {
         project.media.reduce(into: [:]) { result, asset in
+            let transfer = asset.sourceColor?.transfer
             switch project.colorInput(for: asset.id) {
-            case .aces: result[asset.id] = .vLogVGamut
-            case .automatic where asset.sourceColor?.isLog == true: result[asset.id] = .vLogVGamut
+            case .aces where transfer != .appleLog: result[asset.id] = .vLogVGamut
+            case .automatic where transfer == .vLog: result[asset.id] = .vLogVGamut
             default: break
             }
         }

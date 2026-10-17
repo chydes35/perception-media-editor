@@ -32,6 +32,28 @@ struct VideoProxyWorkflowTests {
         #expect(composition.tracks(withMediaType: .video).first?.segments.first?.sourceURL == proxy)
     }
 
+    /// The source viewer shows log footage through its input transform: an Apple Log clip plays through
+    /// the compositor, while an ordinary clip with no color work still plays natively.
+    @Test func sourceViewerShowsLogThroughTheCompositorAndPlainClipsNatively() async throws {
+        let temp = try TempDirectory()
+        let store = try makeStore(temp)
+        let log = try await writeVideoRangeLogTestMovie(to: temp.url.appendingPathComponent("IMG_LOG.MOV"), frames: 12, width: 160, height: 90)
+        let plain = try await writeTestMovie(to: temp.url.appendingPathComponent("PLAIN.MOV"), frames: 12, width: 160, height: 90)
+        store.usesProxiesForPlayback = false
+        await store.importURLs([log, plain]).value
+        let logAsset = try #require(store.project.media.first { $0.filename == "IMG_LOG.MOV" })
+        let plainAsset = try #require(store.project.media.first { $0.filename == "PLAIN.MOV" })
+        try #require(logAsset.sourceColor?.transfer == .appleLog)
+
+        store.selectVideo(logAsset)
+        try await waitUntil { store.videoPlayer?.currentItem?.videoComposition != nil }
+        #expect(store.videoPlayer?.currentItem?.videoComposition?.customVideoCompositorClass != nil)
+
+        store.selectVideo(plainAsset)
+        try await waitUntil { store.videoPlayer?.currentItem?.videoComposition == nil && store.videoPlayer?.currentItem != nil }
+        #expect(store.videoPlayer?.currentItem?.videoComposition == nil)
+    }
+
     @Test func turningProxiesOffPlaysOriginals() async throws {
         let temp = try TempDirectory()
         let store = try makeStore(temp)

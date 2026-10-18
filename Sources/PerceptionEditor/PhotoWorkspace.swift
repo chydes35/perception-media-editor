@@ -249,6 +249,14 @@ struct PhotoWorkspace: View {
                     HSLPanel()
                 }
 
+                adjustmentGroup("COLOR GRADING") {
+                    ThreeWayGradePanel()
+                }
+
+                adjustmentGroup("GRAIN") {
+                    GrainPanel()
+                }
+
                 adjustmentGroup("LUT") {
                     LUTControls(
                         application: store.selectedAdjustments.lut,

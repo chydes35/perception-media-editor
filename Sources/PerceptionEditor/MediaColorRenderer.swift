@@ -63,6 +63,10 @@ enum MediaColorRenderer {
             image = applyHSL(hsl, to: image)
         }
 
+        if let grading = adjustments.grading, !grading.isNeutral {
+            image = applyColorGrade(grading, to: image)
+        }
+
         // A creative LUT comes after the global adjustments and before local ones.
         if let lut = adjustments.lut {
             image = applyCreativeLUT(lut, to: image)
@@ -86,6 +90,11 @@ enum MediaColorRenderer {
             vignette.intensity = Float(adjustments.vignette * 2)
             vignette.radius = Float(min(image.extent.width, image.extent.height) * 0.55)
             image = vignette.outputImage ?? image
+        }
+
+        // Grain is for photos: a fixed noise pattern would sit still over moving video.
+        if includesGeometry, let grain = adjustments.grain, !grain.isNeutral {
+            image = applyGrain(grain, to: image)
         }
 
         return includesGeometry ? crop(image, to: adjustments.cropAspect, rect: adjustments.cropRect) : image

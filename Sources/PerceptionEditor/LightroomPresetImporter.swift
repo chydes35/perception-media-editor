@@ -108,6 +108,45 @@ enum LightroomPresetImporter {
             groups.insert(.hsl)
         }
 
+        // Color grading, or the older split toning, which is the same idea with two zones.
+        var grade = ColorGradeAdjustments()
+        func zone(_ name: String) -> GradeZone {
+            GradeZone(
+                hue: (number("ColorGrade\(name)Hue") ?? 0).truncatingRemainder(dividingBy: 360),
+                saturation: scaled("ColorGrade\(name)Sat", range: 0 ... 1) ?? 0,
+                luminance: scaled("ColorGrade\(name)Lum") ?? 0
+            )
+        }
+        grade.shadows = zone("Shadow")
+        grade.midtones = zone("Midtone")
+        grade.highlights = zone("Highlight")
+        grade.global = zone("Global")
+        if let blending = scaled("ColorGradeBlending", range: 0 ... 1) { grade.blending = blending }
+        if let balance = scaled("ColorGradeBalance") { grade.balance = balance }
+        if grade.isNeutral {
+            let shadowSat = scaled("SplitToningShadowSaturation", range: 0 ... 1) ?? 0
+            let highlightSat = scaled("SplitToningHighlightSaturation", range: 0 ... 1) ?? 0
+            if shadowSat > 0 || highlightSat > 0 {
+                grade.shadows = GradeZone(hue: number("SplitToningShadowHue") ?? 0, saturation: shadowSat)
+                grade.highlights = GradeZone(hue: number("SplitToningHighlightHue") ?? 0, saturation: highlightSat)
+                grade.balance = scaled("SplitToningBalance") ?? 0
+            }
+        }
+        if !grade.isNeutral {
+            adjustments.grading = grade
+            groups.insert(.colorGrading)
+        }
+
+        // Grain
+        if let amount = scaled("GrainAmount", range: 0 ... 1), amount > 0 {
+            adjustments.grain = GrainAdjustments(
+                amount: amount,
+                size: scaled("GrainSize", range: 0 ... 1) ?? 0.25,
+                roughness: scaled("GrainFrequency", range: 0 ... 1) ?? 0.5
+            )
+            groups.insert(.grain)
+        }
+
         // Noise reduction (applies at RAW decode)
         let luminanceNR = scaled("LuminanceSmoothing", range: 0 ... 1) ?? 0
         let colorNR = scaled("ColorNoiseReduction", range: 0 ... 1) ?? 0

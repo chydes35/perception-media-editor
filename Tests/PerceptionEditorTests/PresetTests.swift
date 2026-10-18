@@ -12,6 +12,10 @@ struct AdjustmentGroupTests {
         a.raw.sharpness = 0.5; a.raw.detail = 1.5; a.raw.lensCorrection = false
         a.curves[.rgb] = ToneCurve.presets[1].curve
         a.hsl = HSLAdjustments(orange: HSLBandAdjustment(hue: 0.2, saturation: 0.1, luminance: 0))
+        var grade = ColorGradeAdjustments()
+        grade.shadows = GradeZone(hue: 220, saturation: 0.3, luminance: 0)
+        a.grading = grade
+        a.grain = GrainAdjustments(amount: 0.4)
         a.rotationQuarterTurns = 1
         a.cropAspect = .square
         a.cropRect = CropRect(x: 0.1, y: 0.1, width: 0.5, height: 0.5)

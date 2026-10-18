@@ -9,6 +9,8 @@ enum AdjustmentGroup: String, CaseIterable, Codable, Identifiable, Sendable {
     case presence
     case toneCurve
     case hsl
+    case colorGrading
+    case grain
     case rawDetail
     case masks
 
@@ -22,6 +24,8 @@ enum AdjustmentGroup: String, CaseIterable, Codable, Identifiable, Sendable {
         case .presence: "Presence"
         case .toneCurve: "Tone Curve"
         case .hsl: "HSL"
+        case .colorGrading: "Color Grading"
+        case .grain: "Grain"
         case .rawDetail: "RAW Detail"
         case .masks: "Masks"
         }
@@ -35,6 +39,8 @@ enum AdjustmentGroup: String, CaseIterable, Codable, Identifiable, Sendable {
         case .presence: "Sharpness and vignette"
         case .toneCurve: "RGB and channel curves"
         case .hsl: "Hue, saturation, luminance by color"
+        case .colorGrading: "Shadow, midtone and highlight tints"
+        case .grain: "Film grain amount, size and roughness"
         case .rawDetail: "Noise reduction, RAW sharpness, detail, lens corrections"
         case .masks: "Gradient masks and their adjustments (brush strokes stay with their photo)"
         }
@@ -76,6 +82,10 @@ extension PhotoAdjustments {
                 result.curves = source.curves
             case .hsl:
                 result.hsl = source.hsl
+            case .colorGrading:
+                result.grading = source.grading
+            case .grain:
+                result.grain = source.grain
             case .masks:
                 // Gradients describe a look (a darker sky, a vignette) and travel between photos;
                 // a brush stroke is painted on one photo's subject, so it stays where it is.
@@ -122,6 +132,8 @@ extension PhotoAdjustments {
         note("LUT", lut != old.lut)
         note("Tone Curve", curves != old.curves)
         note("HSL", hsl != old.hsl)
+        note("Color Grading", grading != old.grading)
+        note("Grain", grain != old.grain)
         note("Masks", masks != old.masks)
         note("Retouch", retouches != old.retouches)
         note("Noise Reduction", raw.luminanceNoiseReduction != old.raw.luminanceNoiseReduction

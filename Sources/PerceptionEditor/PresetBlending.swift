@@ -40,6 +40,8 @@ extension PhotoAdjustments {
             result.curves[channel] = Self.blend(curves[channel], full.curves[channel], amount: t)
         }
         result.hsl = Self.blend(hsl, full.hsl, amount: t)
+        result.grading = Self.blend(grading, full.grading, amount: t)
+        result.grain = Self.blend(grain, full.grain, amount: t)
         return result
     }
 
@@ -51,6 +53,35 @@ extension PhotoAdjustments {
         let anchors = (b == nil ? from : to).points
         let points = anchors.map { CurvePoint(x: $0.x, y: from.evaluate($0.x) + (to.evaluate($0.x) - from.evaluate($0.x)) * t) }
         return ToneCurve(points: points)
+    }
+
+    private static func blend(_ a: ColorGradeAdjustments?, _ b: ColorGradeAdjustments?, amount t: Double) -> ColorGradeAdjustments? {
+        guard a != nil || b != nil else { return nil }
+        let from = a ?? ColorGradeAdjustments()
+        let to = b ?? ColorGradeAdjustments()
+        func mix(_ x: Double, _ y: Double) -> Double { x + (y - x) * t }
+        var result = ColorGradeAdjustments()
+        result.blending = mix(from.blending, to.blending)
+        result.balance = mix(from.balance, to.balance)
+        for zone in ColorGradeAdjustments.Zone.allCases {
+            let x = from[zone], y = to[zone]
+            // Hue is a position on a circle, so a zone with no tint takes the other side's hue.
+            let hue = x.saturation == 0 ? y.hue : (y.saturation == 0 ? x.hue : mix(x.hue, y.hue))
+            result[zone] = GradeZone(hue: hue, saturation: mix(x.saturation, y.saturation), luminance: mix(x.luminance, y.luminance))
+        }
+        return result.isNeutral ? nil : result
+    }
+
+    private static func blend(_ a: GrainAdjustments?, _ b: GrainAdjustments?, amount t: Double) -> GrainAdjustments? {
+        guard a != nil || b != nil else { return nil }
+        let from = a ?? GrainAdjustments(amount: 0, size: b?.size ?? 0.25, roughness: b?.roughness ?? 0.5)
+        let to = b ?? GrainAdjustments(amount: 0, size: a?.size ?? 0.25, roughness: a?.roughness ?? 0.5)
+        let mixed = GrainAdjustments(
+            amount: from.amount + (to.amount - from.amount) * t,
+            size: from.size + (to.size - from.size) * t,
+            roughness: from.roughness + (to.roughness - from.roughness) * t
+        )
+        return mixed.isNeutral ? nil : mixed
     }
 
     private static func blend(_ a: HSLAdjustments?, _ b: HSLAdjustments?, amount t: Double) -> HSLAdjustments? {

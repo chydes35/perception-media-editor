@@ -371,6 +371,10 @@ struct PhotoAdjustments: Codable, Equatable, Sendable {
     var curves = ToneCurves()
     /// Nil when every color band is untouched.
     var hsl: HSLAdjustments?
+    /// Three-way color grade. Nil when untouched.
+    var grading: ColorGradeAdjustments?
+    /// Film grain. Nil when the amount is zero.
+    var grain: GrainAdjustments?
     /// Local adjustments, in order. Positions are in the original image's coordinates.
     var masks: [LocalMask] = []
     /// Photo-specific repairs in original-image coordinates.
@@ -405,7 +409,7 @@ struct PhotoAdjustments: Codable, Equatable, Sendable {
 extension PhotoAdjustments {
     enum CodingKeys: String, CodingKey {
         case exposure, contrast, highlights, shadows, temperature, tint, vibrance, saturation
-        case sharpness, vignette, rotationQuarterTurns, cropAspect, cropRect, straightenDegrees, raw, curves, hsl, masks, retouches, lut
+        case sharpness, vignette, rotationQuarterTurns, cropAspect, cropRect, straightenDegrees, raw, curves, hsl, grading, grain, masks, retouches, lut
     }
 
     /// Every field decodes with a default, so projects saved before a field existed still open.
@@ -428,6 +432,8 @@ extension PhotoAdjustments {
         raw = try container.decodeIfPresent(RawSettings.self, forKey: .raw) ?? RawSettings()
         curves = try container.decodeIfPresent(ToneCurves.self, forKey: .curves) ?? ToneCurves()
         hsl = try container.decodeIfPresent(HSLAdjustments.self, forKey: .hsl)
+        grading = try container.decodeIfPresent(ColorGradeAdjustments.self, forKey: .grading)
+        grain = try container.decodeIfPresent(GrainAdjustments.self, forKey: .grain)
         masks = try container.decodeIfPresent([LocalMask].self, forKey: .masks) ?? []
         retouches = try container.decodeIfPresent([RetouchStroke].self, forKey: .retouches) ?? []
         lut = try container.decodeIfPresent(LUTApplication.self, forKey: .lut)

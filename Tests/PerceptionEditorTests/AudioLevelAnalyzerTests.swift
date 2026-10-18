@@ -35,14 +35,16 @@ private func writeToneWAVSync(
         for i in 0 ..< count {
             let t = Double(written + i) / sampleRate
             let on = bursts?.contains { $0.contains(t) } ?? true
-            data[i] = on ? Float(amplitude * sin(2 * .pi * frequency * t)) : 0
+            // Clamp so amplitudes above 1.0 make a hard-clipped (flat-topped) recording.
+            data[i] = on ? Float(max(-1, min(1, amplitude * sin(2 * .pi * frequency * t)))) : 0
         }
         try file.write(from: buffer)
         written += count
     }
 }
 
-/// Fixture writing is slow in debug builds; do it off the cooperative pool so parallel tests are not starved.
+/// Fixture writing blocks and is slow in debug builds. It runs on a utility dispatch queue with a continuation,
+/// never on the cooperative pool (Task.detached included), so parallel tests are not starved.
 private func writeToneWAV(
     to url: URL,
     seconds: Double,
@@ -52,12 +54,37 @@ private func writeToneWAV(
     sampleRate: Double = 48000,
     bursts: [ClosedRange<Double>]? = nil
 ) async throws {
-    try await Task.detached(priority: .utility) {
-        try writeToneWAVSync(
-            to: url, seconds: seconds, amplitude: amplitude, bitDepth: bitDepth,
-            frequency: frequency, sampleRate: sampleRate, bursts: bursts
-        )
-    }.value
+    try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+        DispatchQueue.global(qos: .utility).async {
+            continuation.resume(with: Result {
+                try writeToneWAVSync(
+                    to: url, seconds: seconds, amplitude: amplitude, bitDepth: bitDepth,
+                    frequency: frequency, sampleRate: sampleRate, bursts: bursts
+                )
+            })
+        }
+    }
+}
+
+/// Lets a test cancel its own task from inside the scan, once a given number of buffers were read.
+private final class CancelAfter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var task: Task<AudioLevels, Error>?
+    private var reads = 0
+    private let limit: Int
+    init(buffers: Int) { limit = buffers }
+    func set(_ task: Task<AudioLevels, Error>) { lock.lock(); self.task = task; lock.unlock() }
+    var readCount: Int { lock.lock(); defer { lock.unlock() }; return reads }
+    func didRead() {
+        lock.lock(); reads += 1; let hit = reads == limit; lock.unlock()
+        guard hit else { return }
+        // The task handle is set right after the task starts; wait for it on this (non-pool) queue.
+        while true {
+            lock.lock(); let current = task; lock.unlock()
+            if let current { current.cancel(); return }
+            Thread.sleep(forTimeInterval: 0.001)
+        }
+    }
 }
 
 private func db(_ linear: Double) -> Double { 20 * log10(linear) }
@@ -150,12 +177,66 @@ private func db(_ linear: Double) -> Double { 20 * log10(linear) }
     @Test func cancellationStopsPromptly() async throws {
         let dir = try TempDirectory()
         let url = dir.url.appendingPathComponent("long.wav")
-        try await writeToneWAV(to: url, seconds: 120, amplitude: 0.5)
-        let task = Task { try await AudioLevelAnalyzer.analyze(url: url, range: nil, gainDecibels: 0) }
-        try await Task.sleep(for: .milliseconds(30))
+        // 8 kHz keeps the fixture cheap; 10 minutes is many buffers and cannot finish before the cancel.
+        try await writeToneWAV(to: url, seconds: 600, amplitude: 0.5, sampleRate: 8000)
+        let probe = CancelAfter(buffers: 3)
+        let task = Task {
+            try await AudioLevelAnalyzer.analyze(url: url, range: nil, gainDecibels: 0) { probe.didRead() }
+        }
+        probe.set(task)
         let start = ContinuousClock.now
-        task.cancel()
-        _ = try? await task.value
+        await #expect(throws: CancellationError.self) { try await task.value }
         #expect(ContinuousClock.now - start < .seconds(1))
+        // The loop stops at its next check: at most one more buffer after the cancelling one.
+        #expect(probe.readCount <= 4)
+    }
+
+    @Test func aHardClippedFileFlagsItsClippedSpotsAtZeroGain() async throws {
+        for depth in [16, 24] {
+            let dir = try TempDirectory()
+            let url = dir.url.appendingPathComponent("hard\(depth).wav")
+            try await writeToneWAV(to: url, seconds: 2, amplitude: 4, bitDepth: depth, bursts: [0.5 ... 0.6])
+            let levels = try await AudioLevelAnalyzer.analyze(url: url, range: nil, gainDecibels: 0)
+            #expect(levels.clippedRanges.count == 1, "\(depth)-bit")
+            if let only = levels.clippedRanges.first {
+                #expect(abs(only.lowerBound - 0.5) < 0.001, "\(depth)-bit")
+                #expect(abs(only.upperBound - 0.6) < 0.001, "\(depth)-bit")
+            }
+            #expect(levels.peakDecibels > -0.01, "\(depth)-bit")
+        }
+    }
+
+    @Test func aToneAtMinusPointOneDecibelsDoesNotClip() async throws {
+        for depth in [16, 24] {
+            let dir = try TempDirectory()
+            let url = dir.url.appendingPathComponent("near\(depth).wav")
+            try await writeToneWAV(to: url, seconds: 1, amplitude: pow(10, -0.1 / 20), bitDepth: depth)
+            let levels = try await AudioLevelAnalyzer.analyze(url: url, range: nil, gainDecibels: 0)
+            #expect(levels.clippedRanges.isEmpty, "\(depth)-bit")
+            #expect(abs(levels.peakDecibels - -0.1) < 0.05, "\(depth)-bit")
+        }
+    }
+
+    @Test func aLongSustainedClipIsOneRangeAcrossBuffers() async throws {
+        let dir = try TempDirectory()
+        let url = dir.url.appendingPathComponent("sustained.wav")
+        // A 100 Hz sine at 4x full scale, clamped, is flat at the rails except brief zero crossings.
+        try await writeToneWAV(to: url, seconds: 5, amplitude: 4, frequency: 100)
+        let levels = try await AudioLevelAnalyzer.analyze(url: url, range: nil, gainDecibels: 0)
+        #expect(levels.clippedRanges.count == 1)
+        if let only = levels.clippedRanges.first {
+            #expect(only.upperBound - only.lowerBound > 4.9)
+        }
+    }
+
+    @Test func aRangeBeyondTheFileIsClampedAndOutsideGivesTheFloor() async throws {
+        let dir = try TempDirectory()
+        let url = dir.url.appendingPathComponent("short.wav")
+        try await writeToneWAV(to: url, seconds: 1, amplitude: 0.5)
+        let clamped = try await AudioLevelAnalyzer.analyze(url: url, range: -5 ... 50, gainDecibels: 0)
+        #expect(abs(clamped.peakDecibels - db(0.5)) < 0.1)
+        let outside = try await AudioLevelAnalyzer.analyze(url: url, range: 20 ... 30, gainDecibels: 0)
+        #expect(outside.peakDecibels == AudioLevelAnalyzer.floorDecibels)
+        #expect(outside.clippedRanges.isEmpty)
     }
 }

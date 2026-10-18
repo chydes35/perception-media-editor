@@ -129,17 +129,20 @@ struct VideoViewer: View {
                     .toggleStyle(.button)
                     .help("Waveform and vectorscope of the picture in the viewer")
                 }
-                if !store.isTimelinePlayback, !store.project.timelineClips.isEmpty {
-                    Button("Preview Timeline", systemImage: "play.rectangle.on.rectangle") {
-                        store.previewTimeline()
+                // Cut actions; the Color screen (showsScopePanel false) leaves them out.
+                if showsScopePanel {
+                    if !store.isTimelinePlayback, !store.project.timelineClips.isEmpty {
+                        Button("Preview Timeline", systemImage: "play.rectangle.on.rectangle") {
+                            store.previewTimeline()
+                        }
                     }
+                    Button("Add to Timeline", systemImage: "plus.rectangle.on.rectangle") {
+                        store.addToTimeline()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.orange)
+                    .disabled(store.selectedVideoAsset == nil)
                 }
-                Button("Add to Timeline", systemImage: "plus.rectangle.on.rectangle") {
-                    store.addToTimeline()
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(.orange)
-                .disabled(store.selectedVideoAsset == nil)
             }
             .padding(.horizontal, 16)
             .frame(height: 44)

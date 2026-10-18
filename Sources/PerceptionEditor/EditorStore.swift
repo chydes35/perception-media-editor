@@ -14,8 +14,11 @@ final class EditorStore: ObservableObject {
             workspaceChangeTask = nil
             if workspace == .agents, oldValue != .agents { workspaceBeforeAgents = oldValue }
             if !workspace.isVideo { pauseVideoPlayback() }
-            if oldValue == .videoColor, workspace != .videoColor { videoBeforeAfter = false }
             updateColorScreenScopes()
+            if workspace.isVideo, needsPlaybackRefresh {
+                needsPlaybackRefresh = false
+                refreshPlaybackSources()
+            }
             syncCategory()
             workspaceDidChange()
         }
@@ -126,7 +129,7 @@ final class EditorStore: ObservableObject {
             ScopeTap.shared.source = scopeSource
             ScopeTap.shared.isEnabled = scopesVisible
             if scopesVisible { scopeModel.start() } else { scopeModel.stop() }
-            refreshPlaybackSources()
+            if !deferPlaybackRefresh { refreshPlaybackSources() }
         }
     }
     @Published var scopeSource = ScopeTap.Source.output {
@@ -139,10 +142,15 @@ final class EditorStore: ObservableObject {
     let scopeModel = ScopeModel()
     /// What `scopesVisible` was before the Color screen took the scopes over; nil while Color is not shown.
     private var scopesVisibleBeforeColor: Bool?
+    /// While true, changing `scopesVisible` or `videoBeforeAfter` does not rebuild playback; the
+    /// caller rebuilds once after changing both.
+    private var deferPlaybackRefresh = false
+    /// The preview is stale (scopes or before/after changed off the video screens); rebuild on return.
+    private var needsPlaybackRefresh = false
     /// Color screen before/after: the preview shows every clip as recorded (neutral adjustments,
     /// no input LUT or OCIO source transform). The grade stays in the project; export never reads this.
     @Published var videoBeforeAfter = false {
-        didSet { if videoBeforeAfter != oldValue { refreshPlaybackSources() } }
+        didSet { if videoBeforeAfter != oldValue, !deferPlaybackRefresh { refreshPlaybackSources() } }
     }
     /// The Color screen's scope chips: which of the histogram and vectorscope panes are shown.
     @Published var colorScopeShowsHistogram = true
@@ -214,6 +222,8 @@ final class EditorStore: ObservableObject {
     private var compositionRebuildTask: Task<Void, Never>?
     private var playbackMonitorTask: Task<Void, Never>?
     private var playbackRequestID = UUID()
+    /// How many preview builds (timeline or source) have started. A test seam for rebuild counts.
+    private(set) var playbackBuildCount = 0
     var photoUndoHistory = PhotoUndoHistory()
     var activeAdjustmentSnapshot: [UUID: PhotoAdjustments]?
 
@@ -1538,6 +1548,7 @@ final class EditorStore: ObservableObject {
             : nil
         let requestID = UUID()
         playbackRequestID = requestID
+        playbackBuildCount += 1
         compositionRebuildTask?.cancel()
         timelinePlaybackWarnings = []
         timelinePlaybackDurationSeconds = 0
@@ -1655,22 +1666,55 @@ final class EditorStore: ObservableObject {
         }
     }
 
-    /// True when the Color screen has a timeline clip to grade; otherwise it shows an empty state.
-    var colorHasTarget: Bool { selectedTimelineClip != nil }
+    /// Why the Color screen shows an empty state instead of the grade; nil when there is a clip to grade.
+    enum ColorEmptyReason: Equatable {
+        case noClips, noSelection, offline
+    }
+
+    var colorEmptyReason: ColorEmptyReason? {
+        guard !project.timelineClips.isEmpty else { return .noClips }
+        guard let clip = selectedTimelineClip else { return .noSelection }
+        guard let asset = timelineAsset(for: clip), !isMissing(asset) else { return .offline }
+        return nil
+    }
+
+    /// True when the Color screen has an online timeline clip to grade; otherwise it shows an empty state.
+    var colorHasTarget: Bool { colorEmptyReason == nil }
 
     /// The Color screen owns the scopes: they run while it is shown with a clip to grade, and
-    /// leaving it restores whatever the Cut screen's toggle said before.
+    /// leaving it restores whatever the Cut screen's toggle said before (and turns before/after off).
+    /// Each change rebuilds playback at most once, and never while no video screen is showing.
     private func updateColorScreenScopes() {
         if workspace == .videoColor {
             let entering = scopesVisibleBeforeColor == nil
             if entering { scopesVisibleBeforeColor = scopesVisible }
-            scopesVisible = colorHasTarget
-            // The grade shows only on timeline playback, so a source preview left by Cut moves to the clip.
-            if entering, !isTimelinePlayback, let clip = selectedTimelineClip { selectTimelineClip(clip) }
+            let wanted = colorHasTarget
+            // The grade shows only on timeline playback, so a source preview left by Cut moves to
+            // the selected clip, keeping its play state. The scopes change rides on that one build.
+            if entering, wanted, !isTimelinePlayback, let clip = selectedTimelineClip {
+                let wasPlaying = isVideoPlaying
+                setWithoutPlaybackRefresh { scopesVisible = true }
+                selectedVideoAssetID = clip.assetID
+                rebuildTimelinePlayback(autoplay: wasPlaying, seekTo: project.timelineStartSeconds(of: clip))
+            } else {
+                scopesVisible = wanted
+            }
         } else if let previous = scopesVisibleBeforeColor {
             scopesVisibleBeforeColor = nil
-            scopesVisible = previous
+            let changed = videoBeforeAfter || scopesVisible != previous
+            setWithoutPlaybackRefresh {
+                videoBeforeAfter = false
+                scopesVisible = previous
+            }
+            guard changed else { return }
+            if workspace.isVideo { refreshPlaybackSources() } else { needsPlaybackRefresh = true }
         }
+    }
+
+    private func setWithoutPlaybackRefresh(_ change: () -> Void) {
+        deferPlaybackRefresh = true
+        defer { deferPlaybackRefresh = false }
+        change()
     }
 
     /// A Color screen chip: Waveform or RGB parade. Re-measures the paused frame in the new mode.
@@ -1725,6 +1769,7 @@ final class EditorStore: ObservableObject {
         let proxyURLs = usesProxiesForPlayback ? proxyStore.readyURLs : [:]
         let requestID = UUID()
         playbackRequestID = requestID
+        playbackBuildCount += 1
         compositionRebuildTask?.cancel()
         statusMessage = "Building timeline preview…"
 

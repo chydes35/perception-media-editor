@@ -42,10 +42,11 @@ struct EditorNavigationTests {
         )
     }
 
-    /// A store with one (fileless) clip on the timeline, selected.
+    /// A store with one clip on the timeline, selected. Its file exists (this source file) but is
+    /// not a movie, so playback builds fail quietly.
     private func storeWithSelectedClip() -> EditorStore {
         let store = EditorStore()
-        let video = MediaAsset(url: URL(fileURLWithPath: "/Volumes/Test/C0001.MOV"), kind: .video)
+        let video = MediaAsset(url: URL(fileURLWithPath: #filePath), kind: .video)
         let clip = TimelineClip(assetID: video.id, sourceStartFrame: 0, durationFrames: 120)
         store.project.media = [video]
         store.project.timelineClips = [clip]
@@ -103,6 +104,51 @@ struct EditorNavigationTests {
         #expect(store.scopesVisible)
         store.workspace = .video
         #expect(!store.scopesVisible)
+    }
+
+    @Test func colorWithOfflineMediaShowsAnEmptyState() {
+        let store = EditorStore()
+        let offline = MediaAsset(url: URL(fileURLWithPath: "/Volumes/Gone/C0001.MOV"), kind: .video)
+        let clip = TimelineClip(assetID: offline.id, sourceStartFrame: 0, durationFrames: 120)
+        store.project.media = [offline]
+        store.project.timelineClips = [clip]
+        store.selectedTimelineClipID = clip.id
+        store.workspace = .videoColor
+        #expect(!store.colorHasTarget)
+        #expect(store.colorEmptyReason == .offline)
+        #expect(!store.scopesVisible, "Offline media runs no scopes")
+
+        // A clip whose asset left the project is not gradable either.
+        let orphan = TimelineClip(assetID: UUID(), sourceStartFrame: 0, durationFrames: 24)
+        store.project.timelineClips = [orphan]
+        store.selectedTimelineClipID = orphan.id
+        #expect(store.colorEmptyReason == .offline)
+        #expect(!store.scopesVisible)
+
+        store.selectedTimelineClipID = nil
+        #expect(store.colorEmptyReason == .noSelection)
+        store.project.timelineClips = []
+        #expect(store.colorEmptyReason == .noClips)
+        store.workspace = .video
+    }
+
+    @Test func leavingColorRebuildsPlaybackOnceAndNotOffTheVideoScreens() {
+        let store = storeWithSelectedClip()
+        store.workspace = .videoColor
+        store.videoBeforeAfter = true
+        let built = store.playbackBuildCount
+        store.workspace = .photo
+        #expect(store.playbackBuildCount == built, "No preview is built for a screen that shows none")
+        #expect(!store.videoBeforeAfter)
+        #expect(!store.scopesVisible)
+        store.workspace = .video
+        #expect(store.playbackBuildCount == built + 1, "The stale preview is rebuilt once on return")
+
+        store.workspace = .videoColor
+        store.videoBeforeAfter = true
+        let again = store.playbackBuildCount
+        store.workspace = .video
+        #expect(store.playbackBuildCount == again + 1, "Before/after and scopes change in one rebuild")
     }
 
     @Test func leavingColorTurnsBeforeAfterOff() {
@@ -228,6 +274,74 @@ struct EditorNavigationTests {
         await store.workspaceChangeTask?.value
         #expect(store.workspace == .cull)
         #expect(!store.isVideoPlaying)
+    }
+
+    /// A ten-second synthetic movie imported into a store with a disposable proxy cache.
+    private func storeWithMovie(_ temp: TempDirectory) async throws -> (EditorStore, MediaAsset) {
+        let store = try makeVideoStore(temp)
+        store.usesProxiesForPlayback = false
+        let movie = try await writeColorPatternMovie(to: temp.url.appendingPathComponent("A.MOV"), frames: 240)
+        await store.importURLs([movie]).value
+        store.proxyStore.cancelAll()
+        return (store, try #require(store.project.media.first))
+    }
+
+    @Test(.enabled(if: MTLCreateSystemDefaultDevice() != nil))
+    func cutToColorKeepsTimelinePlaybackPlaying() async throws {
+        let temp = try TempDirectory()
+        let (store, asset) = try await storeWithMovie(temp)
+        store.workspace = .video
+        store.addToTimeline(asset)
+        try await waitUntil { store.isTimelinePlayback && store.timelinePlaybackDurationSeconds > 0 }
+        store.toggleVideoPlayback()
+        #expect(store.isVideoPlaying)
+        let before = store.playbackBuildCount
+        store.requestStepChange(EditorCategory.video.steps[2])
+        await store.workspaceChangeTask?.value
+        #expect(store.workspace == .videoColor)
+        #expect(store.playbackBuildCount == before + 1, "Scopes on: one rebuild through the compositor")
+        try await waitUntil { store.isTimelinePlayback && store.videoPlayer?.currentItem?.videoComposition?.customVideoCompositorClass != nil }
+        #expect(store.isTimelinePlayback)
+        #expect(store.videoPlayer?.rate != 0, "Still playing after the rebuild")
+        store.workspace = .photo
+    }
+
+    @Test(.enabled(if: MTLCreateSystemDefaultDevice() != nil))
+    func enteringColorFromAPlayingSourcePreviewPlaysTheTimeline() async throws {
+        let temp = try TempDirectory()
+        let (store, asset) = try await storeWithMovie(temp)
+        store.workspace = .video
+        store.addToTimeline(asset)
+        try await waitUntil { store.isTimelinePlayback && store.timelinePlaybackDurationSeconds > 0 }
+        store.selectVideo(asset)
+        try await waitUntil { !store.isTimelinePlayback && store.videoPlayer?.currentItem != nil }
+        #expect(store.selectedTimelineClipID != nil)
+        store.videoPlayer?.play()
+        store.markVideoPlayingForTesting()
+        let before = store.playbackBuildCount
+
+        store.workspace = .videoColor
+        #expect(store.playbackBuildCount == before + 1, "One timeline build; no wasted source rebuild for the scopes")
+        #expect(store.scopesVisible)
+        try await waitUntil { store.isTimelinePlayback && store.isVideoPlaying }
+        #expect(store.isTimelinePlayback)
+        #expect(store.videoPlayer?.rate != 0)
+        store.workspace = .photo
+    }
+
+    @Test(.enabled(if: MTLCreateSystemDefaultDevice() != nil))
+    func enteringColorFromAPausedSourcePreviewStaysPaused() async throws {
+        let temp = try TempDirectory()
+        let (store, asset) = try await storeWithMovie(temp)
+        store.workspace = .video
+        store.addToTimeline(asset)
+        try await waitUntil { store.isTimelinePlayback && store.timelinePlaybackDurationSeconds > 0 }
+        store.selectVideo(asset)
+        try await waitUntil { !store.isTimelinePlayback && store.videoPlayer?.currentItem != nil }
+        store.workspace = .videoColor
+        try await waitUntil { store.isTimelinePlayback && store.timelinePlaybackDurationSeconds > 0 }
+        #expect(!store.isVideoPlaying)
+        store.workspace = .photo
     }
 
     @Test func cutToVideoExportDoesNotPausePlayback() async {

@@ -76,7 +76,7 @@ private struct ColorViewerBar: View {
             }
             .toggleStyle(.button)
             .disabled(!store.colorHasTarget)
-            .help("Show the picture as recorded: no grade and no source color. Export is not affected.")
+            .help("Show every clip on the timeline as recorded: ungraded, with no source color. Export is not affected.")
         }
         .controlSize(.large)
         .padding(.horizontal, 16)
@@ -274,13 +274,11 @@ private struct ColorEmptyState: View {
 
     var body: some View {
         ContentUnavailableView {
-            Label("No clip to grade", systemImage: "camera.filters")
+            Label(title, systemImage: reason == .offline ? "exclamationmark.triangle" : "camera.filters")
         } description: {
-            Text(store.project.timelineClips.isEmpty
-                 ? "Add clips to the timeline on the Cut screen, then grade them here."
-                 : "Select a timeline clip on the Cut screen to grade it.")
+            Text(message)
         } actions: {
-            if let first = store.project.timelineClips.first {
+            if reason == .noSelection, let first = store.project.timelineClips.first {
                 Button("Grade the First Clip") { store.selectTimelineClip(first) }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
@@ -293,5 +291,19 @@ private struct ColorEmptyState: View {
             .controlSize(.large)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var reason: EditorStore.ColorEmptyReason { store.colorEmptyReason ?? .noSelection }
+
+    private var title: String {
+        reason == .offline ? "Clip media is offline" : "No clip to grade"
+    }
+
+    private var message: String {
+        switch reason {
+        case .noClips: "Add clips to the timeline on the Cut screen, then grade them here."
+        case .noSelection: "Select a timeline clip on the Cut screen to grade it."
+        case .offline: "The selected clip's file cannot be found. Relink it, or select another clip."
+        }
     }
 }

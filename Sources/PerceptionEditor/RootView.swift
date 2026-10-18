@@ -56,6 +56,8 @@ struct RootView: View {
             VideoWorkspace()
         case .videoColor:
             VideoColorWorkspace()
+        case .videoAudio:
+            VideoAudioWorkspace()
         case .videoExport:
             VideoExportWorkspace()
         case .export:

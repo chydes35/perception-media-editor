@@ -15,6 +15,7 @@ final class EditorStore: ObservableObject {
             if workspace == .agents, oldValue != .agents { workspaceBeforeAgents = oldValue }
             if !workspace.isVideo { pauseVideoPlayback() }
             updateColorScreenScopes()
+            updateAudioScreen(enteringFrom: oldValue)
             if workspace.isVideo, needsPlaybackRefresh {
                 needsPlaybackRefresh = false
                 refreshPlaybackSources()
@@ -142,11 +143,35 @@ final class EditorStore: ObservableObject {
     let scopeModel = ScopeModel()
     /// What `scopesVisible` was before the Color screen took the scopes over; nil while Color is not shown.
     private var scopesVisibleBeforeColor: Bool?
+
+    // MARK: Audio screen state (logic in EditorStore+Audio.swift)
+
+    /// Peak and clipped spots of the whole timeline after clip and master gain, in timeline seconds.
+    /// nil until analyzed, or when no clip could be measured.
+    @Published var audioLevels: AudioLevels?
+    @Published var isAnalyzingAudio = false
+    /// The last finished analysis: clips measured and clips that had no readable audio.
+    @Published var audioAnalysisCounts: (measured: Int, withoutAudio: Int)?
+    /// The Audio screen's "Show clipping" toggle: clipped spots drawn red on the waveforms.
+    @Published var showsClipping = true
+    /// Live L/R meters for the preview player.
+    let audioMeterModel = AudioMeterModel()
+    /// The level analysis, injectable so tests stub it. Runs off the main actor.
+    var audioLevelProvider: @Sendable (URL, ClosedRange<Double>?, Double) async throws -> AudioLevels = {
+        try await AudioLevelAnalyzer.analyze(url: $0, range: $1, gainDecibels: $2)
+    }
+    var audioLevelsTask: Task<Void, Never>?
+    var audioLevelsDebounceTask: Task<Void, Never>?
+    /// What the current (or running) analysis was asked for; a scheduled refresh with the same inputs is skipped.
+    var audioLevelsInputs: [AudioAnalysisInput]?
+    /// File-time results per (file, source range, gain), so moving one clip's gain re-reads only that clip.
+    var audioLevelsCache: [AudioAnalysisKey: AudioLevels] = [:]
+    var audioLevelsCacheGeneration: UUID?
     /// While true, changing `scopesVisible` or `videoBeforeAfter` does not rebuild playback; the
     /// caller rebuilds once after changing both.
     private var deferPlaybackRefresh = false
     /// The preview is stale (scopes or before/after changed off the video screens); rebuild on return.
-    private var needsPlaybackRefresh = false
+    var needsPlaybackRefresh = false
     /// Color screen before/after: the preview shows every clip as recorded (neutral adjustments,
     /// no input LUT or OCIO source transform). The grade stays in the project; export never reads this.
     @Published var videoBeforeAfter = false {
@@ -1740,11 +1765,12 @@ final class EditorStore: ObservableObject {
         rebuildTimelinePlayback()
     }
 
-    private func rebuildTimelinePlayback(
+    func rebuildTimelinePlayback(
         autoplay: Bool = false,
         seekTo requestedPosition: Double? = nil
     ) {
         guard !project.timelineClips.isEmpty else {
+            scheduleAudioLevelRefresh()
             replaceVideoPlayer(nil, timelineMode: false)
             timelinePlaybackDurationSeconds = 0
             timelinePlaybackPositionSeconds = 0
@@ -1766,6 +1792,7 @@ final class EditorStore: ObservableObject {
         let media = project.media
         let audioAdjustmentsByClipID = project.audioAdjustmentsByClipID
         let masterGainDecibels = project.masterGainDecibels
+        scheduleAudioLevelRefresh()
         if usesProxiesForPlayback { regenerateMissingProxies(for: Set(clips.map(\.assetID))) }
         let proxyURLs = usesProxiesForPlayback ? proxyStore.readyURLs : [:]
         let requestID = UUID()
@@ -1786,6 +1813,7 @@ final class EditorStore: ObservableObject {
                 sequenceFrameRate: sequenceRate,
                 masterGainDecibels: masterGainDecibels,
                 renderingPath: renderingPath,
+                meters: true,
                 inputLUTsByAssetID: inputLUTs.resolved,
                 ocioInputsByAssetID: ocioInputs
             )
@@ -1803,6 +1831,7 @@ final class EditorStore: ObservableObject {
 
             let player = AVPlayer(playerItem: playerItem)
             replaceVideoPlayer(player, timelineMode: true)
+            audioMeterModel.attach(result.meterTap)
             timelinePlaybackDurationSeconds = result.durationSeconds
             let clampedPosition = min(max(0, position), result.durationSeconds)
             seekTimeline(to: clampedPosition)
@@ -1814,6 +1843,7 @@ final class EditorStore: ObservableObject {
     }
 
     private func replaceVideoPlayer(_ player: AVPlayer?, timelineMode: Bool) {
+        audioMeterModel.attach(nil)
         playbackMonitorTask?.cancel()
         videoPlayer?.pause()
         videoPlayer = player

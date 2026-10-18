@@ -7,7 +7,8 @@ import VideoToolbox
 
 /// Writes a small ProRes 422 movie whose frames step from black to white, tagged Rec. 709,
 /// at 23.976 fps, so proxy tests exercise the same frame timing as Lumix footage. With `withAudio`
-/// it also carries a silent 48 kHz mono LPCM track, interleaved frame by frame.
+/// it also carries a 48 kHz mono 16-bit LPCM track, interleaved frame by frame: silent, or with
+/// `toneAmplitude` > 0 a 1 kHz sine at that linear amplitude (1.0 = full scale).
 @discardableResult
 func writeTestMovie(
     to url: URL,
@@ -15,7 +16,8 @@ func writeTestMovie(
     width: Int = 640,
     height: Int = 360,
     transform: CGAffineTransform = .identity,
-    withAudio: Bool = false
+    withAudio: Bool = false,
+    toneAmplitude: Double = 0
 ) async throws -> URL {
     let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
     writer.movieTimeScale = 24000
@@ -39,7 +41,7 @@ func writeTestMovie(
         kCVPixelBufferHeightKey as String: height
     ])
     writer.add(input)
-    let audio = withAudio ? try SilentAudioTrack(writer: writer) : nil
+    let audio = withAudio ? try SilentAudioTrack(writer: writer, toneAmplitude: toneAmplitude) : nil
     guard writer.startWriting() else { throw writer.error ?? CocoaError(.fileWriteUnknown) }
     writer.startSession(atSourceTime: .zero)
 
@@ -79,13 +81,16 @@ func writeTestMovie(
     return url
 }
 
-/// Silence covering exactly one 1001/24000 s video frame per append (2002 samples at 48 kHz).
+/// Audio covering exactly one 1001/24000 s video frame per append (2002 samples at 48 kHz):
+/// silence, or a 1 kHz sine of `toneAmplitude`.
 private struct SilentAudioTrack {
     static let samplesPerFrame = 2002
     let input: AVAssetWriterInput
     let format: CMAudioFormatDescription
+    let toneAmplitude: Double
 
-    init(writer: AVAssetWriter) throws {
+    init(writer: AVAssetWriter, toneAmplitude: Double = 0) throws {
+        self.toneAmplitude = toneAmplitude
         var description = AudioStreamBasicDescription(
             mSampleRate: 48_000, mFormatID: kAudioFormatLinearPCM,
             mFormatFlags: kLinearPCMFormatFlagIsSignedInteger | kLinearPCMFormatFlagIsPacked,
@@ -121,7 +126,19 @@ private struct SilentAudioTrack {
             flags: kCMBlockBufferAssureMemoryNowFlag, blockBufferOut: &block
         )
         guard let block else { throw CocoaError(.fileWriteUnknown) }
-        CMBlockBufferFillDataBytes(with: 0, blockBuffer: block, offsetIntoDestination: 0, dataLength: count * 2)
+        if toneAmplitude > 0 {
+            var samples = [Int16](repeating: 0, count: count)
+            for i in 0 ..< count {
+                let t = Double(index * count + i) / 48_000
+                let value = max(-1, min(1, toneAmplitude * sin(2 * .pi * 1000 * t)))
+                samples[i] = Int16(max(-32768, min(32767, (value * 32767).rounded())))
+            }
+            samples.withUnsafeBytes { bytes in
+                _ = CMBlockBufferReplaceDataBytes(with: bytes.baseAddress!, blockBuffer: block, offsetIntoDestination: 0, dataLength: count * 2)
+            }
+        } else {
+            CMBlockBufferFillDataBytes(with: 0, blockBuffer: block, offsetIntoDestination: 0, dataLength: count * 2)
+        }
         var sample: CMSampleBuffer?
         CMAudioSampleBufferCreateReadyWithPacketDescriptions(
             allocator: nil, dataBuffer: block, formatDescription: format, sampleCount: count,

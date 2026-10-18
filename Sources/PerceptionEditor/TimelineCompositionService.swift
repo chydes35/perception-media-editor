@@ -7,6 +7,8 @@ struct TimelineCompositionResult {
     var insertedClipIDs: [UUID]
     var warnings: [String]
     var usedProxyCount = 0
+    /// The live meter tap on the audio track, when `meters` was asked for and there is audio.
+    var meterTap: AudioMeterTap?
 }
 
 enum MediaQuality: Sendable {
@@ -111,6 +113,7 @@ final class TimelineCompositionService {
         sequenceFrameRate: FrameRate? = nil,
         masterGainDecibels: Double = 0,
         renderingPath: TimelineRenderingPath = .automatic,
+        meters: Bool = false,
         statisticsKey: UUID? = nil,
         inputLUTsByAssetID: [UUID: ResolvedLUT] = [:],
         ocioInputsByAssetID: [UUID: OCIOInputTransform] = [:]
@@ -268,6 +271,7 @@ final class TimelineCompositionService {
 
         let durationSeconds = composition.duration.seconds
         let playerItem = AVPlayerItem(asset: composition)
+        var meterTap: AudioMeterTap?
         if let compositionAudioTrack, !audioSegments.isEmpty {
             let audioParameters = AVMutableAudioMixInputParameters(track: compositionAudioTrack)
             // Fades are durations, not edit points, so they stay in seconds at the sequence timescale.
@@ -303,6 +307,15 @@ final class TimelineCompositionService {
                     )
                 }
             }
+            if meters {
+                // The tap sees samples before the mix volume (measured: AudioMeterPlumbingTests), so
+                // the meter applies the same gain and fades itself.
+                let tap = AudioMeterTap(schedule: Self.meterSchedule(audioSegments.map {
+                    ($0.range, $0.adjustments)
+                }, masterGain: masterGain))
+                audioParameters.audioTapProcessor = tap.makeProcessingTap()
+                meterTap = tap
+            }
             let audioMix = AVMutableAudioMix()
             audioMix.inputParameters = [audioParameters]
             playerItem.audioMix = audioMix
@@ -319,8 +332,27 @@ final class TimelineCompositionService {
             durationSeconds: durationSeconds.isFinite ? max(0, durationSeconds) : 0,
             insertedClipIDs: insertedClipIDs,
             warnings: warnings,
-            usedProxyCount: usedProxyCount
+            usedProxyCount: usedProxyCount,
+            meterTap: meterTap
         )
+    }
+
+    /// The mix's gain over time, for the meter: clip gain times master gain with the fades clamped
+    /// exactly as the volume ramps above clamp them.
+    nonisolated static func meterSchedule(
+        _ segments: [(range: CMTimeRange, adjustments: ClipAudioAdjustments)],
+        masterGain: Double
+    ) -> MeterGainSchedule {
+        MeterGainSchedule(segments: segments.map { range, adjustments in
+            let maximumFade = max(0, range.duration.seconds / 2)
+            return MeterGainSchedule.Segment(
+                start: range.start.seconds,
+                end: range.end.seconds,
+                gain: adjustments.linearGain * masterGain,
+                fadeIn: min(maximumFade, max(0, adjustments.fadeInSeconds)),
+                fadeOut: min(maximumFade, max(0, adjustments.fadeOutSeconds))
+            )
+        })
     }
 
     /// Plain clips play natively, with the first clip's orientation on the composition track. Anything

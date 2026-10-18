@@ -69,37 +69,9 @@ struct VideoWorkspace: View {
                         .controlSize(.small)
                     }
 
-                    inspectorSection("CLIP AUDIO") {
-                        HStack {
-                            Text(clip.isMuted ? "Muted" : "Timeline mix")
-                                .font(.caption)
-                                .foregroundStyle(clip.isMuted ? .orange : .secondary)
-                            Spacer()
-                            Button("Reset", systemImage: "arrow.counterclockwise") {
-                                store.resetSelectedAudioAdjustments()
-                            }
-                            .controlSize(.small)
-                        }
-
-                        audioAdjustment(
-                            "Gain",
-                            keyPath: \.gainDecibels,
-                            range: ClipAudioAdjustments.gainRange,
-                            display: { $0 <= ClipAudioAdjustments.minimumGainDecibels ? "Off" : String(format: "%+.1f dB", $0) }
-                        )
-                        audioAdjustment(
-                            "Fade In",
-                            keyPath: \.fadeInSeconds,
-                            range: 0...max(0.01, clip.durationSeconds / 2),
-                            display: { String(format: "%.1fs", $0) }
-                        )
-                        audioAdjustment(
-                            "Fade Out",
-                            keyPath: \.fadeOutSeconds,
-                            range: 0...max(0.01, clip.durationSeconds / 2),
-                            display: { String(format: "%.1fs", $0) }
-                        )
-                    }
+                    Text("Gain and fades are on the Audio screen.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 } else {
                     Text("Select a timeline clip to trim, split, or reorder it.")
                         .font(.caption)
@@ -146,34 +118,4 @@ struct VideoWorkspace: View {
         }
         .font(.caption)
     }
-
-    private func audioAdjustment(
-        _ label: String,
-        keyPath: WritableKeyPath<ClipAudioAdjustments, Double>,
-        range: ClosedRange<Double>,
-        display: (Double) -> String
-    ) -> some View {
-        let value = store.selectedAudioAdjustments[keyPath: keyPath]
-        return VStack(spacing: 4) {
-            HStack {
-                Text(label)
-                    .font(.caption)
-                Spacer()
-                Text(display(value))
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 48, alignment: .trailing)
-            }
-            Slider(
-                value: Binding(
-                    get: { store.selectedAudioAdjustments[keyPath: keyPath] },
-                    set: { newValue in
-                        store.updateSelectedAudioAdjustments { $0[keyPath: keyPath] = newValue }
-                    }
-                ),
-                in: range
-            )
-            .tint(.blue)
-        }
-     }
 }

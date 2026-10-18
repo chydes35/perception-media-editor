@@ -13,10 +13,23 @@ struct EditorNavigationTests {
         #expect(steps.map(\.workspace) == [.library, .cull, .photo, .export])
     }
 
-    @Test func videoStepsAreImportCutColorExport() {
+    @Test func videoStepsAreImportCutColorAudioExport() {
         let steps = EditorCategory.video.steps
-        #expect(steps.map(\.title) == ["Import", "Cut", "Color", "Export"])
-        #expect(steps.map(\.workspace) == [.library, .video, .videoColor, .videoExport])
+        #expect(steps.map(\.title) == ["Import", "Cut", "Color", "Audio", "Export"])
+        #expect(steps.map(\.workspace) == [.library, .video, .videoColor, .videoAudio, .videoExport])
+    }
+
+    @Test func audioStepIsInTheVideoRail() {
+        let steps = EditorCategory.video.steps
+        let color = steps.firstIndex { $0.workspace == .videoColor }
+        let audio = steps.firstIndex { $0.workspace == .videoAudio }
+        #expect(audio != nil)
+        #expect(audio == color.map { $0 + 1 }, "Audio comes right after Color")
+        #expect(steps.first { $0.workspace == .videoAudio }?.title == "Audio")
+        #expect(Workspace.videoAudio.isVideo)
+        #expect(Workspace.videoAudio.category == .video)
+        #expect(!EditorCategory.photo.steps.contains { $0.workspace == .videoAudio })
+        #expect(EditorStepShortcut.all.contains { $0.step.workspace == .videoAudio })
     }
 
     @Test func colorStepIsInTheVideoRail() {
@@ -348,15 +361,26 @@ struct EditorNavigationTests {
         let store = EditorStore()
         store.workspace = .video
         store.markVideoPlayingForTesting()
-        store.requestStepChange(EditorCategory.video.steps[3])
+        store.requestStepChange(EditorCategory.video.steps[4])
         await store.workspaceChangeTask?.value
         #expect(store.workspace == .videoExport)
+        #expect(store.isVideoPlaying)
+    }
+
+    @Test func cutToAudioDoesNotPausePlayback() async {
+        let store = EditorStore()
+        store.workspace = .video
+        store.markVideoPlayingForTesting()
+        store.requestStepChange(EditorCategory.video.steps[3])
+        await store.workspaceChangeTask?.value
+        #expect(store.workspace == .videoAudio)
         #expect(store.isVideoPlaying)
     }
 
     @Test func isVideoCoversEveryVideoScreen() {
         #expect(Workspace.video.isVideo)
         #expect(Workspace.videoColor.isVideo)
+        #expect(Workspace.videoAudio.isVideo)
         #expect(Workspace.videoExport.isVideo)
         for workspace in [Workspace.library, .cull, .photo, .export, .agents] {
             #expect(!workspace.isVideo)
@@ -389,8 +413,8 @@ struct EditorNavigationTests {
         #expect(photo.libraryEntrySection == nil)
     }
 
-    @Test func workspaceMenuShortcutsAreOneToEightAndAgentsUsesZero() {
-        #expect(EditorStepShortcut.all.map { String($0.key) } == ["1", "2", "3", "4", "5", "6", "7", "8"])
+    @Test func workspaceMenuShortcutsAreOneToNineAndAgentsUsesZero() {
+        #expect(EditorStepShortcut.all.map { String($0.key) } == ["1", "2", "3", "4", "5", "6", "7", "8", "9"])
         #expect(!EditorStepShortcut.all.contains { $0.key == EditorStepShortcut.agentsKey })
         #expect(EditorStepShortcut.agentsKey == "0")
     }
@@ -495,5 +519,215 @@ struct EditorNavigationTests {
         #expect(store.workspace == .agents)
         store.closeAgents()
         #expect(store.workspace == .video)
+    }
+
+    // MARK: - Audio screen (Task 11)
+
+    /// Records what the stubbed analyzer was asked for.
+    private final class AnalyzerCalls: @unchecked Sendable {
+        private let lock = NSLock()
+        private var calls: [(url: URL, range: ClosedRange<Double>?, gain: Double)] = []
+        func add(_ url: URL, _ range: ClosedRange<Double>?, _ gain: Double) { lock.withLock { calls.append((url, range, gain)) } }
+        var all: [(url: URL, range: ClosedRange<Double>?, gain: Double)] { lock.withLock { calls } }
+        var count: Int { all.count }
+    }
+
+    /// A stub file whose tone peaks at -3 dBFS and is loud at file times 1.0…1.5 and 3.0…3.2: those
+    /// spots clip once the gain reaches +3 dB. Honors the requested range like the real analyzer.
+    private func loudSpotsProvider(_ calls: AnalyzerCalls) -> @Sendable (URL, ClosedRange<Double>?, Double) async throws -> AudioLevels {
+        { url, range, gain in
+            calls.add(url, range, gain)
+            let peak = -3 + gain
+            let spots: [ClosedRange<Double>] = [1.0 ... 1.5, 3.0 ... 3.2]
+            let inside = spots.filter { spot in range.map { spot.overlaps($0) } ?? true }
+            return AudioLevels(peakDecibels: peak, clippedRanges: peak >= 0 ? inside : [])
+        }
+    }
+
+    @Test func clippedSpotsFollowTheMasterAndClipGain() async {
+        let store = storeWithSelectedClip()
+        let calls = AnalyzerCalls()
+        store.audioLevelProvider = loudSpotsProvider(calls)
+        store.workspace = .videoAudio
+        await store.refreshAudioLevels()
+        #expect(store.audioLevels?.clippedRanges.isEmpty == true, "At 0 dB nothing clips")
+        #expect(store.audioLevels.map { abs($0.peakDecibels - (-3)) < 1e-9 } == true)
+
+        store.setMasterGainDecibels(6)
+        await store.refreshAudioLevels()
+        #expect(calls.all.last?.gain == 6, "Master gain is part of the analysis gain")
+        #expect(store.audioLevels?.clippedRanges.count == 2)
+        #expect(store.audioLevels.map { abs($0.peakDecibels - 3) < 1e-9 } == true)
+
+        store.setMasterGainDecibels(0)
+        store.updateSelectedAudioAdjustments { $0.gainDecibels = 4 }
+        await store.refreshAudioLevels()
+        #expect(calls.all.last?.gain == 4, "Clip gain too")
+        #expect(store.audioLevels?.clippedRanges.count == 2)
+
+        store.updateSelectedAudioAdjustments { $0.gainDecibels = -10 }
+        await store.refreshAudioLevels()
+        #expect(store.audioLevels?.clippedRanges.isEmpty == true, "Lowering the gain clears it")
+        store.workspace = .video
+    }
+
+    @Test func clippedSpotsAreInTimelineTime() async {
+        let store = storeWithSelectedClip()
+        let first = store.project.timelineClips[0]
+        // A second clip from the same file, from source 1.001 s (24 frames), after the first.
+        let second = TimelineClip(assetID: first.assetID, sourceStartFrame: 24, durationFrames: 72)
+        store.project.timelineClips.append(second)
+        store.project.packTimeline()
+        store.project.masterGainDecibels = 6
+        let calls = AnalyzerCalls()
+        store.audioLevelProvider = loudSpotsProvider(calls)
+        await store.refreshAudioLevels()
+
+        #expect(calls.count == 2, "One analysis per clip")
+        let secondStart = store.project.timelineStartSeconds(of: store.project.timelineClips[1])
+        let ranges = store.audioLevels?.clippedRanges ?? []
+        // First clip (source 0…5.005): both spots at their file times. Second clip (source
+        // 1.001…4.004, timeline from 5.005): spots clamped to the clip, shifted by start minus source start.
+        let offset = secondStart - 1.001
+        let expected: [ClosedRange<Double>] = [1.0 ... 1.5, 3.0 ... 3.2, (1.001 + offset) ... (1.5 + offset), (3.0 + offset) ... (3.2 + offset)]
+        #expect(ranges.count == expected.count)
+        for (range, wanted) in zip(ranges, expected) {
+            #expect(abs(range.lowerBound - wanted.lowerBound) < 0.001 && abs(range.upperBound - wanted.upperBound) < 0.001,
+                    "\(range) vs \(wanted)")
+        }
+        #expect(ranges.map(\.lowerBound) == ranges.map(\.lowerBound).sorted(), "Sorted by time")
+    }
+
+    @Test func mutedAndSilentClipsAreNotMeasured() async {
+        let store = storeWithSelectedClip()
+        let calls = AnalyzerCalls()
+        store.audioLevelProvider = loudSpotsProvider(calls)
+        store.project.timelineClips[0].isMuted = true
+        await store.refreshAudioLevels()
+        #expect(calls.count == 0, "A muted clip is not heard, so it cannot clip")
+        store.project.timelineClips[0].isMuted = false
+        store.updateSelectedAudioAdjustments { $0.gainDecibels = ClipAudioAdjustments.minimumGainDecibels }
+        await store.refreshAudioLevels()
+        #expect(calls.count == 0, "Gain at the floor is silence")
+    }
+
+    @Test(.enabled(if: MTLCreateSystemDefaultDevice() != nil))
+    func jumpToNextClippedSpotMovesThePlayheadAndWraps() async throws {
+        let temp = try TempDirectory()
+        let (store, asset) = try await storeWithMovie(temp)
+        store.workspace = .video
+        store.addToTimeline(asset)
+        try await waitUntil { store.isTimelinePlayback && store.timelinePlaybackDurationSeconds > 0 }
+        store.audioLevelProvider = { _, _, _ in
+            AudioLevels(peakDecibels: 2, clippedRanges: [6.0 ... 6.5, 2.0 ... 2.1])
+        }
+        await store.refreshAudioLevels()
+        #expect(store.audioLevels?.clippedRanges.count == 2)
+        let frame = store.project.sequenceFrameRate.frameSeconds
+
+        store.seekTimeline(to: 0)
+        store.jumpToNextClippedSpot()
+        #expect(abs(store.timelinePlaybackPositionSeconds - 2.0) <= frame)
+        store.jumpToNextClippedSpot()
+        #expect(abs(store.timelinePlaybackPositionSeconds - 6.0) <= frame)
+        store.jumpToNextClippedSpot()
+        #expect(abs(store.timelinePlaybackPositionSeconds - 2.0) <= frame, "Wraps to the first spot")
+        store.seekTimeline(to: 4)
+        store.jumpToNextClippedSpot()
+        #expect(abs(store.timelinePlaybackPositionSeconds - 6.0) <= frame, "Next after the playhead")
+        store.workspace = .photo
+    }
+
+    @Test func audioWithNoClipsShowsAnEmptyState() async {
+        let calls = AnalyzerCalls()
+        let empty = EditorStore()
+        empty.audioLevelProvider = loudSpotsProvider(calls)
+        empty.workspace = .videoAudio
+        #expect(empty.audioEmptyReason == .noClips)
+        await empty.refreshAudioLevels()
+        #expect(calls.count == 0, "No analysis without clips")
+        #expect(empty.audioLevels == nil)
+        #expect(!empty.isAnalyzingAudio)
+        #expect(!empty.audioMeterModel.isRunning, "No meters on an empty screen")
+        empty.jumpToNextClippedSpot()
+
+        // Offline media: nothing to analyze.
+        let offline = EditorStore()
+        offline.audioLevelProvider = loudSpotsProvider(calls)
+        let gone = MediaAsset(url: URL(fileURLWithPath: "/Volumes/Gone/C0001.MOV"), kind: .video)
+        offline.project.media = [gone]
+        offline.project.timelineClips = [TimelineClip(assetID: gone.id, sourceStartFrame: 0, durationFrames: 120)]
+        offline.workspace = .videoAudio
+        #expect(offline.audioEmptyReason == .offline)
+        await offline.refreshAudioLevels()
+        #expect(calls.count == 0)
+        #expect(offline.audioLevels == nil)
+        offline.workspace = .video
+
+        // A clip with no audio track: the analyzer says so, the screen says so.
+        let silent = storeWithSelectedClip()
+        silent.audioLevelProvider = { _, _, _ in throw AudioLevelError.noAudio }
+        silent.workspace = .videoAudio
+        await silent.refreshAudioLevels()
+        #expect(silent.audioEmptyReason == .noAudio)
+        #expect(silent.audioLevels == nil)
+        #expect(!silent.isAnalyzingAudio)
+        silent.workspace = .video
+
+        // The real analyzer on a file that is not a movie fails quietly.
+        let unreadable = storeWithSelectedClip()
+        await unreadable.refreshAudioLevels()
+        #expect(unreadable.audioEmptyReason == .noAudio)
+        #expect(!unreadable.isAnalyzingAudio)
+    }
+
+    @Test func setMasterGainDecibelsClampsAndMarksTheProjectEdited() {
+        let store = EditorStore()
+        store.lastSavedProject = store.project
+        #expect(!store.hasUnsavedChanges)
+        store.setMasterGainDecibels(30)
+        #expect(store.project.masterGainDecibels == ClipAudioAdjustments.maximumGainDecibels)
+        #expect(store.hasUnsavedChanges)
+        store.setMasterGainDecibels(-100)
+        #expect(store.project.masterGainDecibels == ClipAudioAdjustments.minimumGainDecibels)
+        store.setMasterGainDecibels(.nan)
+        #expect(store.project.masterGainDecibels == ClipAudioAdjustments.minimumGainDecibels, "NaN is ignored")
+        store.setMasterGainDecibels(-3)
+        #expect(store.project.masterGainDecibels == -3)
+    }
+
+    /// Store-to-composition forwarding of `project.masterGainDecibels`: the preview's audio mix
+    /// carries clip gain times master gain, and an export started from the store is quieter by it.
+    @Test(.enabled(if: MTLCreateSystemDefaultDevice() != nil))
+    func masterGainReachesThePreviewMixAndTheExport() async throws {
+        let temp = try TempDirectory()
+        let store = try makeVideoStore(temp)
+        store.usesProxiesForPlayback = false
+        let url = try await writeTestMovie(to: temp.url.appendingPathComponent("tone.mov"), frames: 48, withAudio: true, toneAmplitude: 0.25)
+        await store.importURLs([url]).value
+        store.proxyStore.cancelAll()
+        let asset = try #require(store.project.media.first)
+        store.workspace = .video
+        store.addToTimeline(asset)
+        store.updateSelectedAudioAdjustments { $0.gainDecibels = 6.0206 }
+        store.setMasterGainDecibels(-12.0412)
+
+        func volume() -> Float? {
+            guard let parameters = store.videoPlayer?.currentItem?.audioMix?.inputParameters.first else { return nil }
+            var start: Float = -1, end: Float = -1
+            var range = CMTimeRange.zero
+            guard parameters.getVolumeRamp(for: CMTime(seconds: 0.5, preferredTimescale: 600), startVolume: &start, endVolume: &end, timeRange: &range) else { return nil }
+            return start
+        }
+        try await waitUntil { store.isTimelinePlayback && volume().map { abs($0 - 0.5) < 0.001 } == true }
+        #expect(abs((volume() ?? 0) - 0.5) < 0.001, "x2 clip times x0.25 master")
+
+        let destination = temp.url.appendingPathComponent("Master.mov")
+        store.timelineExportSettings = TimelineExportSettings(preset: .proRes422HQ, size: .timeline)
+        let export = try store.startTimelineExport(to: destination)
+        await export.value
+        let peak = try await mixedAudioPeak(AVPlayerItem(url: destination), audioMix: nil)
+        #expect(abs(Double(peak) - 0.125) < 0.005, "Exported tone at 0.25 x 0.5 = 0.125, read \(peak)")
+        store.workspace = .photo
     }
 }

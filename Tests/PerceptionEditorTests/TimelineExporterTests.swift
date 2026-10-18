@@ -136,6 +136,71 @@ struct TimelineExporterTests {
         }
     }
 
+    /// Decoded export audio as float (first channel), read on a utility queue.
+    private func decodedAudio(_ url: URL) async throws -> [Float] {
+        let asset = AVURLAsset(url: url)
+        let track = try #require(try await asset.loadTracks(withMediaType: .audio).first)
+        let reader = try AVAssetReader(asset: asset)
+        let output = AVAssetReaderTrackOutput(track: track, outputSettings: [
+            AVFormatIDKey: kAudioFormatLinearPCM, AVLinearPCMBitDepthKey: 32, AVLinearPCMIsFloatKey: true,
+            AVLinearPCMIsBigEndianKey: false, AVLinearPCMIsNonInterleaved: false, AVNumberOfChannelsKey: 2
+        ])
+        reader.add(output)
+        #expect(reader.startReading())
+        let box = Unchecked(value: (reader, output))
+        return await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .utility).async {
+                var samples: [Float] = []
+                while let buffer = box.value.1.copyNextSampleBuffer() {
+                    guard let block = CMSampleBufferGetDataBuffer(buffer) else { continue }
+                    let length = CMBlockBufferGetDataLength(block)
+                    var data = [Float](repeating: 0, count: length / 4)
+                    _ = data.withUnsafeMutableBytes {
+                        CMBlockBufferCopyDataBytes(block, atOffset: 0, dataLength: length, destination: $0.baseAddress!)
+                    }
+                    for frame in stride(from: 0, to: data.count, by: 2) { samples.append(data[frame]) }
+                }
+                continuation.resume(returning: samples)
+            }
+        }
+    }
+
+    /// Clip +24 dB and master +24 dB (about 251x) on a -6 dBFS tone: the export must saturate at
+    /// full scale (a square-ish wave with the tone's signs), never wrap or turn into garbage.
+    @Test func extremeGainSaturatesTheExportInsteadOfWrapping() async throws {
+        let temp = try TempDirectory()
+        let url = try await writeTestMovie(to: temp.url.appendingPathComponent("tone.mov"), frames: 48, withAudio: true, toneAmplitude: 0.5)
+        var asset = MediaAsset(url: url, kind: .video)
+        asset.apply(await VideoMediaService.shared.metadata(for: url))
+        let clip = TimelineClip(assetID: asset.id, frameRate: asset.frameRate ?? .ntsc23976, durationFrames: 48)
+        for preset in TimelineExportPreset.allCases {
+            var hot = job([clip], [asset])
+            hot.audioAdjustmentsByClipID = [clip.id: ClipAudioAdjustments(gainDecibels: 24)]
+            hot.masterGainDecibels = 24
+            let destination = temp.url.appendingPathComponent("Hot \(preset.rawValue).mov")
+            _ = try await TimelineExporter().export(hot, settings: TimelineExportSettings(preset: preset, size: .timeline), to: destination)
+            let samples = try await decodedAudio(destination)
+            #expect(samples.count > 48_000, "\(preset): \(samples.count) samples")
+            let peak = samples.map { abs($0) }.max() ?? 0
+            // Skip the first and last 10 ms (codec edges); compare signs where the tone is clearly
+            // away from zero. A wrapped integer or garbage would flip them.
+            var flips = 0
+            var checked = 0
+            var nearFull = 0
+            for index in 480 ..< max(480, samples.count - 480) {
+                let tone = sin(2 * Double.pi * 1000 * Double(index) / 48_000)
+                guard abs(tone) > 0.3 else { continue }
+                checked += 1
+                if (samples[index] > 0) != (tone > 0) { flips += 1 }
+                if abs(samples[index]) > 0.75 { nearFull += 1 }
+            }
+            print("Hot export \(preset): peak \(peak) (\(AudioLevelAnalyzer.decibels(forLinearPeak: Double(peak))) dBFS), sign flips \(flips)/\(checked), near full scale \(nearFull)")
+            #expect(peak <= 1.0, "\(preset): peak \(peak) is over full scale")
+            #expect(flips == 0, "\(preset): \(flips) of \(checked) samples have the wrong sign")
+            #expect(Double(nearFull) > 0.9 * Double(checked), "\(preset): saturated, not quiet or garbage")
+        }
+    }
+
     @Test func cancellingLeavesNoFiles() async throws {
         let temp = try TempDirectory()
         let asset = try await frameNumbered(temp, frames: 240)

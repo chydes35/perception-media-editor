@@ -206,6 +206,42 @@ actor TimelineExporter {
         }
     }
 
+    /// The highest sample the exporter writes. The mix can reach about +48 dB (clip and master gain
+    /// at +24 each) and its float output goes past full scale. 24-bit PCM saturates at full scale on its
+    /// own. AAC encodes the overshoot instead (an HEVC export of a +48 dB tone decoded at +14.4 dBFS),
+    /// and even a mix hard-clipped at 1.0 decodes at +0.44 dBFS (the codec's ringing on a square
+    /// wave), so AAC is limited to -1 dBFS, which decoded at or under full scale.
+    nonisolated static func audioCeiling(_ preset: TimelineExportPreset) -> Float {
+        switch preset {
+        case .proRes422HQ: 1
+        case .hevcMain10: Float(pow(10, -1.0 / 20))
+        }
+    }
+
+    /// Clamps a float32 PCM buffer to ±`ceiling` in place (NaN becomes silence). Hard clipping is the
+    /// same saturation PCM does on its own; the Audio screen counts these spots before export.
+    nonisolated static func limit(_ sample: CMSampleBuffer, to ceiling: Float) {
+        guard let block = CMSampleBufferGetDataBuffer(sample) else { return }
+        let total = CMBlockBufferGetDataLength(block)
+        var offset = 0
+        while offset < total {
+            var length = 0
+            var pointer: UnsafeMutablePointer<Int8>?
+            guard CMBlockBufferGetDataPointer(
+                block, atOffset: offset, lengthAtOffsetOut: &length, totalLengthOut: nil, dataPointerOut: &pointer
+            ) == kCMBlockBufferNoErr, let pointer, length > 0 else { return }
+            let count = length / MemoryLayout<Float>.size
+            pointer.withMemoryRebound(to: Float.self, capacity: count) { samples in
+                for index in 0 ..< count {
+                    let value = samples[index]
+                    if value > ceiling { samples[index] = ceiling } else if value < -ceiling { samples[index] = -ceiling }
+                    else if value.isNaN { samples[index] = 0 }
+                }
+            }
+            offset += length
+        }
+    }
+
     private nonisolated static func audioSettings(_ preset: TimelineExportPreset) -> [String: Any] {
         var layout = AudioChannelLayout()
         layout.mChannelLayoutTag = kAudioChannelLayoutTag_Stereo
@@ -316,7 +352,8 @@ actor TimelineExporter {
                 AVLinearPCMIsNonInterleaved: false
             ])
             output.audioMix = audioMix
-            output.alwaysCopiesSampleData = false
+            // Each buffer is ours to change: the mix is limited to full scale in place before writing.
+            output.alwaysCopiesSampleData = true
             reader.add(output)
             audioOutput = output
         }
@@ -373,6 +410,7 @@ actor TimelineExporter {
                 }
             }
             if let (audioOutput, audioInput) = job.value.audio {
+                let ceiling = audioCeiling(settings.preset)
                 var audioDone = false
                 audioInput.requestMediaDataWhenReady(on: audioQueue) {
                     guard !audioDone else { return }
@@ -382,6 +420,7 @@ actor TimelineExporter {
                             audioInput.markAsFinished()
                             return pump.finish()
                         }
+                        limit(sample, to: ceiling)
                         guard audioInput.append(sample) else {
                             audioDone = true
                             return pump.finish(failure: "audio could not be written")

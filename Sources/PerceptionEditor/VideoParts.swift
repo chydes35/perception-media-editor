@@ -372,17 +372,7 @@ struct VideoTimeline: View {
     }
 
     private func waveformSamples(for clip: TimelineClip) -> [Float] {
-        let samples = store.audioWaveform(for: clip)
-        guard !samples.isEmpty,
-              let duration = store.timelineAsset(for: clip)?.durationSeconds,
-              duration > 0
-        else { return samples }
-
-        let startFraction = min(1, max(0, clip.sourceStartSeconds / duration))
-        let endFraction = min(1, max(startFraction, (clip.sourceStartSeconds + clip.durationSeconds) / duration))
-        let start = min(samples.count - 1, Int(startFraction * Double(samples.count)))
-        let end = min(samples.count, max(start + 1, Int(ceil(endFraction * Double(samples.count)))))
-        return Array(samples[start..<end])
+        store.clipWaveformSamples(for: clip)
     }
 
     private var timelinePlayhead: some View {
@@ -445,8 +435,10 @@ private struct EditorPlayerView: NSViewRepresentable {
     }
 }
 
-private struct AudioWaveformView: View {
+/// Peak bars of a waveform, drawn in `color`. Shared by the Cut timeline and the Audio lane.
+struct AudioWaveformView: View {
     let samples: [Float]
+    var color: Color = .white.opacity(0.82)
 
     var body: some View {
         Canvas { context, size in
@@ -460,7 +452,7 @@ private struct AudioWaveformView: View {
                 var path = Path()
                 path.move(to: CGPoint(x: x, y: centerY - height / 2))
                 path.addLine(to: CGPoint(x: x, y: centerY + height / 2))
-                context.stroke(path, with: .color(.white.opacity(0.82)), lineWidth: max(1, step * 0.54))
+                context.stroke(path, with: .color(color), lineWidth: max(1, step * 0.54))
             }
         }
     }
@@ -503,4 +495,22 @@ func formatTime(_ seconds: Double) -> String {
     let minutes = Int(safeSeconds) / 60
     let remaining = safeSeconds - Double(minutes * 60)
     return String(format: "%02d:%05.2f", minutes, remaining)
+}
+
+
+extension EditorStore {
+    /// The part of the clip's file waveform that the clip uses.
+    func clipWaveformSamples(for clip: TimelineClip) -> [Float] {
+        let samples = audioWaveform(for: clip)
+        guard !samples.isEmpty,
+              let duration = timelineAsset(for: clip)?.durationSeconds,
+              duration > 0
+        else { return samples }
+
+        let startFraction = min(1, max(0, clip.sourceStartSeconds / duration))
+        let endFraction = min(1, max(startFraction, (clip.sourceStartSeconds + clip.durationSeconds) / duration))
+        let start = min(samples.count - 1, Int(startFraction * Double(samples.count)))
+        let end = min(samples.count, max(start + 1, Int(ceil(endFraction * Double(samples.count)))))
+        return Array(samples[start..<end])
+    }
 }

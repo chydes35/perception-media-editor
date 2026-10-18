@@ -80,6 +80,7 @@ struct RealVideoScopeTests {
         let span = (times.last ?? 0) - (times.first ?? 0)
         let rateHz = times.count > 1 ? Double(times.count - 1) / span : 0
         let medianGPU = gpu.sorted()[gpu.count / 2]
+        let p99GPU = gpu.sorted()[min(gpu.count - 1, gpu.count * 99 / 100)]
 
         // The compositor's own scope cost: a 4×4-tap downsample of a frame of the render size, and of 1080p.
         let downsample = try Self.downsampleMilliseconds(width: Int(renderSize.width), height: Int(renderSize.height))
@@ -87,7 +88,9 @@ struct RealVideoScopeTests {
         print("SCOPES G9 playback: \(pulled) frames at \(Int(renderSize.width))x\(Int(renderSize.height)), " +
               "\(times.count) updates, \(String(format: "%.1f", rateHz)) Hz; analysis GPU median " +
               "\(String(format: "%.2f", medianGPU)) ms, downsample \(String(format: "%.2f", downsample)) ms " +
-              "(1080p \(String(format: "%.2f", downsample1080)) ms)")
+              "(1080p \(String(format: "%.2f", downsample1080)) ms); analysis p99 \(String(format: "%.2f", p99GPU)) ms; " +
+              "per-update total at 1080p: median \(String(format: "%.2f", medianGPU + downsample1080)) ms, " +
+              "p99 \(String(format: "%.2f", p99GPU + downsample1080)) ms")
         #expect(pulled == frames)
         #expect(rateHz >= 10, "Scope updates at \(rateHz) Hz")
         #expect(medianGPU + downsample1080 <= 2, "Scope GPU cost at 1080p \(medianGPU + downsample1080) ms")

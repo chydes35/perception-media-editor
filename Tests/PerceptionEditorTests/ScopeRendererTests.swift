@@ -108,6 +108,30 @@ struct ScopeRendererTests {
         #expect(uneven.green[0] == 1 && uneven.green[191] == 0 && uneven.blue[0] == 1)
     }
 
+    @Test func everyPixelIsCountedOnceOnAFrameThatIsNotAMultipleOfTheThreadgroup() throws {
+        let renderer = try ScopeRenderer()
+        let analysis = try renderer.analyze(try Self.frame(width: 500, height: 37), mode: .luma)
+        for channel in 0 ..< 3 {
+            let total = analysis.histogramCounts[channel * 256 ..< (channel + 1) * 256].reduce(0, +)
+            #expect(total == 500 * 37, "Channel \(channel) counted \(total) pixels")
+        }
+    }
+
+    @Test func outOfRangeAndNaNValuesLandInTheEndBins() throws {
+        let renderer = try ScopeRenderer()
+        // Per pixel: red below 0 / above 1 / NaN / 1, green and blue fixed.
+        let colors: [SIMD3<Float>] = [[-0.5, 2, .nan], [3, -1, 0.5], [.nan, 1, 0], [1, 0, 1]]
+        let analysis = try renderer.analyze(try Self.frame(width: 64, height: 8, colors: colors), mode: .luma)
+        let each = UInt32(64 * 8 / 4)
+        func count(_ channel: Int, _ bin: Int) -> UInt32 { analysis.histogramCounts[channel * 256 + bin] }
+        #expect(count(0, 0) == 2 * each && count(0, 255) == 2 * each, "Red: -0.5 and NaN at 0, 3 and 1 at 255")
+        #expect(count(1, 0) == 2 * each && count(1, 255) == 2 * each)
+        #expect(count(2, 0) == 2 * each && count(2, 255) == each && count(2, 128) == each, "Blue: NaN and 0 at 0, 1 at 255, 0.5 at 128")
+        for channel in 0 ..< 3 {
+            #expect(analysis.histogramCounts[channel * 256 ..< (channel + 1) * 256].reduce(0, +) == 64 * 8)
+        }
+    }
+
     @Test func imagesHaveTheirSizesAndShowTheGuides() throws {
         let renderer = try ScopeRenderer()
         let analysis = try renderer.analyze(try Self.frame(colors: [SIMD3(repeating: 0.42)]), mode: .luma)

@@ -20,6 +20,8 @@ struct ScopeAnalysis: @unchecked Sendable {
     var vectorscopeImage: CGImage
     /// 256 bins per channel of the frame's code values, each channel scaled so its tallest bin is 1 (like the photo histogram).
     var histogram: HistogramData
+    /// The histogram's raw counts: red, green, blue, 256 bins each.
+    var histogramCounts: [UInt32]
     var gpuMilliseconds: Double
 }
 
@@ -157,7 +159,7 @@ final class ScopeRenderer: @unchecked Sendable {
         return ScopeAnalysis(
             waveform: waveform, vectorscope: vectorscope, columns: Self.columns, bins: Self.bins, size: Self.size,
             waveformImage: try Self.image(waveformTexture), vectorscopeImage: try Self.image(vectorscopeTexture),
-            histogram: HistogramData(red: channel(0), green: channel(1), blue: channel(2)),
+            histogram: HistogramData(red: channel(0), green: channel(1), blue: channel(2)), histogramCounts: counts,
             gpuMilliseconds: (commandBuffer.gpuEndTime - commandBuffer.gpuStartTime) * 1000
         )
     }

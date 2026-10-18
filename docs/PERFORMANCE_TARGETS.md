@@ -95,13 +95,17 @@ G1 (playback) and G7 (playback) FAIL. Scopes run at 13.7 Hz in both.
 
 ## Scopes (branch `plan/10bit-vlog-color`)
 
-Gate G9, `RealVideoScopeTests` with `PME_VLOG_SHORT=P1107158.MOV`, release, 8 GB M1, frames pulled at 24 fps through the compositor. Target: at least 10 updates a second, at most 2 ms GPU per update at 1080p.
+Gate G9 (re-measured with the histogram on 2026-10-17: `PME_VLOG_SHORT=/Volumes/ExSSD1/Pictures/110_PANA/P1107158.MOV swift test -c release --no-parallel --filter RealVideoScopeTests` prints every figure below), `RealVideoScopeTests` with `PME_VLOG_SHORT=P1107158.MOV`, release, 8 GB M1, frames pulled at 24 fps through the compositor. Target: at least 10 updates a second, at most 2 ms GPU per update at 1080p.
 
 | Measure | Result |
 |---|---|
 | Update rate during playback | 14.6 Hz (every second frame) |
 | Analysis (waveform + vectorscope, 512 × 288 capture) | 0.67 ms GPU median |
-| Analysis with the RGB histogram added (synthetic 8-bar 512 × 288 capture, release, 100 runs; the bars put every pixel in 8 bins, the worst case for atomic contention) | 0.84 ms GPU median, 1.87 ms p99 (1.25 ms median with global atomics only; the kernel counts per threadgroup first). Real V-Log footage with the histogram is NOT VERIFIED (G9 not re-run) |
+| Analysis total, with the RGB histogram (waveform + vectorscope + histogram + images), real V-Log, 3840 x 2160 source, 41 updates | 0.66-0.70 ms GPU median over two runs (second run with the NaN guard); p99 2.14 and 7.67 ms (before the histogram: 0.67 ms median) |
+| Capture downsample alone | 0.32-0.46 ms at 1080p, 1.27-1.48 ms at UHD (two runs) |
+| Per-update total at 1080p (analysis + 1080p downsample) | 1.02 and 1.12 ms median (two runs), 2.46 and 8.13 ms p99 |
+| G9 verdict (median per update <= 2 ms) | PASS in both runs (1.02 and 1.12 ms median). The p99 is over 2 ms (2.46 and 8.13 ms): G9 is a median gate and the test asserts the median, but with only 41 updates the p99 is nearly the single worst update (first updates include pipeline warm-up), so tail latency is NOT characterized. |
+| Histogram kernel alone, synthetic 8-bar 512 x 288 capture, release, 100 runs (worst case for atomic contention; whole analysis, not the kernel alone, was timed) | 0.84 ms analysis median, 1.87 ms p99; with plain global atomics the same capture took 1.25 ms median, hence per-threadgroup counting |
 | Capture downsample in the compositor | 0.43 ms at 1080p, 1.46 ms at UHD |
 
 ## Acceptance workload

@@ -218,6 +218,7 @@ enum MetalShaderSources {
         threadgroup_barrier(mem_flags::mem_threadgroup);
         if (gid.x < image.get_width() && gid.y < image.get_height()) {
             float3 c = float3(image.read(gid).rgb);
+            c = select(float3(0.0), c, c == c); // NaN counts as 0.
             for (uint channel = 0; channel < 3; channel++) {
                 uint bin = uint(clamp(round(c[channel] * 255.0), 0.0, 255.0));
                 atomic_fetch_add_explicit(&local[channel * 256 + bin], 1u, memory_order_relaxed);

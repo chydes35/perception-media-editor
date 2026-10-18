@@ -26,6 +26,7 @@ enum EditorCategory: String, CaseIterable, Identifiable, Sendable {
             [
                 RailStep(id: "video.import", title: "Import", symbol: "square.and.arrow.down", workspace: .library),
                 RailStep(id: "video.cut", title: "Cut", symbol: "scissors", workspace: .video),
+                RailStep(id: "video.color", title: "Color", symbol: "camera.filters", workspace: .videoColor),
                 RailStep(id: "video.export", title: "Export", symbol: "square.and.arrow.up", workspace: .videoExport),
             ]
         }
@@ -55,10 +56,10 @@ struct EditorStepShortcut {
 }
 
 extension Workspace {
-    /// True for every screen of the Video category's editing flow (Cut, Export, later Color and Audio).
+    /// True for every screen of the Video category's editing flow (Cut, Color, Export, later Audio).
     var isVideo: Bool {
         switch self {
-        case .video, .videoExport: true
+        case .video, .videoColor, .videoExport: true
         default: false
         }
     }
@@ -67,7 +68,7 @@ extension Workspace {
     var category: EditorCategory? {
         switch self {
         case .cull, .photo, .export: .photo
-        case .video, .videoExport: .video
+        case .video, .videoColor, .videoExport: .video
         case .library, .agents: nil
         }
     }

@@ -122,11 +122,13 @@ struct VideoViewer: View {
                         in: Capsule()
                     )
                 Spacer()
-                Toggle(isOn: $store.scopesVisible) {
-                    Label("Scopes", systemImage: "waveform.path.ecg.rectangle")
+                if showsScopePanel {
+                    Toggle(isOn: $store.scopesVisible) {
+                        Label("Scopes", systemImage: "waveform.path.ecg.rectangle")
+                    }
+                    .toggleStyle(.button)
+                    .help("Waveform and vectorscope of the picture in the viewer")
                 }
-                .toggleStyle(.button)
-                .help("Waveform and vectorscope of the picture in the viewer")
                 if !store.isTimelinePlayback, !store.project.timelineClips.isEmpty {
                     Button("Preview Timeline", systemImage: "play.rectangle.on.rectangle") {
                         store.previewTimeline()

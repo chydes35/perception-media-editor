@@ -139,7 +139,7 @@ struct ScopePanel: View {
 }
 
 /// Shows a scope image through a layer, so updates at 15 Hz don't rebuild SwiftUI images.
-private struct ScopeImageView: NSViewRepresentable {
+struct ScopeImageView: NSViewRepresentable {
     var image: CGImage?
 
     func makeNSView(context: Context) -> NSView {

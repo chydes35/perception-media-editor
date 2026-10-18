@@ -5,6 +5,7 @@ enum Workspace: String, CaseIterable, Identifiable {
     case cull = "Cull"
     case photo = "Photo"
     case video = "Video"
+    case videoColor = "Video Color"
     case videoExport = "Video Export"
     case export = "Export"
     case agents = "Agents"

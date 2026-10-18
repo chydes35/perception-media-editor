@@ -14,6 +14,8 @@ final class EditorStore: ObservableObject {
             workspaceChangeTask = nil
             if workspace == .agents, oldValue != .agents { workspaceBeforeAgents = oldValue }
             if !workspace.isVideo { pauseVideoPlayback() }
+            if oldValue == .videoColor, workspace != .videoColor { videoBeforeAfter = false }
+            updateColorScreenScopes()
             syncCategory()
             workspaceDidChange()
         }
@@ -93,7 +95,9 @@ final class EditorStore: ObservableObject {
     @Published var focusImage: CGImage?
     @Published var isLoadingFocus = false
     @Published var selectedVideoAssetID: UUID?
-    @Published var selectedTimelineClipID: UUID?
+    @Published var selectedTimelineClipID: UUID? {
+        didSet { if oldValue != selectedTimelineClipID { updateColorScreenScopes() } }
+    }
     @Published var videoPlayer: AVPlayer?
     @Published private(set) var isTimelinePlayback = false
     @Published private(set) var isVideoPlaying = false
@@ -133,6 +137,16 @@ final class EditorStore: ObservableObject {
         }
     }
     let scopeModel = ScopeModel()
+    /// What `scopesVisible` was before the Color screen took the scopes over; nil while Color is not shown.
+    private var scopesVisibleBeforeColor: Bool?
+    /// Color screen before/after: the preview shows every clip as recorded (neutral adjustments,
+    /// no input LUT or OCIO source transform). The grade stays in the project; export never reads this.
+    @Published var videoBeforeAfter = false {
+        didSet { if videoBeforeAfter != oldValue { refreshPlaybackSources() } }
+    }
+    /// The Color screen's scope chips: which of the histogram and vectorscope panes are shown.
+    @Published var colorScopeShowsHistogram = true
+    @Published var colorScopeShowsVectorscope = true
     @Published private(set) var timelinePlaybackWarnings: [String] = []
     @Published private(set) var audioWaveforms: [UUID: [Float]] = [:]
     @Published var renderedPreview: NSImage?
@@ -1530,8 +1544,9 @@ final class EditorStore: ObservableObject {
         timelinePlaybackPositionSeconds = 0
 
         let url = playbackURL(for: asset)
-        let inputLUT = resolvedInputLUTs().resolved[asset.id]
-        let ocioInput = resolvedOCIOInputs()[asset.id]
+        let colorInputs = previewColorInputs()
+        let inputLUT = colorInputs.inputLUTs.resolved[asset.id]
+        let ocioInput = colorInputs.ocioInputs[asset.id]
         if inputLUT != nil || ocioInput != nil || scopesVisible {
             // Source color and the scopes need the compositor, so the viewer plays a one-clip timeline.
             let player = AVPlayer()
@@ -1640,6 +1655,42 @@ final class EditorStore: ObservableObject {
         }
     }
 
+    /// True when the Color screen has a timeline clip to grade; otherwise it shows an empty state.
+    var colorHasTarget: Bool { selectedTimelineClip != nil }
+
+    /// The Color screen owns the scopes: they run while it is shown with a clip to grade, and
+    /// leaving it restores whatever the Cut screen's toggle said before.
+    private func updateColorScreenScopes() {
+        if workspace == .videoColor {
+            let entering = scopesVisibleBeforeColor == nil
+            if entering { scopesVisibleBeforeColor = scopesVisible }
+            scopesVisible = colorHasTarget
+            // The grade shows only on timeline playback, so a source preview left by Cut moves to the clip.
+            if entering, !isTimelinePlayback, let clip = selectedTimelineClip { selectTimelineClip(clip) }
+        } else if let previous = scopesVisibleBeforeColor {
+            scopesVisibleBeforeColor = nil
+            scopesVisible = previous
+        }
+    }
+
+    /// A Color screen chip: Waveform or RGB parade. Re-measures the paused frame in the new mode.
+    func setWaveformMode(_ mode: WaveformMode) {
+        guard scopeModel.waveformMode != mode else { return }
+        scopeModel.waveformMode = mode
+        scopeModel.modeChanged()
+    }
+
+    /// The color inputs the preview is built with. Before/after drops the grade and the source
+    /// transform; export builds its own inputs from the project and is unaffected.
+    func previewColorInputs() -> (
+        adjustmentsByClipID: [UUID: PhotoAdjustments],
+        inputLUTs: (resolved: [UUID: ResolvedLUT], warnings: [String]),
+        ocioInputs: [UUID: OCIOInputTransform]
+    ) {
+        guard !videoBeforeAfter else { return ([:], ([:], []), [:]) }
+        return (project.videoAdjustmentsByClipID, resolvedInputLUTs(), resolvedOCIOInputs())
+    }
+
     /// Rebuilds timeline playback after a color input or LUT changed, keeping the position.
     func rebuildTimelineForColorChange() {
         rebuildTimelinePlayback()
@@ -1666,11 +1717,9 @@ final class EditorStore: ObservableObject {
         let shouldAutoplay = autoplay || (isTimelinePlayback && isVideoPlaying)
         let clips = project.timelineClips
         let sequenceRate = project.sequenceFrameRate
-        let inputLUTs = resolvedInputLUTs()
-        let ocioInputs = resolvedOCIOInputs()
+        let (adjustmentsByClipID, inputLUTs, ocioInputs) = previewColorInputs()
         let renderingPath: TimelineRenderingPath = scopesVisible ? .compositor : .automatic
         let media = project.media
-        let adjustmentsByClipID = project.videoAdjustmentsByClipID
         let audioAdjustmentsByClipID = project.audioAdjustmentsByClipID
         if usesProxiesForPlayback { regenerateMissingProxies(for: Set(clips.map(\.assetID))) }
         let proxyURLs = usesProxiesForPlayback ? proxyStore.readyURLs : [:]

@@ -1,5 +1,6 @@
-import AVFoundation
+@preconcurrency import AVFoundation
 import Foundation
+import Metal
 import Testing
 @testable import PerceptionEditor
 
@@ -12,10 +13,153 @@ struct EditorNavigationTests {
         #expect(steps.map(\.workspace) == [.library, .cull, .photo, .export])
     }
 
-    @Test func videoStepsStartWithImportCutAndExport() {
+    @Test func videoStepsAreImportCutColorExport() {
         let steps = EditorCategory.video.steps
-        #expect(steps.map(\.title) == ["Import", "Cut", "Export"])
-        #expect(steps.map(\.workspace) == [.library, .video, .videoExport])
+        #expect(steps.map(\.title) == ["Import", "Cut", "Color", "Export"])
+        #expect(steps.map(\.workspace) == [.library, .video, .videoColor, .videoExport])
+    }
+
+    @Test func colorStepIsInTheVideoRail() {
+        let steps = EditorCategory.video.steps
+        let cut = steps.firstIndex { $0.workspace == .video }
+        let color = steps.firstIndex { $0.workspace == .videoColor }
+        #expect(color != nil)
+        #expect(color == cut.map { $0 + 1 }, "Color comes right after Cut")
+        #expect(steps.first { $0.workspace == .videoColor }?.title == "Color")
+        #expect(Workspace.videoColor.isVideo)
+        #expect(Workspace.videoColor.category == .video)
+        #expect(!EditorCategory.photo.steps.contains { $0.workspace == .videoColor })
+        #expect(EditorStepShortcut.all.contains { $0.step.workspace == .videoColor })
+    }
+
+    private func makeVideoStore(_ temp: TempDirectory) throws -> EditorStore {
+        let suite = "pme-color-tests-\(UUID().uuidString)"
+        return EditorStore(
+            presetRepository: UserPresetRepository(defaults: UserDefaults(suiteName: suite)!),
+            proxyStore: ProxyStore(directory: try temp.subdirectory("Proxy Cache"), availableBytes: { _ in 1 << 40 }),
+            proxyDefaults: UserDefaults(suiteName: suite)!,
+            lutLibrary: LUTLibrary(directory: temp.url.appendingPathComponent("Library"))
+        )
+    }
+
+    /// A store with one (fileless) clip on the timeline, selected.
+    private func storeWithSelectedClip() -> EditorStore {
+        let store = EditorStore()
+        let video = MediaAsset(url: URL(fileURLWithPath: "/Volumes/Test/C0001.MOV"), kind: .video)
+        let clip = TimelineClip(assetID: video.id, sourceStartFrame: 0, durationFrames: 120)
+        store.project.media = [video]
+        store.project.timelineClips = [clip]
+        store.selectedTimelineClipID = clip.id
+        return store
+    }
+
+    @Test func scopesRunOnlyWhileTheColorScreenIsShown() async {
+        let store = storeWithSelectedClip()
+        store.workspace = .video
+        #expect(!store.scopesVisible)
+        store.requestStepChange(EditorCategory.video.steps[2])
+        await store.workspaceChangeTask?.value
+        #expect(store.workspace == .videoColor)
+        #expect(store.scopesVisible, "Color turns the scopes on")
+        store.requestStepChange(EditorCategory.video.steps[1])
+        await store.workspaceChangeTask?.value
+        #expect(!store.scopesVisible, "Leaving restores the earlier off state")
+
+        // Scopes already open on Cut stay open after a visit to Color.
+        store.scopesVisible = true
+        store.workspace = .videoColor
+        #expect(store.scopesVisible)
+        store.workspace = .videoExport
+        #expect(store.scopesVisible)
+        store.scopesVisible = false
+    }
+
+    @Test func colorWithNoClipShowsAnEmptyState() {
+        let store = EditorStore()
+        store.workspace = .videoColor
+        #expect(!store.colorHasTarget)
+        #expect(!store.scopesVisible, "No clip, no scope capture")
+        #expect(!store.videoAdjustmentEditing.isAvailable)
+
+        // Scopes left open on Cut are not running on an empty Color screen either.
+        let open = EditorStore()
+        open.workspace = .video
+        open.scopesVisible = true
+        open.workspace = .videoColor
+        #expect(!open.scopesVisible)
+        open.workspace = .video
+        #expect(open.scopesVisible)
+        open.scopesVisible = false
+    }
+
+    @Test func selectingAClipOnTheColorScreenStartsTheScopes() {
+        let store = storeWithSelectedClip()
+        let clipID = store.selectedTimelineClipID
+        store.selectedTimelineClipID = nil
+        store.workspace = .videoColor
+        #expect(!store.scopesVisible)
+        store.selectedTimelineClipID = clipID
+        #expect(store.colorHasTarget)
+        #expect(store.scopesVisible)
+        store.workspace = .video
+        #expect(!store.scopesVisible)
+    }
+
+    @Test func leavingColorTurnsBeforeAfterOff() {
+        let store = storeWithSelectedClip()
+        store.workspace = .videoColor
+        store.videoBeforeAfter = true
+        store.workspace = .video
+        #expect(!store.videoBeforeAfter)
+    }
+
+    @Test func colorChipsShowAndHideTheirPanes() {
+        let store = EditorStore()
+        #expect(store.colorScopeShowsHistogram)
+        #expect(store.colorScopeShowsVectorscope)
+        store.colorScopeShowsHistogram.toggle()
+        #expect(!store.colorScopeShowsHistogram)
+        store.setWaveformMode(.rgbParade)
+        #expect(store.scopeModel.waveformMode == .rgbParade)
+        store.setWaveformMode(.luma)
+        #expect(store.scopeModel.waveformMode == .luma)
+    }
+
+    @Test(.enabled(if: MTLCreateSystemDefaultDevice() != nil))
+    func beforeAfterBuildsANeutralPreviewRecipe() async throws {
+        let temp = try TempDirectory()
+        let store = try makeVideoStore(temp)
+        let movie = try await writeColorPatternMovie(to: temp.url.appendingPathComponent("A.MOV"))
+        await store.importURLs([movie]).value
+        store.proxyStore.cancelAll()
+        let asset = try #require(store.project.media.first)
+        store.setColorInput(.aces, forAssets: [asset.id])
+        store.workspace = .videoColor
+        store.addToTimeline(asset)
+        let clipID = try #require(store.selectedTimelineClipID)
+        store.updateSelectedVideoAdjustments { $0.exposure = 1 }
+
+        func recipe() -> ClipRenderRecipe? {
+            (store.videoPlayer?.currentItem?.videoComposition?.instructions ?? [])
+                .compactMap { ($0 as? TimelineCompositionInstruction)?.recipe }.first
+        }
+        try await waitUntil { store.isTimelinePlayback && recipe()?.adjustments.exposure == 1 }
+        #expect(recipe()?.ocioInput != nil, "Graded preview carries the source-color transform")
+
+        store.videoBeforeAfter = true
+        try await waitUntil { store.isTimelinePlayback && recipe()?.adjustments == .neutral }
+        let before = try #require(recipe())
+        #expect(before.adjustments == .neutral)
+        #expect(before.inputLUT == nil)
+        #expect(before.ocioInput == nil)
+        #expect(store.project.videoAdjustmentsByClipID[clipID]?.exposure == 1, "The grade itself is untouched")
+        #expect(store.project.colorInput(for: asset.id) == .aces)
+
+        store.videoBeforeAfter = false
+        try await waitUntil { store.isTimelinePlayback && recipe()?.adjustments.exposure == 1 }
+        #expect(recipe()?.ocioInput != nil)
+        store.workspace = .video
+        store.proxyStore.cancelAll()
     }
 
     @Test func changingCategoryReturnsToTheLastStepUsedThere() async {
@@ -90,7 +234,7 @@ struct EditorNavigationTests {
         let store = EditorStore()
         store.workspace = .video
         store.markVideoPlayingForTesting()
-        store.requestStepChange(EditorCategory.video.steps[2])
+        store.requestStepChange(EditorCategory.video.steps[3])
         await store.workspaceChangeTask?.value
         #expect(store.workspace == .videoExport)
         #expect(store.isVideoPlaying)
@@ -98,6 +242,7 @@ struct EditorNavigationTests {
 
     @Test func isVideoCoversEveryVideoScreen() {
         #expect(Workspace.video.isVideo)
+        #expect(Workspace.videoColor.isVideo)
         #expect(Workspace.videoExport.isVideo)
         for workspace in [Workspace.library, .cull, .photo, .export, .agents] {
             #expect(!workspace.isVideo)
@@ -130,8 +275,8 @@ struct EditorNavigationTests {
         #expect(photo.libraryEntrySection == nil)
     }
 
-    @Test func workspaceMenuShortcutsAreOneToSevenAndAgentsUsesZero() {
-        #expect(EditorStepShortcut.all.map { String($0.key) } == ["1", "2", "3", "4", "5", "6", "7"])
+    @Test func workspaceMenuShortcutsAreOneToEightAndAgentsUsesZero() {
+        #expect(EditorStepShortcut.all.map { String($0.key) } == ["1", "2", "3", "4", "5", "6", "7", "8"])
         #expect(!EditorStepShortcut.all.contains { $0.key == EditorStepShortcut.agentsKey })
         #expect(EditorStepShortcut.agentsKey == "0")
     }

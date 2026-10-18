@@ -57,7 +57,8 @@ Develop preview completion is bound to the project generation, selected asset an
 - `VideoCompositorDiagnostics.swift`: "VideoCompositor" signposts (an interval per frame, a "GPU" event with its GPU time), per-frame GPU time in the compositor's counters, and opt-in log lines (`PME_VIDEO_DIAGNOSTICS=1`).
 - `AudioWaveformService.swift`: asynchronous PCM peak extraction with stable memory and Application Support disk caches.
 - `TimelineCompositionService.swift`: translates persistent V1/A1 clip metadata into a playable AVMutableComposition and reports recoverable media warnings.
-- `VideoWorkspace.swift`: source viewer, media bin, inspector, and persistent V1/A1 timeline controls.
+- `VideoWorkspace.swift`: composes the video screen (media bin, viewer, inspector, timeline).
+- `VideoParts.swift`: shared `VideoMediaBin`, `VideoViewer` (transport and optional scope panel) and `VideoTimeline` (persistent V1/A1 controls).
 - `AgentModels.swift`, `AgentEngine.swift`, and `AgentWorkspace.swift`: local-first workflow agents with reviewable findings and reversible adjustment proposals.
 - `scripts/agent-review.sh`: deterministic developer reviewers for workflow, renderer, schema, compatibility, and release checks.
 

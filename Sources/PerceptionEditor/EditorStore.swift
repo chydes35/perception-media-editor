@@ -623,19 +623,19 @@ final class EditorStore: ObservableObject {
     /// Segmented-picker bindings can be written while SwiftUI updates its native view.
     /// Publish navigation and its dependent state only after that update returns.
     func requestWorkspaceChange(to requested: Workspace) {
-        requestWorkspaceChange(to: requested, category: nil)
+        requestWorkspaceChange(to: requested, category: nil, entrySection: nil)
     }
 
     /// Switches category, returning to the last step used there (or its first step).
     func requestCategoryChange(to requested: EditorCategory) {
         let target = lastWorkspaceByCategory[requested] ?? requested.steps[0].workspace
-        if requested == .video, target == .library { libraryEntrySection = "Video" }
-        requestWorkspaceChange(to: target, category: requested)
+        requestWorkspaceChange(to: target, category: requested, entrySection: target == .library ? Self.importSection(for: requested) : nil)
     }
 
     func requestStepChange(_ step: RailStep) {
-        if step.id == "video.import" { libraryEntrySection = "Video" }
-        requestWorkspaceChange(to: step.workspace)
+        let owner = EditorCategory.allCases.first { $0.steps.contains(step) }
+        let section = step.workspace == .library ? owner.map(Self.importSection(for:)) : nil
+        requestWorkspaceChange(to: step.workspace, category: owner, entrySection: section)
     }
 
     func openAgents() {
@@ -649,7 +649,12 @@ final class EditorStore: ObservableObject {
         workspaceBeforeAgents = nil
     }
 
-    private func requestWorkspaceChange(to requested: Workspace, category requestedCategory: EditorCategory?) {
+    /// The Library sidebar section each category's Import step opens on.
+    private static func importSection(for category: EditorCategory) -> String {
+        category == .video ? "Video" : "Photos"
+    }
+
+    private func requestWorkspaceChange(to requested: Workspace, category requestedCategory: EditorCategory?, entrySection: String?) {
         workspaceChangeTask?.cancel()
         workspaceChangeTask = nil
         pendingCategory = nil
@@ -659,6 +664,7 @@ final class EditorStore: ObservableObject {
             guard !Task.isCancelled, let self, generation == self.projectGeneration else { return }
             self.workspaceChangeTask = nil
             self.pendingCategory = requestedCategory
+            if let entrySection { self.libraryEntrySection = entrySection }
             if requested == self.workspace {
                 self.syncCategory()
             } else {
@@ -676,6 +682,8 @@ final class EditorStore: ObservableObject {
             if pending != category { pauseVideoPlayback() }
             category = pending
         }
+        // Library (Import) is shared, so it is remembered for whichever category is current.
+        if workspace != .agents { lastWorkspaceByCategory[category] = workspace }
         pendingCategory = nil
     }
 
@@ -1417,6 +1425,16 @@ final class EditorStore: ObservableObject {
         isVideoPlaying = false
     }
 
+    /// Starts playback for a freshly built player, but only while a video screen is showing;
+    /// a rebuild that finishes after the user left for Photo must not play.
+    @discardableResult
+    func beginAutoplay(_ player: AVPlayer) -> Bool {
+        guard workspace.isVideo else { return false }
+        player.play()
+        isVideoPlaying = true
+        return true
+    }
+
     /// Test seam: marks playback as running without a real player.
     func markVideoPlayingForTesting() { isVideoPlaying = true }
 
@@ -1559,10 +1577,7 @@ final class EditorStore: ObservableObject {
         if state.time.isValid, state.time.seconds > 0 {
             player.seek(to: state.time, toleranceBefore: .zero, toleranceAfter: .zero)
         }
-        if state.playing {
-            player.play()
-            isVideoPlaying = true
-        }
+        if state.playing { beginAutoplay(player) }
     }
 
     private static func proxyStatusKind(_ status: ProxyStatus) -> Int {
@@ -1695,10 +1710,7 @@ final class EditorStore: ObservableObject {
             timelinePlaybackDurationSeconds = result.durationSeconds
             let clampedPosition = min(max(0, position), result.durationSeconds)
             seekTimeline(to: clampedPosition)
-            if shouldAutoplay {
-                player.play()
-                isVideoPlaying = true
-            }
+            if shouldAutoplay { beginAutoplay(player) }
             statusMessage = result.warnings.isEmpty
                 ? "Timeline preview ready"
                 : "Timeline ready with \(result.warnings.count) warning\(result.warnings.count == 1 ? "" : "s")"

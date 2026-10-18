@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import Testing
 @testable import PerceptionEditor
@@ -129,13 +130,84 @@ struct EditorNavigationTests {
         #expect(photo.libraryEntrySection == nil)
     }
 
-    @Test func workspaceMenuListsEveryStepOfBothCategories() {
-        let titles = EditorCategory.allCases.flatMap { $0.steps.map(\.id) }
-        #expect(titles == ["photo.import", "photo.cull", "photo.develop", "photo.export",
-                           "video.import", "video.cut", "video.export"])
-        let shortcuts = EditorStepShortcut.all
-        #expect(shortcuts.count == 7)
-        #expect(Set(shortcuts.map(\.key)).count == 7)
+    @Test func workspaceMenuShortcutsAreOneToSevenAndAgentsUsesZero() {
+        #expect(EditorStepShortcut.all.map { String($0.key) } == ["1", "2", "3", "4", "5", "6", "7"])
+        #expect(!EditorStepShortcut.all.contains { $0.key == EditorStepShortcut.agentsKey })
+        #expect(EditorStepShortcut.agentsKey == "0")
+    }
+
+    @Test func menuStepFromDevelopToVideoImportSwitchesCategory() async {
+        let store = EditorStore()
+        store.workspace = .photo
+        store.requestStepChange(EditorCategory.video.steps[0])
+        #expect(store.libraryEntrySection == nil)
+        await store.workspaceChangeTask?.value
+        #expect(store.workspace == .library)
+        #expect(store.category == .video)
+        #expect(store.libraryEntrySection == "Video")
+    }
+
+    @Test func menuStepFromVideoImportToPhotoImportSwitchesCategory() async {
+        let store = EditorStore()
+        store.requestCategoryChange(to: .video)
+        await store.workspaceChangeTask?.value
+        #expect(store.workspace == .library)
+        #expect(store.category == .video)
+        store.requestStepChange(EditorCategory.photo.steps[0])
+        await store.workspaceChangeTask?.value
+        #expect(store.workspace == .library)
+        #expect(store.category == .photo)
+        #expect(store.libraryEntrySection == "Photos")
+    }
+
+    @Test func menuStepFromVideoCutToPhotoImportSwitchesCategory() async {
+        let store = EditorStore()
+        store.workspace = .video
+        store.requestStepChange(EditorCategory.photo.steps[0])
+        await store.workspaceChangeTask?.value
+        #expect(store.workspace == .library)
+        #expect(store.category == .photo)
+    }
+
+    @Test func importStepIsRememberedPerCategory() async {
+        let store = EditorStore()
+        store.workspace = .video
+        store.requestStepChange(EditorCategory.video.steps[0])
+        await store.workspaceChangeTask?.value
+        #expect(store.workspace == .library)
+        store.requestCategoryChange(to: .photo)
+        await store.workspaceChangeTask?.value
+        store.requestCategoryChange(to: .video)
+        await store.workspaceChangeTask?.value
+        #expect(store.workspace == .library)
+        #expect(store.category == .video)
+        store.requestCategoryChange(to: .video)
+        await store.workspaceChangeTask?.value
+        #expect(store.workspace == .library)
+    }
+
+    @Test func photoImportRequestsAPhotoSectionOnReturningFromVideo() async {
+        let store = EditorStore()
+        store.requestCategoryChange(to: .video)
+        await store.workspaceChangeTask?.value
+        #expect(store.libraryEntrySection == "Video")
+        store.libraryEntrySection = nil
+        store.requestCategoryChange(to: .photo)
+        await store.workspaceChangeTask?.value
+        #expect(store.workspace == .library)
+        #expect(store.category == .photo)
+        #expect(store.libraryEntrySection == "Photos")
+    }
+
+    @Test func autoplayDoesNotStartAfterLeavingTheVideoScreens() {
+        let store = EditorStore()
+        store.workspace = .video
+        store.workspace = .photo
+        #expect(!store.beginAutoplay(AVPlayer()))
+        #expect(!store.isVideoPlaying)
+        store.workspace = .videoExport
+        #expect(store.beginAutoplay(AVPlayer()))
+        #expect(store.isVideoPlaying)
     }
 
     @Test func categoryChangeFromCullToVideoLandsOnTheLibraryStep() async {

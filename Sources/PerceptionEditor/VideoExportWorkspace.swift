@@ -21,8 +21,7 @@ struct VideoExportWorkspace: View {
                 .padding(8)
             }
 
-            TimelineExportControls()
-                .controlSize(.large)
+            exportControls
 
             if store.project.timelineClips.isEmpty {
                 Text("Add clips in Cut to export the timeline.")
@@ -34,5 +33,51 @@ struct VideoExportWorkspace: View {
         .padding(36)
         .frame(maxWidth: 560, maxHeight: .infinity, alignment: .topLeading)
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var canExport: Bool { !store.project.timelineClips.isEmpty && !store.isExporting }
+
+    @ViewBuilder
+    private var exportControls: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Picker("Format", selection: $store.timelineExportSettings.preset) {
+                ForEach(TimelineExportPreset.allCases) { Text($0.rawValue).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            Picker("Size", selection: $store.timelineExportSettings.size) {
+                ForEach(TimelineExportSize.allCases) { Text($0.rawValue).tag($0) }
+            }
+            .pickerStyle(.segmented)
+
+            if store.timelineExport.isRunning {
+                HStack(spacing: 12) {
+                    ProgressView(value: store.timelineExport.fraction)
+                        .frame(minWidth: 240)
+                    Text("\(Int(store.timelineExport.fraction * 100))%")
+                        .font(.system(.body, design: .monospaced))
+                    Button("Cancel Export", systemImage: "xmark.circle.fill") { store.cancelTimelineExport() }
+                        .help("Stop the export; nothing is left behind")
+                }
+            } else {
+                HStack(spacing: 12) {
+                    Button {
+                        store.chooseTimelineExportDestination()
+                    } label: {
+                        Label("Export Timeline…", systemImage: "square.and.arrow.up")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!canExport)
+                    .help("Export from the camera originals: 10-bit ProRes 422 HQ or HEVC Main10, Rec. 709")
+                    if case .finished(let url) = store.timelineExport.phase {
+                        Button {
+                            NSWorkspace.shared.activateFileViewerSelecting([url])
+                        } label: {
+                            Label("Show Last Export in Finder", systemImage: "folder")
+                        }
+                    }
+                }
+            }
+        }
+        .controlSize(.large)
     }
 }

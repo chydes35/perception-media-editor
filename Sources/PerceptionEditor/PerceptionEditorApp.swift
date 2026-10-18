@@ -98,7 +98,7 @@ struct PerceptionEditorApp: App {
                 }
                 Divider()
                 Button("Agents") { store.openAgents() }
-                    .keyboardShortcut("8")
+                    .keyboardShortcut(KeyEquivalent(EditorStepShortcut.agentsKey))
             }
         }
     }

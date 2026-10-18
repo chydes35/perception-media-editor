@@ -55,7 +55,7 @@ The opt-in `SelectionQualityTests` runner accepts `PME_SELECTION_MANIFEST`, `PME
 
 ## Editor shell navigation
 
-`EditorNavigationTests` covers the category/step model, category memory, Agents return, the playback pause rules (Cut to Video Export keeps playing; leaving the video screens or changing category pauses), `Workspace.isVideo`, the Photo undo menu staying disabled on video screens, Video Import opening the Library on Video, and the Workspace menu shortcut table. SwiftUI layout of the shell, the Import/Export headers and `VideoExportWorkspace` is not unit-testable; it needs the in-app walk-through (see CURRENT_STATUS).
+`EditorNavigationTests` covers the category/step model, category memory, Agents return, the playback pause rules (Cut to Video Export keeps playing; leaving the video screens or changing category pauses), `Workspace.isVideo`, the Photo undo menu staying disabled on video screens, Video Import opening the Library on Video, the Workspace menu shortcut keys (1 to 7, Agents on 0), menu steps switching category, the Import step being remembered, the Photo Import section request, and autoplay being refused off the video screens (`beginAutoplay`; the in-flight rebuild race itself is covered only through that guard). SwiftUI layout of the shell, the Import/Export headers and `VideoExportWorkspace` is not unit-testable; it needs the in-app walk-through (see CURRENT_STATUS).
 
 ## Real video gates
 

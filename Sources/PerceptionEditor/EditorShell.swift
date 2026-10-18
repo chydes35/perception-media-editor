@@ -1,18 +1,29 @@
 import SwiftUI
 
-/// Accent used for selected states, from the approved mockups (teal to blue).
+/// Accent used for selected states (teal to blue). Both stops are dark enough for white labels
+/// (about 5:1 and 5.2:1), so selected buttons read in light and dark appearances.
 enum EditorAccent {
-    static let teal = Color(red: 0x19 / 255, green: 0xD3 / 255, blue: 0xC5 / 255)
-    static let blue = Color(red: 0x3B / 255, green: 0x82 / 255, blue: 0xF6 / 255)
+    static let teal = Color(red: 0x0B / 255, green: 0x7F / 255, blue: 0x77 / 255)
+    static let blue = Color(red: 0x25 / 255, green: 0x63 / 255, blue: 0xEB / 255)
     static let gradient = LinearGradient(colors: [teal, blue], startPoint: .topLeading, endPoint: .bottomTrailing)
 }
 
 /// Big rail button: stacked icon over title, accent gradient when selected.
 struct RailButtonStyle: ButtonStyle {
     let isSelected: Bool
-    @State private var isHovering = false
 
     func makeBody(configuration: Configuration) -> some View {
+        RailButtonBody(configuration: configuration, isSelected: isSelected)
+    }
+}
+
+/// Owns the hover state, which a `ButtonStyle` value cannot hold reliably.
+private struct RailButtonBody: View {
+    let configuration: ButtonStyleConfiguration
+    let isSelected: Bool
+    @State private var isHovering = false
+
+    var body: some View {
         configuration.label
             .frame(maxWidth: .infinity, minHeight: EditorMetrics.railButtonHeight)
             .foregroundStyle(isSelected ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))

@@ -44,6 +44,9 @@ struct EditorStepShortcut {
     let step: RailStep
     let key: Character
 
+    /// Agents sits outside the numbered steps so new steps never collide with it.
+    static let agentsKey: Character = "0"
+
     /// Steps of both categories in order, Command-1 onward.
     static let all: [EditorStepShortcut] = EditorCategory.allCases
         .flatMap(\.steps)

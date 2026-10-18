@@ -41,6 +41,14 @@ extension EditorStore {
         return nil
     }
 
+    /// Clips that would be heard (enabled, not muted) but whose media is offline or gone, so the
+    /// analysis could not measure them.
+    var audioOfflineClipCount: Int {
+        project.timelineClips.filter { clip in
+            clip.isEnabled && !clip.isMuted && (timelineAsset(for: clip).map(isMissing) ?? true)
+        }.count
+    }
+
     /// Clips that are heard: enabled, not muted, online, and with clip and master gain above the
     /// silent floor. Muted or silent clips cannot clip, so they are not read.
     func audioAnalysisInputs() -> [AudioAnalysisInput] {

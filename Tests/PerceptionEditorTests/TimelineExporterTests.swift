@@ -166,7 +166,9 @@ struct TimelineExporterTests {
     }
 
     /// Clip +24 dB and master +24 dB (about 251x) on a -6 dBFS tone: the export must saturate at
-    /// full scale (a square-ish wave with the tone's signs), never wrap or turn into garbage.
+    /// full scale (a square-ish wave with the tone's signs), never wrap or turn into garbage. ProRes
+    /// decodes at or under full scale; AAC may ring over it by up to about 0.5 dB on the clamped
+    /// square wave (measured), which is codec behavior, so it is allowed up to +1 dBFS.
     @Test func extremeGainSaturatesTheExportInsteadOfWrapping() async throws {
         let temp = try TempDirectory()
         let url = try await writeTestMovie(to: temp.url.appendingPathComponent("tone.mov"), frames: 48, withAudio: true, toneAmplitude: 0.5)
@@ -192,13 +194,30 @@ struct TimelineExporterTests {
                 guard abs(tone) > 0.3 else { continue }
                 checked += 1
                 if (samples[index] > 0) != (tone > 0) { flips += 1 }
-                if abs(samples[index]) > 0.75 { nearFull += 1 }
+                if abs(samples[index]) > 0.9 { nearFull += 1 }
             }
             print("Hot export \(preset): peak \(peak) (\(AudioLevelAnalyzer.decibels(forLinearPeak: Double(peak))) dBFS), sign flips \(flips)/\(checked), near full scale \(nearFull)")
-            #expect(peak <= 1.0, "\(preset): peak \(peak) is over full scale")
+            let limit: Float = preset == .proRes422HQ ? 1.0 : Float(pow(10, 1.0 / 20))
+            #expect(peak <= limit, "\(preset): peak \(peak) is over \(limit)")
             #expect(flips == 0, "\(preset): \(flips) of \(checked) samples have the wrong sign")
             #expect(Double(nearFull) > 0.9 * Double(checked), "\(preset): saturated, not quiet or garbage")
         }
+    }
+
+    /// A mix that does not clip passes through untouched: a -0.5 dBFS tone keeps its peak in HEVC (AAC).
+    @Test func aMixJustUnderFullScaleKeepsItsPeakInHEVC() async throws {
+        let temp = try TempDirectory()
+        let amplitude = pow(10, -0.5 / 20)
+        let url = try await writeTestMovie(to: temp.url.appendingPathComponent("tone.mov"), frames: 48, withAudio: true, toneAmplitude: amplitude)
+        var asset = MediaAsset(url: url, kind: .video)
+        asset.apply(await VideoMediaService.shared.metadata(for: url))
+        let clip = TimelineClip(assetID: asset.id, frameRate: asset.frameRate ?? .ntsc23976, durationFrames: 48)
+        let destination = temp.url.appendingPathComponent("Under.mov")
+        _ = try await TimelineExporter().export(job([clip], [asset]), settings: TimelineExportSettings(preset: .hevcMain10, size: .timeline), to: destination)
+        let samples = try await decodedAudio(destination)
+        let peak = AudioLevelAnalyzer.decibels(forLinearPeak: Double(samples.map { abs($0) }.max() ?? 0))
+        print("HEVC export of a -0.5 dBFS tone: peak \(peak) dBFS")
+        #expect(abs(peak - (-0.5)) < 0.2, "Peak \(peak) dBFS; a non-clipping mix must not be limited")
     }
 
     @Test func cancellingLeavesNoFiles() async throws {

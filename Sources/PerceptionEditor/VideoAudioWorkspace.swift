@@ -107,6 +107,8 @@ private struct ClipAudioControls: View {
                 Button("Reset", systemImage: "arrow.counterclockwise") {
                     store.resetSelectedAudioAdjustments()
                 }
+                .controlSize(.large)
+                .frame(minHeight: EditorMetrics.categoryButtonHeight)
                 .help("Clip gain 0 dB, no fades")
             }
             gainControl(
@@ -175,6 +177,15 @@ private struct ClippingSummary: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            if store.audioOfflineClipCount > 0 {
+                Label(
+                    "\(store.audioOfflineClipCount) clip\(store.audioOfflineClipCount == 1 ? " is" : "s are") offline and not measured. Relink on the Cut screen.",
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .font(.caption)
+                .foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true)
+            }
 
             if count > 0 {
                 Text("The export will clip at \(count == 1 ? "this spot" : "these spots") with the current gains. Lower the clip or master gain to clear \(count == 1 ? "it" : "them").")
@@ -201,8 +212,9 @@ private struct ClippingSummary: View {
     private var summary: String {
         if store.isAnalyzingAudio, store.audioLevels == nil { return "Measuring clipping…" }
         if store.audioLevels == nil, store.audioAnalysisCounts == nil { return "Not measured yet" }
+        let partial = store.audioOfflineClipCount > 0 || (store.audioAnalysisCounts?.withoutAudio ?? 0) > 0
         switch count {
-        case 0: return "No clipping"
+        case 0: return partial ? "No clipping in the clips measured" : "No clipping"
         case 1: return "1 clipped spot"
         default: return "\(count) clipped spots"
         }
@@ -348,6 +360,8 @@ private func gainControl(
                 reset()
             } label: {
                 Image(systemName: "arrow.counterclockwise")
+                    .frame(minWidth: EditorMetrics.categoryButtonHeight, minHeight: EditorMetrics.categoryButtonHeight)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.borderless)
             .disabled(value == 0)

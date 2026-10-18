@@ -413,8 +413,19 @@ struct EditorNavigationTests {
         #expect(photo.libraryEntrySection == nil)
     }
 
+    @Test func aTenthStepGetsNoShortcutInsteadOfTrapping() {
+        let steps = (1 ... 10).map { RailStep(id: "s\($0)", title: "S\($0)", symbol: "circle", workspace: .library) }
+        let shortcuts = EditorStepShortcut.make(from: steps)
+        #expect(shortcuts.count == 10, "Every step keeps its menu entry")
+        let keys: [String?] = shortcuts.prefix(9).map { entry in entry.key.map { String($0) } }
+        let expected: [String?] = (1 ... 9).map { String($0) }
+        #expect(keys == expected)
+        #expect(shortcuts.last?.key == nil)
+    }
+
     @Test func workspaceMenuShortcutsAreOneToNineAndAgentsUsesZero() {
-        #expect(EditorStepShortcut.all.map { String($0.key) } == ["1", "2", "3", "4", "5", "6", "7", "8", "9"])
+        let keys: [String?] = EditorStepShortcut.all.map { entry in entry.key.map { String($0) } }
+        #expect(keys == ["1", "2", "3", "4", "5", "6", "7", "8", "9"])
         #expect(!EditorStepShortcut.all.contains { $0.key == EditorStepShortcut.agentsKey })
         #expect(EditorStepShortcut.agentsKey == "0")
     }
@@ -729,5 +740,81 @@ struct EditorNavigationTests {
         let peak = try await mixedAudioPeak(AVPlayerItem(url: destination), audioMix: nil)
         #expect(abs(Double(peak) - 0.125) < 0.005, "Exported tone at 0.25 x 0.5 = 0.125, read \(peak)")
         store.workspace = .photo
+    }
+
+    /// Holds the stubbed analyzer until the test opens it.
+    private final class AnalyzerGate: @unchecked Sendable {
+        private let lock = NSLock()
+        private var waiting: [CheckedContinuation<Void, Never>] = []
+        private var open = false
+        private(set) var entered = 0
+        func wait() async {
+            await withCheckedContinuation { continuation in
+                lock.lock()
+                entered += 1
+                if open { lock.unlock(); continuation.resume() } else { waiting.append(continuation); lock.unlock() }
+            }
+        }
+        var enteredCount: Int { lock.withLock { entered } }
+        func release() {
+            let resumed: [CheckedContinuation<Void, Never>] = lock.withLock { open = true; defer { waiting = [] }; return waiting }
+            resumed.forEach { $0.resume() }
+        }
+    }
+
+    @Test func anEditDuringAnalysisDoesNotPublishTheStaleResult() async throws {
+        let store = storeWithSelectedClip()
+        store.workspace = .videoAudio
+        let gate = AnalyzerGate()
+        store.audioLevelProvider = { _, _, gain in
+            await gate.wait()
+            return AudioLevels(peakDecibels: -3 + gain, clippedRanges: gain >= 3 ? [1.0 ... 1.5] : [])
+        }
+        let first = Task { await store.refreshAudioLevels() }
+        try await waitUntil { gate.enteredCount == 1 }
+        #expect(store.isAnalyzingAudio)
+        store.setMasterGainDecibels(6) // An edit while the 0 dB analysis is still reading.
+        gate.release()
+        await first.value
+        #expect(store.audioLevels == nil, "The 0 dB result is stale and must not be shown")
+        await store.refreshAudioLevels()
+        #expect(store.audioLevels?.clippedRanges.count == 1, "The edit's own result")
+        #expect(store.audioLevels.map { abs($0.peakDecibels - 3) < 1e-9 } == true)
+        #expect(!store.isAnalyzingAudio)
+        store.workspace = .video
+    }
+
+    @Test func leavingAudioMidAnalysisResetsTheBusyState() async throws {
+        let store = storeWithSelectedClip()
+        store.workspace = .videoAudio
+        let gate = AnalyzerGate()
+        store.audioLevelProvider = { _, _, gain in
+            await gate.wait()
+            return AudioLevels(peakDecibels: -3 + gain, clippedRanges: [])
+        }
+        let running = Task { await store.refreshAudioLevels() }
+        try await waitUntil { gate.enteredCount == 1 }
+        #expect(store.isAnalyzingAudio)
+        store.workspace = .video
+        #expect(!store.isAnalyzingAudio, "Leaving stops the analysis at once")
+        gate.release()
+        await running.value
+        #expect(!store.isAnalyzingAudio)
+        #expect(store.audioLevels == nil, "The cancelled analysis publishes nothing")
+    }
+
+    @Test func partlyOfflineTimelinesCountTheClipsNotMeasured() async {
+        let store = storeWithSelectedClip()
+        let gone = MediaAsset(url: URL(fileURLWithPath: "/Volumes/Gone/C0002.MOV"), kind: .video)
+        store.project.media.append(gone)
+        store.project.timelineClips.append(TimelineClip(assetID: gone.id, sourceStartFrame: 0, durationFrames: 48))
+        store.project.packTimeline()
+        store.audioLevelProvider = { _, _, _ in AudioLevels(peakDecibels: -6, clippedRanges: []) }
+        await store.refreshAudioLevels()
+        #expect(store.audioEmptyReason == nil, "One clip is online")
+        #expect(store.audioOfflineClipCount == 1)
+        #expect(store.audioLevels?.clippedRanges.isEmpty == true)
+        store.project.timelineClips[1].isMuted = true
+        #expect(store.audioOfflineClipCount == 0, "A muted offline clip is not heard anyway")
     }
 }

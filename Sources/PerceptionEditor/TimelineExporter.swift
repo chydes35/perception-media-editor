@@ -206,17 +206,13 @@ actor TimelineExporter {
         }
     }
 
-    /// The highest sample the exporter writes. The mix can reach about +48 dB (clip and master gain
-    /// at +24 each) and its float output goes past full scale. 24-bit PCM saturates at full scale on its
-    /// own. AAC encodes the overshoot instead (an HEVC export of a +48 dB tone decoded at +14.4 dBFS),
-    /// and even a mix hard-clipped at 1.0 decodes at +0.44 dBFS (the codec's ringing on a square
-    /// wave), so AAC is limited to -1 dBFS, which decoded at or under full scale.
-    nonisolated static func audioCeiling(_ preset: TimelineExportPreset) -> Float {
-        switch preset {
-        case .proRes422HQ: 1
-        case .hevcMain10: Float(pow(10, -1.0 / 20))
-        }
-    }
+    /// The highest sample the exporter writes, for both presets: full scale. The mix can reach about
+    /// +48 dB (clip and master gain at +24 each) and its float output goes past full scale. 24-bit PCM
+    /// saturates there on its own; AAC encoded the overshoot instead (an HEVC export of a +48 dB tone
+    /// decoded at +14.4 dBFS), so the mix is clamped before writing. A mix that does not reach full
+    /// scale passes through untouched. After the clamp, AAC can still decode up to about 0.5 dB over
+    /// full scale on hard-clipped material (+0.44 dBFS measured): normal codec ringing, not a wrap.
+    nonisolated static let audioCeiling: Float = 1
 
     /// Clamps a float32 PCM buffer to ±`ceiling` in place (NaN becomes silence). Hard clipping is the
     /// same saturation PCM does on its own; the Audio screen counts these spots before export.
@@ -410,7 +406,7 @@ actor TimelineExporter {
                 }
             }
             if let (audioOutput, audioInput) = job.value.audio {
-                let ceiling = audioCeiling(settings.preset)
+                let ceiling = audioCeiling
                 var audioDone = false
                 audioInput.requestMediaDataWhenReady(on: audioQueue) {
                     guard !audioDone else { return }

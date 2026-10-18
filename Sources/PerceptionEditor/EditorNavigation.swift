@@ -44,16 +44,20 @@ struct RailStep: Identifiable, Equatable {
 /// Keyboard shortcut for one Workspace-menu entry: Command plus a digit.
 struct EditorStepShortcut {
     let step: RailStep
-    let key: Character
+    /// 1…9 in order; nil from the tenth step on (one digit only), so a long list never traps.
+    let key: Character?
 
     /// Agents sits outside the numbered steps so new steps never collide with it.
     static let agentsKey: Character = "0"
 
     /// Steps of both categories in order, Command-1 onward.
-    static let all: [EditorStepShortcut] = EditorCategory.allCases
-        .flatMap(\.steps)
-        .enumerated()
-        .map { EditorStepShortcut(step: $0.element, key: Character(String($0.offset + 1))) }
+    static let all: [EditorStepShortcut] = make(from: EditorCategory.allCases.flatMap(\.steps))
+
+    static func make(from steps: [RailStep]) -> [EditorStepShortcut] {
+        steps.enumerated().map { index, step in
+            EditorStepShortcut(step: step, key: index < 9 ? Character(String(index + 1)) : nil)
+        }
+    }
 }
 
 extension Workspace {

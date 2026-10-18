@@ -92,7 +92,7 @@ struct PerceptionEditorApp: App {
                     Section(category.rawValue) {
                         ForEach(EditorStepShortcut.all.filter { category.steps.contains($0.step) }, id: \.step.id) { entry in
                             Button("\(category.rawValue): \(entry.step.title)") { store.requestStepChange(entry.step) }
-                                .keyboardShortcut(KeyEquivalent(entry.key))
+                                .keyboardShortcut(entry.key.map { KeyboardShortcut(KeyEquivalent($0)) })
                         }
                     }
                 }

@@ -14,6 +14,29 @@ struct MeterGainSchedule: Sendable, Equatable {
         var gain: Double
         var fadeIn: Double
         var fadeOut: Double
+
+        /// This segment's gain at `seconds` (fades included), ignoring every other segment.
+        func gain(at seconds: Double) -> Double {
+            guard seconds >= start, seconds < end else { return 0 }
+            var value = gain
+            if fadeIn > 0, seconds < start + fadeIn { value *= max(0, (seconds - start) / fadeIn) }
+            if fadeOut > 0, seconds > end - fadeOut { value *= max(0, (end - seconds) / fadeOut) }
+            return value
+        }
+
+        /// The largest gain of this segment within `from ..< to` (clamped to the segment): its ends
+        /// and fade edges. Never another clip's gain. Runs on the audio thread: no allocation.
+        func maximumGain(from lowerBound: Double, to upperBound: Double) -> Double {
+            let lower = max(lowerBound, start)
+            let upper = min(upperBound, end)
+            guard upper > lower else { return gain(at: lower) }
+            var best = max(gain(at: lower), gain(at: upper - 1e-9))
+            let fadeInEnd = start + fadeIn
+            if fadeInEnd > lower, fadeInEnd < upper { best = max(best, gain(at: fadeInEnd)) }
+            let fadeOutStart = end - fadeOut
+            if fadeOutStart > lower, fadeOutStart < upper { best = max(best, gain(at: fadeOutStart)) }
+            return best
+        }
     }
 
     var segments: [Segment]
@@ -21,35 +44,13 @@ struct MeterGainSchedule: Sendable, Equatable {
     /// The gain at `seconds`; 0 outside every segment (a gap is silent in the mix too).
     func gain(at seconds: Double) -> Double {
         for segment in segments where seconds >= segment.start && seconds < segment.end {
-            var gain = segment.gain
-            if segment.fadeIn > 0, seconds < segment.start + segment.fadeIn {
-                gain *= max(0, (seconds - segment.start) / segment.fadeIn)
-            }
-            if segment.fadeOut > 0, seconds > segment.end - segment.fadeOut {
-                gain *= max(0, (segment.end - seconds) / segment.fadeOut)
-            }
-            return gain
+            return segment.gain(at: seconds)
         }
         return 0
     }
 
     /// The largest gain anywhere in `start ..< end` (a meter block), so a block straddling a cut or a
     /// fade never under-reads. Segment ends and fade edges are checked as well as the block's ends.
-    /// Runs on the audio thread: no allocation.
-    func maximumGain(from start: Double, to end: Double) -> Double {
-        guard end > start else { return gain(at: start) }
-        var best = 0.0
-        for segment in segments where segment.end > start && segment.start < end {
-            let lower = max(start, segment.start)
-            let upper = min(end, segment.end)
-            best = max(best, gain(at: lower), gain(at: upper - 1e-9))
-            let fadeInEnd = segment.start + segment.fadeIn
-            if fadeInEnd > lower, fadeInEnd < upper { best = max(best, gain(at: fadeInEnd)) }
-            let fadeOutStart = segment.end - segment.fadeOut
-            if fadeOutStart > lower, fadeOutStart < upper { best = max(best, gain(at: fadeOutStart)) }
-        }
-        return best
-    }
 }
 
 /// Live peak metering for the preview player. An `MTAudioProcessingTap` on the preview composition's
@@ -96,16 +97,17 @@ final class AudioMeterTap: @unchecked Sendable {
                 Unmanaged<AudioMeterTap>.fromOpaque(MTAudioProcessingTapGetStorage(tap)).release()
             },
             prepare: { tap, _, format in
-                let meter = Unmanaged<AudioMeterTap>.fromOpaque(MTAudioProcessingTapGetStorage(tap)).takeUnretainedValue()
-                meter.prepare(format.pointee)
+                Unmanaged<AudioMeterTap>.fromOpaque(MTAudioProcessingTapGetStorage(tap))
+                    ._withUnsafeGuaranteedRef { $0.prepare(format.pointee) }
             },
             unprepare: nil,
             process: { tap, frames, _, bufferList, framesOut, flagsOut in
                 var range = CMTimeRange.zero
                 let status = MTAudioProcessingTapGetSourceAudio(tap, frames, bufferList, flagsOut, &range, framesOut)
                 guard status == noErr else { return }
-                let meter = Unmanaged<AudioMeterTap>.fromOpaque(MTAudioProcessingTapGetStorage(tap)).takeUnretainedValue()
-                meter.process(bufferList, frames: framesOut.pointee, range: range)
+                // The tap's storage keeps the meter alive, so no retain/release on the audio thread.
+                Unmanaged<AudioMeterTap>.fromOpaque(MTAudioProcessingTapGetStorage(tap))
+                    ._withUnsafeGuaranteedRef { $0.process(bufferList, frames: framesOut.pointee, range: range) }
             }
         )
         var tap: MTAudioProcessingTap?
@@ -129,46 +131,75 @@ final class AudioMeterTap: @unchecked Sendable {
     private func process(_ list: UnsafeMutablePointer<AudioBufferList>, frames: CMItemCount, range: CMTimeRange) {
         blocks.add(1, ordering: .relaxed)
         let buffers = UnsafeMutableAudioBufferListPointer(list)
+        let rate = Double(bitPattern: sampleRate.load(ordering: .relaxed))
+        let start = range.start.seconds
+        let blockStart = start.isFinite ? start : .nan
+        let schedule = blockStart.isFinite ? schedule : nil
         var peakL: Float = 0
         var peakR: Float = 0
-        let channelCount = channels.load(ordering: .relaxed)
         if nonInterleaved.load(ordering: .relaxed) || buffers.count > 1 {
             for (index, buffer) in buffers.enumerated() {
-                let peak = Self.peak(buffer, stride: 1, offset: 0)
+                guard let data = buffer.mData else { continue }
+                let count = min(Int(frames), Int(buffer.mDataByteSize) / MemoryLayout<Float>.size)
+                let peak = Self.scaledPeak(
+                    data.assumingMemoryBound(to: Float.self), frames: count, stride: 1, offset: 0,
+                    blockStart: blockStart, sampleRate: rate, schedule: schedule
+                )
                 if index == 0 { peakL = peak } else if index == 1 { peakR = peak } else { peakR = max(peakR, peak) }
             }
             if buffers.count == 1 { peakR = peakL }
-        } else if let buffer = buffers.first {
+        } else if let buffer = buffers.first, let data = buffer.mData {
+            let channelCount = channels.load(ordering: .relaxed)
             let stride = max(1, Int(buffer.mNumberChannels) > 0 ? Int(buffer.mNumberChannels) : channelCount)
-            peakL = Self.peak(buffer, stride: stride, offset: 0)
-            peakR = stride > 1 ? Self.peak(buffer, stride: stride, offset: 1) : peakL
-        }
-
-        if let schedule {
-            let start = range.start.seconds
-            let rate = Double(bitPattern: sampleRate.load(ordering: .relaxed))
-            let duration = range.duration.seconds.isFinite && range.duration.seconds > 0
-                ? range.duration.seconds : Double(frames) / rate
-            let gain = start.isFinite ? Float(schedule.maximumGain(from: start, to: start + duration)) : 1
-            peakL *= gain
-            peakR *= gain
+            let count = min(Int(frames), Int(buffer.mDataByteSize) / MemoryLayout<Float>.size / stride)
+            let samples = data.assumingMemoryBound(to: Float.self)
+            peakL = Self.scaledPeak(samples, frames: count, stride: stride, offset: 0, blockStart: blockStart, sampleRate: rate, schedule: schedule)
+            peakR = stride > 1
+                ? Self.scaledPeak(samples, frames: count, stride: stride, offset: 1, blockStart: blockStart, sampleRate: rate, schedule: schedule)
+                : peakL
         }
         Self.raise(left, to: peakL)
         Self.raise(right, to: peakR)
     }
 
-    private static func peak(_ buffer: AudioBuffer, stride: Int, offset: Int) -> Float {
-        guard let data = buffer.mData else { return 0 }
-        let count = Int(buffer.mDataByteSize) / MemoryLayout<Float>.size
-        let samples = data.assumingMemoryBound(to: Float.self)
-        var peak: Float = 0
-        var index = offset
-        while index < count {
-            let magnitude = abs(samples[index])
-            if magnitude > peak { peak = magnitude }
-            index += stride
+    /// The peak of one channel (`samples[frame * stride + offset]`) after the mix's gain. A block can
+    /// straddle a cut between clips of different gain, so it is split at segment boundaries (frame
+    /// index from the block's start time and the sample rate) and each part's peak is scaled by that
+    /// part's own gain (its loudest point, fades included). Frames in no segment are a silent gap.
+    /// Runs on the audio thread: no allocation.
+    static func scaledPeak(
+        _ samples: UnsafePointer<Float>, frames: Int, stride: Int, offset: Int,
+        blockStart: Double, sampleRate: Double, schedule: MeterGainSchedule?
+    ) -> Float {
+        func rawPeak(_ first: Int, _ end: Int) -> Float {
+            var peak: Float = 0
+            var frame = first
+            while frame < end {
+                let magnitude = abs(samples[frame * stride + offset])
+                if magnitude > peak { peak = magnitude }
+                frame += 1
+            }
+            return peak.isFinite ? peak : 0
         }
-        return peak.isFinite ? peak : 0
+        guard frames > 0 else { return 0 }
+        guard let schedule, blockStart.isFinite, sampleRate > 0 else { return rawPeak(0, frames) }
+        // The first frame at or after a boundary; the small allowance keeps a boundary that is
+        // exactly on a frame (but computed a hair late in floating point) on that frame.
+        func frame(at seconds: Double) -> Int {
+            max(0, min(frames, Int(((seconds - blockStart) * sampleRate - 1e-6).rounded(.up))))
+        }
+        var peak: Float = 0
+        for segment in schedule.segments {
+            let first = frame(at: segment.start)
+            let end = frame(at: segment.end)
+            guard first < end else { continue }
+            let gain = segment.maximumGain(
+                from: blockStart + Double(first) / sampleRate,
+                to: blockStart + Double(end) / sampleRate
+            )
+            peak = max(peak, rawPeak(first, end) * Float(gain))
+        }
+        return peak
     }
 
     /// Lock-free max: retries only while another writer raised the value in between.
@@ -264,10 +295,16 @@ final class AudioMeterModel: ObservableObject {
         guard task == nil else { return }
         let interval = 1 / Self.rate
         task = Task { @MainActor [weak self] in
+            // Main-actor sleeps run late under load; decay and hold use the real time between ticks.
+            let clock = ContinuousClock()
+            var last = clock.now
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(interval))
                 guard let self else { return }
-                self.tick(elapsed: interval)
+                let now = clock.now
+                let elapsed = now - last
+                last = now
+                self.tick(elapsed: Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) * 1e-18)
             }
         }
     }

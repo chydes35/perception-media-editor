@@ -98,8 +98,50 @@ func mixedAudioPeak(_ item: AVPlayerItem, audioMix: AVAudioMix?) async throws ->
         #expect(schedule.gain(at: 2.5) == 0.5)
         #expect(abs(schedule.gain(at: 3.5) - 0.25) < 1e-9)
         #expect(schedule.gain(at: 5) == 0, "Past the end is silent")
-        #expect(schedule.maximumGain(from: 1.9, to: 2.1) == 2, "A block across a cut takes the louder side")
-        #expect(abs(schedule.maximumGain(from: 0.2, to: 0.4) - 0.8) < 1e-6, "Inside a fade: the block's loudest point")
+        let fading = schedule.segments[0]
+        #expect(abs(fading.maximumGain(from: 0.2, to: 0.4) - 0.8) < 1e-6, "Inside a fade: the part's loudest point")
+        #expect(fading.maximumGain(from: 1.5, to: 3) == 2, "Clamped to the segment, never the next clip's gain")
+    }
+
+    /// A block straddling a cut from a quiet clip at +12 dB to a -3 dBFS clip at 0 dB: each part is
+    /// scaled by its own clip's gain, so the meter reads -3 dBFS and the CLIP light stays off.
+    @Test func aBlockAcrossACutUsesEachClipsOwnGain() {
+        let rate = 48_000.0
+        let loud = ClipAudioAdjustments.linearGain(forDecibels: 12)
+        let schedule = MeterGainSchedule(segments: [
+            .init(start: 0, end: 1, gain: loud, fadeIn: 0, fadeOut: 0),
+            .init(start: 1, end: 2, gain: 1, fadeIn: 0, fadeOut: 0)
+        ])
+        // 960 stereo frames from 0.99 s: the first 480 in clip A at 0.1, the rest in clip B at 0.708.
+        let frames = 960
+        var samples = [Float](repeating: 0, count: frames * 2)
+        for frame in 0 ..< frames {
+            let value: Float = frame < 480 ? 0.1 : 0.708
+            samples[frame * 2] = value
+            samples[frame * 2 + 1] = -value
+        }
+        let peaks = samples.withUnsafeBufferPointer { buffer in
+            (AudioMeterTap.scaledPeak(buffer.baseAddress!, frames: frames, stride: 2, offset: 0, blockStart: 0.99, sampleRate: rate, schedule: schedule),
+             AudioMeterTap.scaledPeak(buffer.baseAddress!, frames: frames, stride: 2, offset: 1, blockStart: 0.99, sampleRate: rate, schedule: schedule))
+        }
+        #expect(abs(Double(peaks.0) - 0.708) < 1e-4, "Clip B's own level, not 0.708 x 3.98: \(peaks.0)")
+        #expect(abs(Double(peaks.1) - 0.708) < 1e-4)
+        var meter = AudioMeterState()
+        meter.update(peaks: (peaks.0, peaks.1), isPlaying: true, elapsed: 1 / 30)
+        #expect(!meter.clipped, "Nothing clips across the cut")
+        #expect(abs(meter.levelDecibels.left - (-3.0)) < 0.01)
+
+        // Clip A's part does reach its own gained level when it is the louder one.
+        let quietB = samples.enumerated().map { $0.offset < 960 ? $0.element : Float(0.05) }
+        let peakA = quietB.withUnsafeBufferPointer {
+            AudioMeterTap.scaledPeak($0.baseAddress!, frames: frames, stride: 2, offset: 0, blockStart: 0.99, sampleRate: rate, schedule: schedule)
+        }
+        #expect(abs(Double(peakA) - 0.1 * loud) < 1e-4)
+        // Frames outside every clip (a gap) are silent in the mix.
+        let gap = samples.withUnsafeBufferPointer {
+            AudioMeterTap.scaledPeak($0.baseAddress!, frames: frames, stride: 2, offset: 0, blockStart: 5, sampleRate: rate, schedule: schedule)
+        }
+        #expect(gap == 0)
     }
 }
 
@@ -159,8 +201,10 @@ struct AudioMeterPlumbingTests {
         #expect(none.meterTap == nil, "No tap unless asked")
     }
 
-    /// The tap also runs inside AVPlayer during playback (the live path). Needs an audio output device.
-    @Test func theMeterTapRunsDuringPlayback() async throws {
+    /// The tap also runs inside AVPlayer during playback (the live path). Needs an audio output
+    /// device, so it is skipped on CI runners (environment variable CI set).
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["CI"] == nil))
+    func theMeterTapRunsDuringPlayback() async throws {
         let temp = try TempDirectory()
         let (clip, asset) = try await toneClip(temp)
         let result = await TimelineCompositionService.shared.makePlayerItem(

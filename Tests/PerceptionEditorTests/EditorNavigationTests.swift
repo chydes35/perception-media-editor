@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import PerceptionEditor
 
@@ -74,14 +75,67 @@ struct EditorNavigationTests {
         #expect(!store.isVideoPlaying)
     }
 
-    @Test func leavingAVideoScreenPausesPlayback() async {
+    @Test func leavingAVideoScreenForANonVideoScreenPausesPlayback() async {
+        let store = EditorStore()
+        store.workspace = .video
+        store.markVideoPlayingForTesting()
+        store.requestWorkspaceChange(to: .cull)
+        await store.workspaceChangeTask?.value
+        #expect(store.workspace == .cull)
+        #expect(!store.isVideoPlaying)
+    }
+
+    @Test func cutToVideoExportDoesNotPausePlayback() async {
         let store = EditorStore()
         store.workspace = .video
         store.markVideoPlayingForTesting()
         store.requestStepChange(EditorCategory.video.steps[2])
         await store.workspaceChangeTask?.value
         #expect(store.workspace == .videoExport)
-        #expect(!store.isVideoPlaying)
+        #expect(store.isVideoPlaying)
+    }
+
+    @Test func isVideoCoversEveryVideoScreen() {
+        #expect(Workspace.video.isVideo)
+        #expect(Workspace.videoExport.isVideo)
+        for workspace in [Workspace.library, .cull, .photo, .export, .agents] {
+            #expect(!workspace.isVideo)
+        }
+    }
+
+    @Test func undoIsDisabledOnVideoScreens() {
+        let store = EditorStore()
+        let id = UUID()
+        _ = store.photoUndoHistory.record(before: [id: .neutral], after: [id: PhotoAdjustments(exposure: 1)])
+        store.workspace = .photo
+        #expect(store.canUndoPhotoEdit)
+        #expect(store.undoMenuEnabled)
+        store.workspace = .video
+        #expect(!store.undoMenuEnabled)
+        store.workspace = .videoExport
+        #expect(!store.undoMenuEnabled)
+        #expect(!store.redoMenuEnabled)
+    }
+
+    @Test func videoImportStepOpensTheLibraryOnVideo() async {
+        let store = EditorStore()
+        store.requestStepChange(EditorCategory.video.steps[0])
+        await store.workspaceChangeTask?.value
+        #expect(store.workspace == .library)
+        #expect(store.libraryEntrySection == "Video")
+        let photo = EditorStore()
+        photo.requestStepChange(EditorCategory.photo.steps[0])
+        await photo.workspaceChangeTask?.value
+        #expect(photo.libraryEntrySection == nil)
+    }
+
+    @Test func workspaceMenuListsEveryStepOfBothCategories() {
+        let titles = EditorCategory.allCases.flatMap { $0.steps.map(\.id) }
+        #expect(titles == ["photo.import", "photo.cull", "photo.develop", "photo.export",
+                           "video.import", "video.cut", "video.export"])
+        let shortcuts = EditorStepShortcut.all
+        #expect(shortcuts.count == 7)
+        #expect(Set(shortcuts.map(\.key)).count == 7)
     }
 
     @Test func categoryChangeFromCullToVideoLandsOnTheLibraryStep() async {

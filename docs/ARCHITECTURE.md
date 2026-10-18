@@ -8,6 +8,7 @@ Original media is never modified. A `.pmedit` project stores references to the o
 
 ## Current modules
 
+- `EditorNavigation.swift`, `EditorShell.swift`, `VideoExportWorkspace.swift` (editor redesign, Part 1): the app has two categories, Photo (Import, Cull, Develop, Export) and Video (Import, Cut, Export), shown by `CategoryBar` and `StepRail`; Agents opens from both and returns to the previous step. `Workspace` stays the single navigation state; `Workspace.category` and `Workspace.isVideo` classify screens, and `EditorStore.requestCategoryChange`/`requestStepChange` navigate (deferred, like all workspace changes). Each Import step is `LibraryWorkspace` with the import actions in its header; Video's Import opens on the Video section through the one-shot `libraryEntrySection`. Photo Export is `ExportWorkspace`; Video Export is `VideoExportWorkspace` hosting `TimelineExportControls`. Playback pauses on leaving the video screens (Cut to Export keeps playing) and when the category changes. The Workspace menu lists both categories' steps with Command-1 to Command-7 (`EditorStepShortcut`) and Agents on Command-8.
 - `EditorModels.swift`: versioned project, media, adjustments, crop, and preset data.
 - `ProjectDocument.swift`: atomic JSON project persistence and schema guard.
 - `EditorStore+Project.swift`: explicit save state and shared manual/autosave persistence; failed saves preserve the last-saved snapshot and expose retry/Save As recovery.

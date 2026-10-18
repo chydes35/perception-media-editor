@@ -522,8 +522,6 @@ private struct EditorTimelineView: View {
             }
             .disabled(store.selectedTimelineClip == nil)
             .help("Ripple delete selected clip")
-            Divider().frame(height: 16)
-            TimelineExportControls()
         }
         .buttonStyle(.borderless)
         .padding(.horizontal, 12)
@@ -737,7 +735,7 @@ private struct ProxyBadge: View {
 }
 
 /// Export settings and progress in the timeline toolbar.
-private struct TimelineExportControls: View {
+struct TimelineExportControls: View {
     @EnvironmentObject private var store: EditorStore
 
     var body: some View {

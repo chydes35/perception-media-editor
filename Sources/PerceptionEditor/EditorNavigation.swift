@@ -39,7 +39,27 @@ struct RailStep: Identifiable, Equatable {
     let workspace: Workspace
 }
 
+/// Keyboard shortcut for one Workspace-menu entry: Command plus a digit.
+struct EditorStepShortcut {
+    let step: RailStep
+    let key: Character
+
+    /// Steps of both categories in order, Command-1 onward.
+    static let all: [EditorStepShortcut] = EditorCategory.allCases
+        .flatMap(\.steps)
+        .enumerated()
+        .map { EditorStepShortcut(step: $0.element, key: Character(String($0.offset + 1))) }
+}
+
 extension Workspace {
+    /// True for every screen of the Video category's editing flow (Cut, Export, later Color and Audio).
+    var isVideo: Bool {
+        switch self {
+        case .video, .videoExport: true
+        default: false
+        }
+    }
+
     /// The category a screen belongs to; nil for screens shared by both (Library) or outside both (Agents).
     var category: EditorCategory? {
         switch self {

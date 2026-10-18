@@ -37,10 +37,10 @@ struct PerceptionEditorApp: App {
                 // Photo undo covers photo adjustments only, so it stays out of the video timeline.
                 Button("Undo Photo Edit") { store.undoPhotoEdit() }
                     .keyboardShortcut("z")
-                    .disabled(!store.canUndoPhotoEdit || store.workspace == .video)
+                    .disabled(!store.undoMenuEnabled)
                 Button("Redo Photo Edit") { store.redoPhotoEdit() }
                     .keyboardShortcut("z", modifiers: [.command, .shift])
-                    .disabled(!store.canRedoPhotoEdit || store.workspace == .video)
+                    .disabled(!store.redoMenuEnabled)
                 Divider()
                 // `\` toggles before/after through AppDelegate's key monitor, which leaves
                 // the key alone while a text field is being edited.
@@ -88,9 +88,17 @@ struct PerceptionEditorApp: App {
             }
 
             CommandMenu("Workspace") {
-                ForEach(Workspace.allCases) { workspace in
-                    Button(workspace.rawValue) { store.workspace = workspace }
+                ForEach(EditorCategory.allCases) { category in
+                    Section(category.rawValue) {
+                        ForEach(EditorStepShortcut.all.filter { category.steps.contains($0.step) }, id: \.step.id) { entry in
+                            Button("\(category.rawValue): \(entry.step.title)") { store.requestStepChange(entry.step) }
+                                .keyboardShortcut(KeyEquivalent(entry.key))
+                        }
+                    }
                 }
+                Divider()
+                Button("Agents") { store.openAgents() }
+                    .keyboardShortcut("8")
             }
         }
     }

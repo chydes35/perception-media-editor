@@ -13,7 +13,7 @@ final class EditorStore: ObservableObject {
             workspaceChangeTask?.cancel()
             workspaceChangeTask = nil
             if workspace == .agents, oldValue != .agents { workspaceBeforeAgents = oldValue }
-            if workspace != .video { pauseVideoPlayback() }
+            if !workspace.isVideo { pauseVideoPlayback() }
             syncCategory()
             workspaceDidChange()
         }
@@ -22,6 +22,8 @@ final class EditorStore: ObservableObject {
     private var lastWorkspaceByCategory: [EditorCategory: Workspace] = [:]
     private var pendingCategory: EditorCategory?
     private var workspaceBeforeAgents: Workspace?
+    /// One-shot request for the Library sidebar section to show on arrival (Video's Import step sets "Video").
+    @Published var libraryEntrySection: String?
     private(set) var workspaceChangeTask: Task<Void, Never>?
     @Published var selectedAssetID: UUID? {
         didSet { if oldValue != selectedAssetID { cancelAutoAdjustment() } }
@@ -306,6 +308,9 @@ final class EditorStore: ObservableObject {
 
     var canUndoPhotoEdit: Bool { !photoUndoHistory.undo.isEmpty }
     var canRedoPhotoEdit: Bool { !photoUndoHistory.redo.isEmpty }
+    /// Photo undo and redo stay out of the video screens.
+    var undoMenuEnabled: Bool { canUndoPhotoEdit && !workspace.isVideo }
+    var redoMenuEnabled: Bool { canRedoPhotoEdit && !workspace.isVideo }
 
     var selectedVideoAdjustments: PhotoAdjustments {
         guard let selectedTimelineClipID else { return .neutral }
@@ -624,10 +629,12 @@ final class EditorStore: ObservableObject {
     /// Switches category, returning to the last step used there (or its first step).
     func requestCategoryChange(to requested: EditorCategory) {
         let target = lastWorkspaceByCategory[requested] ?? requested.steps[0].workspace
+        if requested == .video, target == .library { libraryEntrySection = "Video" }
         requestWorkspaceChange(to: target, category: requested)
     }
 
     func requestStepChange(_ step: RailStep) {
+        if step.id == "video.import" { libraryEntrySection = "Video" }
         requestWorkspaceChange(to: step.workspace)
     }
 
@@ -662,9 +669,11 @@ final class EditorStore: ObservableObject {
 
     private func syncCategory() {
         if let own = workspace.category {
+            if own != category { pauseVideoPlayback() }
             category = own
             lastWorkspaceByCategory[own] = workspace
         } else if let pending = pendingCategory {
+            if pending != category { pauseVideoPlayback() }
             category = pending
         }
         pendingCategory = nil

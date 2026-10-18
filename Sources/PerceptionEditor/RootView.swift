@@ -55,7 +55,7 @@ struct RootView: View {
         case .video:
             VideoWorkspace()
         case .videoExport:
-            VideoWorkspace() // TEMPORARY: Task 3 replaces this with VideoExportWorkspace
+            VideoExportWorkspace()
         case .export:
             ExportWorkspace()
         case .agents:

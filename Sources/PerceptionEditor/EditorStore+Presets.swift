@@ -242,6 +242,7 @@ extension EditorStore {
         let panel = NSOpenPanel()
         panel.title = "Import Presets"
         panel.allowedContentTypes = [UTType(filenameExtension: PresetFile.fileExtension) ?? .json]
+            + [UTType(filenameExtension: LightroomPresetImporter.fileExtension)].compactMap { $0 }
         panel.allowsMultipleSelection = true
         guard panel.runModal() == .OK else { return }
         importPresets(from: panel.urls)
@@ -250,9 +251,20 @@ extension EditorStore {
     func importPresets(from urls: [URL]) {
         var added = 0
         var skipped = 0
+        var notes: [String] = []
         for url in urls {
             do {
-                let incoming = try PresetLibrary.decode(Data(contentsOf: url))
+                let incoming: [PhotoPreset]
+                if url.pathExtension.lowercased() == LightroomPresetImporter.fileExtension {
+                    let result = try LightroomPresetImporter.importPreset(
+                        from: Data(contentsOf: url),
+                        fallbackName: url.deletingPathExtension().lastPathComponent
+                    )
+                    incoming = [result.preset]
+                    if !result.unsupported.isEmpty { notes.append(result.preset.name) }
+                } else {
+                    incoming = try PresetLibrary.decode(Data(contentsOf: url))
+                }
                 let result = PresetLibrary.merge(existing: userPresets, incoming: incoming)
                 userPresets = result.presets
                 added += result.added
@@ -264,5 +276,6 @@ extension EditorStore {
         persistUserPresets()
         statusMessage = "Imported \(added) preset\(added == 1 ? "" : "s")"
             + (skipped > 0 ? " (\(skipped) already in your library)" : "")
+            + (notes.isEmpty ? "" : "; \(notes.count) had Lightroom settings with no equivalent here (clarity, grain, white balance…)")
     }
 }

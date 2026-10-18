@@ -69,3 +69,18 @@ extension LightroomPresetImporterTests {
         }
     }
 }
+
+extension LightroomPresetImporterTests {
+    @Test func nestedLookDescriptionDoesNotOverwriteThePresetName() throws {
+        let xml = """
+        <x:xmpmeta xmlns:x="a"><rdf:RDF xmlns:rdf="r"><rdf:Description xmlns:crs="c" crs:Name="06 Ilford HP5" crs:Contrast2012="-7.5" crs:Treatment="Monochrome">
+         <crs:Group><rdf:Alt><rdf:li>Black White</rdf:li></rdf:Alt></crs:Group>
+         <crs:Look><rdf:Description crs:Name="Adobe Monochrome" crs:Amount="1.0"><crs:Group><rdf:Alt><rdf:li>Profiles</rdf:li></rdf:Alt></crs:Group></rdf:Description></crs:Look>
+        </rdf:Description></rdf:RDF></x:xmpmeta>
+        """
+        let preset = try LightroomPresetImporter.importPreset(from: Data(xml.utf8), fallbackName: "f").preset
+        #expect(preset.name == "Ilford HP5")
+        #expect(preset.category == "Black White")
+        #expect(preset.adjustments.contrast == -0.075)
+    }
+}

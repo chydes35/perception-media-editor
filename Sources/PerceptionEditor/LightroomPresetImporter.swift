@@ -121,7 +121,9 @@ enum LightroomPresetImporter {
             throw parsed.values["RGBTable"] != nil ? ImportError.colorTableOnly : ImportError.noSupportedSettings
         }
 
-        let name = parsed.values["Name"].flatMap { $0.isEmpty ? nil : $0 } ?? fallbackName
+        // Some packs number their presets ("02 Kodak Portra 400") to sort them in Lightroom.
+        let rawName = parsed.values["Name"].flatMap { $0.isEmpty ? nil : $0 } ?? fallbackName
+        let name = rawName.replacingOccurrences(of: #"^\d{1,3}[ .)-]+(?=\S)"#, with: "", options: .regularExpression)
         let category = parsed.values["Group"].flatMap { $0.isEmpty ? nil : $0 } ?? "Imported"
         let preset = PhotoPreset(name: name, category: category, adjustments: adjustments, groups: groups)
         return Result(preset: preset, unsupported: unsupportedSettings(in: parsed, handled: handled))
@@ -165,7 +167,7 @@ enum LightroomPresetImporter {
             "SupportsOutputReferred", "RequiresRGBTables", "CameraModelRestriction", "Copyright",
             "ContactInfo", "Version", "ProcessVersion", "HasSettings", "Name", "ShortName",
             "SortName", "Group", "Description", "ToneCurveName2012", "OverrideLookVignette",
-            "AutoLateralCA", "ColorGradeBlending", "ColorGradeGlobalHue", "ColorGradeGlobalSat", "SharpenRadius", "SharpenDetail", "SharpenEdgeMasking", "ColorNoiseReductionDetail",
+            "AutoLateralCA", "Treatment", "Look", "Amount", "RequiresRenditionBehavior", "ColorGradeBlending", "ColorGradeGlobalHue", "ColorGradeGlobalSat", "SharpenRadius", "SharpenDetail", "SharpenEdgeMasking", "ColorNoiseReductionDetail",
             "ColorNoiseReductionSmoothness", "ParametricShadowSplit", "ParametricMidtoneSplit",
             "ParametricHighlightSplit", "GrainSize", "GrainFrequency", "WhiteBalance"
         ]
@@ -204,15 +206,22 @@ struct XMPSettings {
         private var listItems: [String] = []
         private var text = ""
         private var inItem = false
+        /// Depth of `rdf:Description` elements. Only the outermost one holds the preset's own
+        /// settings; a nested one (inside `crs:Look`) describes the base profile.
+        private var descriptionDepth = 0
 
         func parser(
             _ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?,
             qualifiedName qName: String?, attributes attributeDict: [String: String]
         ) {
             if elementName == "rdf:Description" {
+                descriptionDepth += 1
+                guard descriptionDepth == 1 else { return }
                 for (key, value) in attributeDict where key.hasPrefix("crs:") {
                     settings.values[String(key.dropFirst(4))] = value
                 }
+            } else if descriptionDepth > 1 {
+                return
             } else if elementName.hasPrefix("crs:") {
                 currentElement = String(elementName.dropFirst(4))
                 listItems = []
@@ -223,14 +232,18 @@ struct XMPSettings {
         }
 
         func parser(_ parser: XMLParser, foundCharacters string: String) {
-            if inItem { text += string }
+            if inItem, descriptionDepth == 1 { text += string }
         }
 
         func parser(
             _ parser: XMLParser, didEndElement elementName: String, namespaceURI: String?,
             qualifiedName qName: String?
         ) {
-            if elementName == "rdf:li" {
+            if elementName == "rdf:Description" {
+                descriptionDepth -= 1
+            } else if descriptionDepth > 1 {
+                return
+            } else if elementName == "rdf:li" {
                 inItem = false
                 listItems.append(text.trimmingCharacters(in: .whitespacesAndNewlines))
             } else if elementName.hasPrefix("crs:"), let name = currentElement, name == String(elementName.dropFirst(4)) {

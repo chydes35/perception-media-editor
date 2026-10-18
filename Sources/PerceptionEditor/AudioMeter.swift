@@ -48,9 +48,6 @@ struct MeterGainSchedule: Sendable, Equatable {
         }
         return 0
     }
-
-    /// The largest gain anywhere in `start ..< end` (a meter block), so a block straddling a cut or a
-    /// fade never under-reads. Segment ends and fade edges are checked as well as the block's ends.
 }
 
 /// Live peak metering for the preview player. An `MTAudioProcessingTap` on the preview composition's

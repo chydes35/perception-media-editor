@@ -1335,11 +1335,20 @@ final class EditorStore: ObservableObject {
     }
 
     func selectTimelineClip(_ clip: TimelineClip) {
-        selectedTimelineClipID = clip.id
+        // On Color the selection can flip the scopes (offline <-> online). That rebuild must aim at the
+        // new clip: a refresh from the selection's own didSet would capture the live player's position
+        // (still inside the old clip) and seek back to it, re-selecting the old clip.
+        let scopesBefore = scopesVisible
+        setWithoutPlaybackRefresh { selectedTimelineClipID = clip.id }
         if let asset = project.media.first(where: { $0.id == clip.assetID }) {
             selectedVideoAssetID = asset.id
         }
-        showTimelinePlayback(at: project.timelineStartSeconds(of: clip))
+        let start = project.timelineStartSeconds(of: clip)
+        if scopesVisible != scopesBefore, workspace.isVideo {
+            rebuildTimelinePlayback(autoplay: isVideoPlaying, seekTo: start)
+        } else {
+            showTimelinePlayback(at: start)
+        }
     }
 
     func playSelectedTimelineClip() {
@@ -1571,6 +1580,8 @@ final class EditorStore: ObservableObject {
         let resume: (time: CMTime, playing: Bool)? = preservingPosition && !isTimelinePlayback
             ? videoPlayer.map { ($0.currentTime(), isVideoPlaying) }
             : nil
+        // Any build shows the current color inputs, so it consumes a stale-preview mark.
+        needsPlaybackRefresh = false
         let requestID = UUID()
         playbackRequestID = requestID
         playbackBuildCount += 1
@@ -1769,6 +1780,8 @@ final class EditorStore: ObservableObject {
         autoplay: Bool = false,
         seekTo requestedPosition: Double? = nil
     ) {
+        // Any build shows the current color inputs, so it consumes a stale-preview mark.
+        needsPlaybackRefresh = false
         guard !project.timelineClips.isEmpty else {
             scheduleAudioLevelRefresh()
             replaceVideoPlayer(nil, timelineMode: false)

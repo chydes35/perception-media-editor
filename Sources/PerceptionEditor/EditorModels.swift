@@ -301,7 +301,8 @@ struct ClipAudioAdjustments: Codable, Equatable, Sendable {
         if let gain = try container.decodeIfPresent(Double.self, forKey: .gainDecibels) {
             gainDecibels = min(Self.maximumGainDecibels, max(Self.minimumGainDecibels, gain))
         } else if let volume = try container.decodeIfPresent(Double.self, forKey: .volume) {
-            gainDecibels = Self.decibels(forVolume: volume)
+            // A volume above 1 was never valid (the old UI stopped at 1); clamp so a hand-edited file keeps its old loudness.
+            gainDecibels = Self.decibels(forVolume: min(volume, 1))
         }
         pan = try container.decodeIfPresent(Double.self, forKey: .pan) ?? 0
         fadeInSeconds = try container.decodeIfPresent(Double.self, forKey: .fadeInSeconds) ?? 0

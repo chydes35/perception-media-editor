@@ -208,7 +208,9 @@ struct AudioMeterPlumbingTests {
         let temp = try TempDirectory()
         let (clip, asset) = try await toneClip(temp)
         let result = await TimelineCompositionService.shared.makePlayerItem(
-            clips: [clip], media: [asset], quality: .preview, meters: true
+            clips: [clip], media: [asset],
+            audioAdjustmentsByClipID: [clip.id: ClipAudioAdjustments(gainDecibels: 6.0206)],
+            quality: .preview, meters: true
         )
         let tap = try #require(result.meterTap)
         let player = AVPlayer(playerItem: try #require(result.playerItem))
@@ -218,6 +220,8 @@ struct AudioMeterPlumbingTests {
         defer { player.pause() }
         try await waitUntil(timeout: 10) { tap.processedBlockCount > 4 }
         let peaks = tap.takePeaks()
-        #expect(peaks.left > 0.2 && peaks.left < 0.3, "Peak \(peaks.left) during playback")
+        // The source tone is 0.25; the player hands the tap that raw signal and the tap applies the +6 dB
+        // clip gain itself (the mix gain comes after the tap), so the gain path is exercised: 0.5.
+        #expect(abs(Double(peaks.left) - 0.5) < 0.05, "Peak \(peaks.left) during playback")
     }
 }

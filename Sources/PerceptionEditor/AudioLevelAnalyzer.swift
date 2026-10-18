@@ -20,11 +20,11 @@ enum AudioLevelAnalyzer {
     /// Reported for digital silence (and anything below it), so callers never see -infinity or NaN.
     static let floorDecibels: Double = -160
 
-    /// A sample is clipped when `abs(sample * gain) >= clipThreshold`. Integer PCM tops out one step below
-    /// 1.0 (the largest 16-bit code, 32767, decodes to exactly 1 - 2^-15; 24-bit full scale is 1 - 2^-23),
-    /// so a literal `>= 1.0` would never flag a hard-clipped recording at 0 dB gain. The threshold is one
-    /// 16-bit step below full scale: it flags 16-bit and 24-bit full-scale codes, and stays above any
-    /// normal peak (-0.1 dBFS is 0.9886).
+    /// A sample is clipped when `abs(sample * gain) >= clipThreshold`. Integer PCM full scale can decode
+    /// just below 1.0 (32767 / 32768 is 1 - 2^-15; 24-bit is 1 - 2^-23). The reader happened to give
+    /// exactly 1.0 for hard-clipped 16- and 24-bit WAVs at 0 dB gain in a probe, but a literal `>= 1.0`
+    /// would miss any decode path that rounds down. The threshold is one 16-bit step below full scale:
+    /// it flags full-scale codes however they decode, and stays above any normal peak (-0.1 dBFS is 0.9886).
     static let clipThreshold: Double = 1 - 1.0 / 32768
 
     /// Clipped samples closer together than this are merged into one range.

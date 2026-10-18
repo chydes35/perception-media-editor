@@ -59,6 +59,16 @@ struct ProjectMigration12Tests {
         #expect(ClipAudioAdjustments.linearGain(forDecibels: -60) == 0, "The floor is silence, as volume 0 was")
     }
 
+    @Test func schema11VolumeAboveOneIsClampedToUnityGain() throws {
+        let data = Data("""
+        { "volume": 3.0, "pan": 0.1, "fadeInSeconds": 0, "fadeOutSeconds": 0 }
+        """.utf8)
+        let adjustments = try JSONDecoder().decode(ClipAudioAdjustments.self, from: data)
+        #expect(adjustments.gainDecibels == 0, "Volume above 1 was never valid; it migrates to 0 dB, not +9.5 dB")
+        let half = try JSONDecoder().decode(ClipAudioAdjustments.self, from: Data(#"{ "volume": 0.5 }"#.utf8))
+        #expect(abs(half.gainDecibels - (-6.0206)) < 0.001, "Valid volumes map as before")
+    }
+
     @Test func schema12ProjectsRoundTrip() throws {
         let clip = TimelineClip(assetID: assetID, sourceStartFrame: 0, durationFrames: 96)
         var project = EditorProject(

@@ -357,6 +357,86 @@ struct EditorNavigationTests {
         store.workspace = .photo
     }
 
+    @Test(.enabled(if: MTLCreateSystemDefaultDevice() != nil))
+    func colorLibrarySourcePreviewColorBuildsTheTimelineOnce() async throws {
+        let temp = try TempDirectory()
+        let (store, asset) = try await storeWithMovie(temp)
+        store.workspace = .video
+        store.addToTimeline(asset)
+        try await waitUntil { store.isTimelinePlayback && store.timelinePlaybackDurationSeconds > 0 }
+        let clipID = try #require(store.selectedTimelineClipID)
+        store.workspace = .videoColor
+        try await waitUntil { store.isTimelinePlayback && store.videoPlayer?.currentItem?.videoComposition?.customVideoCompositorClass != nil }
+        store.workspace = .library
+        #expect(store.needsPlaybackRefresh, "Leaving Color for a non-video screen marks the preview stale")
+        store.selectVideo(asset)
+        try await waitUntil { !store.isTimelinePlayback && store.videoPlayer?.currentItem != nil }
+        let before = store.playbackBuildCount
+
+        store.workspace = .videoColor
+        #expect(store.playbackBuildCount == before + 1, "One timeline build; the stale flag must not trigger a source rebuild")
+        try await waitUntil { store.isTimelinePlayback && store.timelinePlaybackDurationSeconds > 0 }
+        #expect(store.isTimelinePlayback)
+        #expect(store.selectedTimelineClipID == clipID)
+        store.workspace = .photo
+    }
+
+    /// An offline clip followed by an online movie clip, built as a timeline and shown on Color.
+    private func colorStoreWithOfflineAndOnline(_ temp: TempDirectory) async throws -> (EditorStore, TimelineClip, TimelineClip) {
+        let store = try makeVideoStore(temp)
+        store.usesProxiesForPlayback = false
+        let movie = try await writeColorPatternMovie(to: temp.url.appendingPathComponent("A.MOV"), frames: 240)
+        await store.importURLs([movie]).value
+        store.proxyStore.cancelAll()
+        let online = try #require(store.project.media.first)
+        let gone = MediaAsset(url: URL(fileURLWithPath: "/Volumes/Gone/C0001.MOV"), kind: .video)
+        store.project.media.append(gone)
+        let offlineClip = TimelineClip(assetID: gone.id, sourceStartFrame: 0, durationFrames: 48)
+        let onlineClip = TimelineClip(assetID: online.id, sourceStartFrame: 0, durationFrames: 96)
+        store.project.timelineClips = [offlineClip, onlineClip]
+        store.project.packTimeline()
+        let packed = store.project.timelineClips
+        store.selectedTimelineClipID = offlineClip.id
+        store.workspace = .videoColor
+        store.rebuildTimelinePlayback(seekTo: 0)
+        try await waitUntil { store.isTimelinePlayback && store.timelinePlaybackDurationSeconds > 0 }
+        return (store, packed[0], packed[1])
+    }
+
+    @Test(.enabled(if: MTLCreateSystemDefaultDevice() != nil))
+    func colorNextFromAnOfflineClipToAnOnlineClipBuildsOnceAndKeepsTheSelection() async throws {
+        let temp = try TempDirectory()
+        let (store, _, onlineClip) = try await colorStoreWithOfflineAndOnline(temp)
+        #expect(!store.scopesVisible)
+        let before = store.playbackBuildCount
+        store.selectTimelineClip(onlineClip)
+        #expect(store.scopesVisible)
+        #expect(store.playbackBuildCount == before + 1, "One build, aimed at the new clip")
+        try await waitUntil { store.videoPlayer?.currentItem?.videoComposition?.customVideoCompositorClass != nil }
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(store.selectedTimelineClipID == onlineClip.id)
+        #expect(store.playbackBuildCount == before + 1)
+        store.workspace = .photo
+    }
+
+    @Test(.enabled(if: MTLCreateSystemDefaultDevice() != nil))
+    func colorPreviousFromAnOnlineClipToAnOfflineClipBuildsOnceAndKeepsTheSelection() async throws {
+        let temp = try TempDirectory()
+        let (store, offlineClip, onlineClip) = try await colorStoreWithOfflineAndOnline(temp)
+        store.selectTimelineClip(onlineClip)
+        try await waitUntil { store.videoPlayer?.currentItem?.videoComposition?.customVideoCompositorClass != nil }
+        try await Task.sleep(for: .milliseconds(300))
+        let before = store.playbackBuildCount
+        store.selectTimelineClip(offlineClip)
+        #expect(!store.scopesVisible)
+        #expect(store.playbackBuildCount == before + 1, "One build, aimed at the new clip")
+        try await waitUntil { store.isTimelinePlayback && store.timelinePlaybackDurationSeconds > 0 }
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(store.selectedTimelineClipID == offlineClip.id)
+        #expect(store.playbackBuildCount == before + 1)
+        store.workspace = .photo
+    }
+
     @Test func cutToVideoExportDoesNotPausePlayback() async {
         let store = EditorStore()
         store.workspace = .video

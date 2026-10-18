@@ -93,6 +93,18 @@ final class EditorStore: ObservableObject {
     @Published var copiedSettings: CopiedSettings?
     /// How strongly a preset is applied (0…1). Not saved with the project.
     @Published var presetAmount = 1.0
+    /// When on, applying a preset first clears the photo's look, so presets replace each other
+    /// instead of leaving earlier settings behind in groups the new one does not set.
+    @Published var presetReplacesLook = UserDefaults.standard.bool(forKey: "perceptionEditor.presetReplacesLook") {
+        didSet {
+            UserDefaults.standard.set(presetReplacesLook, forKey: "perceptionEditor.presetReplacesLook")
+            if presetPreview != nil { refreshPreview() }
+        }
+    }
+    /// The preset under the pointer. The photo is drawn as if it were applied, without changing
+    /// the photo's settings or its history.
+    @Published var presetPreview: PhotoPreset?
+    var presetHoverTask: Task<Void, Never>?
     @Published var copySheetMode: CopySheetMode?
     @Published var isShowingSavePresetSheet = false
     /// A name for the next recorded edit, such as "Preset: Documentary Warm".
@@ -776,7 +788,9 @@ final class EditorStore: ObservableObject {
         let url = asset.url
         let assetID = asset.id
         let generation = projectGeneration
-        let adjustments = isEditingCrop ? selectedAdjustments.withoutCrop : selectedAdjustments
+        var shown = selectedAdjustments
+        if let preset = presetPreview, !isEditingCrop { shown = presetResult(preset, on: shown) }
+        let adjustments = isEditingCrop ? shown.withoutCrop : shown
         let needsOriginal = originalPreviewAssetID != assetID
         let renderer = photoRenderer
         let overlayID = (showMaskOverlay || isMaskInteracting) ? selectedMaskID : nil

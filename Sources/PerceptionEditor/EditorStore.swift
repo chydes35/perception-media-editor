@@ -173,10 +173,15 @@ final class EditorStore: ObservableObject {
         batchPhotoExporter: BatchPhotoExporter? = nil,
         previewRenderOperation: (@Sendable (URL, PhotoAdjustments, UUID?, Bool) async
             -> (RenderedImage?, PhotoPreviewResult?))? = nil,
-        proxyStore: ProxyStore = ProxyStore(),
-        proxyDefaults: UserDefaults = TestIsolation.isRunningTests ? TestIsolation.defaults : .standard
+        // Built in the body, not as default-argument expressions: Swift 6.1 (Xcode 16.4, the CI
+        // toolchain) crashes in SILGen on `@StateObject var store = EditorStore()` when a default
+        // argument constructs a main-actor object.
+        proxyStore: ProxyStore? = nil,
+        proxyDefaults: UserDefaults? = nil
     ) {
-        self.proxyStore = proxyStore
+        let proxyDefaults = proxyDefaults
+            ?? (TestIsolation.isRunningTests ? TestIsolation.defaults : .standard)
+        self.proxyStore = proxyStore ?? ProxyStore()
         self.proxyDefaults = proxyDefaults
         usesProxiesForPlayback = proxyDefaults.object(forKey: Self.useProxiesKey) as? Bool ?? true
         self.ingestScanner = ingestScanner
@@ -203,9 +208,9 @@ final class EditorStore: ObservableObject {
             }
             .store(in: &cancellables)
 
-        proxyStore.onReady = { [weak self] id in self?.proxyBecameReady(id) }
+        self.proxyStore.onReady = { [weak self] id in self?.proxyBecameReady(id) }
         // Forward only status-case changes; progress ticks would re-render the whole editor.
-        proxyStore.$statuses
+        self.proxyStore.$statuses
             .map { $0.mapValues(Self.proxyStatusKind) }
             .removeDuplicates()
             .dropFirst()

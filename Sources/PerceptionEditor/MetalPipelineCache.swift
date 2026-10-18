@@ -68,7 +68,7 @@ final class MetalPipelineCache: @unchecked Sendable {
 
     /// Compiles the library and every kernel now, so the first frame does not.
     func prepare() throws {
-        for name in ["decodeYCbCr", "encodeLuma", "encodeChroma422", "fitToRenderSize", "fillBlack", "downsampleForScope", "waveformAccumulate", "vectorscopeAccumulate", "renderWaveform", "renderVectorscope"] { _ = try pipeline(named: name) }
+        for name in ["decodeYCbCr", "encodeLuma", "encodeChroma422", "fitToRenderSize", "fillBlack", "downsampleForScope", "waveformAccumulate", "histogramAccumulate", "vectorscopeAccumulate", "renderWaveform", "renderVectorscope"] { _ = try pipeline(named: name) }
     }
 
     func pipeline(named name: String, in shaderLibrary: ShaderLibrary = .videoColor) throws -> MTLComputePipelineState {

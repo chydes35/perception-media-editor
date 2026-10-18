@@ -203,6 +203,33 @@ enum MetalShaderSources {
         }
     }
 
+    // Counts into a threadgroup-local histogram first, so flat regions don't all contend on one global bin.
+    kernel void histogramAccumulate(
+        texture2d<half, access::read> image [[texture(0)]],
+        device atomic_uint *bins [[buffer(0)]],
+        uint2 gid [[thread_position_in_grid]],
+        uint2 local2 [[thread_position_in_threadgroup]],
+        uint2 group2 [[threads_per_threadgroup]])
+    {
+        uint lid = local2.y * group2.x + local2.x;
+        uint groupSize = group2.x * group2.y;
+        threadgroup atomic_uint local[768];
+        for (uint i = lid; i < 768; i += groupSize) { atomic_store_explicit(&local[i], 0u, memory_order_relaxed); }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        if (gid.x < image.get_width() && gid.y < image.get_height()) {
+            float3 c = float3(image.read(gid).rgb);
+            for (uint channel = 0; channel < 3; channel++) {
+                uint bin = uint(clamp(round(c[channel] * 255.0), 0.0, 255.0));
+                atomic_fetch_add_explicit(&local[channel * 256 + bin], 1u, memory_order_relaxed);
+            }
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        for (uint i = lid; i < 768; i += groupSize) {
+            uint count = atomic_load_explicit(&local[i], memory_order_relaxed);
+            if (count > 0) { atomic_fetch_add_explicit(&bins[i], count, memory_order_relaxed); }
+        }
+    }
+
     kernel void vectorscopeAccumulate(
         texture2d<half, access::read> image [[texture(0)]],
         device atomic_uint *grid [[buffer(0)]],

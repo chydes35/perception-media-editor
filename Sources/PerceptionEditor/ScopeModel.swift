@@ -9,6 +9,7 @@ import SwiftUI
 final class ScopeModel: ObservableObject {
     @Published private(set) var waveform: CGImage?
     @Published private(set) var vectorscope: CGImage?
+    @Published private(set) var histogram = HistogramData.empty
     /// GPU time of the last analysis, and how often the images are updating.
     @Published private(set) var gpuMilliseconds = 0.0
     @Published private(set) var updatesPerSecond = 0.0
@@ -30,6 +31,7 @@ final class ScopeModel: ObservableObject {
         tap.setListener(nil)
         waveform = nil
         vectorscope = nil
+        histogram = .empty
         recentUpdates = []
         updatesPerSecond = 0
     }
@@ -45,6 +47,7 @@ final class ScopeModel: ObservableObject {
     private func show(_ analysis: ScopeAnalysis) {
         waveform = analysis.waveformImage
         vectorscope = analysis.vectorscopeImage
+        histogram = analysis.histogram
         gpuMilliseconds = analysis.gpuMilliseconds
         let now = ProcessInfo.processInfo.systemUptime
         recentUpdates = recentUpdates.filter { now - $0 < 1 } + [now]

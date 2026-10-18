@@ -82,6 +82,32 @@ struct ScopeRendererTests {
         #expect(analysis.vectorscope[center.v * analysis.size + center.u] == 512 * 64)
     }
 
+    @Test func aFlatGreyFrameFillsOneHistogramBin() throws {
+        let renderer = try ScopeRenderer()
+        let analysis = try renderer.analyze(try Self.frame(colors: [SIMD3(repeating: 0.42)]), mode: .luma)
+        let bin = Int((Float(Float16(0.42)) * 255).rounded())
+        for channel in [analysis.histogram.red, analysis.histogram.green, analysis.histogram.blue] {
+            #expect(channel.count == 256)
+            #expect(channel[bin] == 1, "The grey's bin is the peak")
+            #expect(channel.enumerated().allSatisfy { $0.offset == bin || $0.element == 0 }, "Every other bin is empty")
+        }
+    }
+
+    @Test func barsPutEachChannelWhereTheyBelong() throws {
+        let renderer = try ScopeRenderer()
+        // Half the bars carry each channel at 75% (code 191), the other half at 0.
+        let bars = try renderer.analyze(try Self.frame(), mode: .luma).histogram
+        for channel in [bars.red, bars.green, bars.blue] {
+            #expect(channel[0] == 1 && channel[191] == 1, "Equal shares of the frame: both are peaks")
+            #expect(channel.enumerated().allSatisfy { [0, 191].contains($0.offset) || $0.element == 0 })
+        }
+        // Three red bars of four: 191 holds three times the pixels of 0, so 0 normalizes to a third.
+        let red: [SIMD3<Float>] = [[0.75, 0, 0], [0.75, 0, 0], [0.75, 0, 0], [0, 0, 0]]
+        let uneven = try renderer.analyze(try Self.frame(colors: red), mode: .luma).histogram
+        #expect(uneven.red[191] == 1 && abs(uneven.red[0] - 1.0 / 3) < 1e-9)
+        #expect(uneven.green[0] == 1 && uneven.green[191] == 0 && uneven.blue[0] == 1)
+    }
+
     @Test func imagesHaveTheirSizesAndShowTheGuides() throws {
         let renderer = try ScopeRenderer()
         let analysis = try renderer.analyze(try Self.frame(colors: [SIMD3(repeating: 0.42)]), mode: .luma)

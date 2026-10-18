@@ -18,6 +18,8 @@ struct ScopeAnalysis: @unchecked Sendable {
     var size: Int
     var waveformImage: CGImage
     var vectorscopeImage: CGImage
+    /// 256 bins per channel of the frame's code values, each channel scaled so its tallest bin is 1 (like the photo histogram).
+    var histogram: HistogramData
     var gpuMilliseconds: Double
 }
 
@@ -49,6 +51,7 @@ final class ScopeRenderer: @unchecked Sendable {
     private let queue: MTLCommandQueue
     private let waveformBuffer: MTLBuffer
     private let vectorscopeBuffer: MTLBuffer
+    private let histogramBuffer: MTLBuffer
     private let waveformTexture: MTLTexture
     private let vectorscopeTexture: MTLTexture
     private let lock = NSLock()
@@ -56,7 +59,8 @@ final class ScopeRenderer: @unchecked Sendable {
     init(runtime: MetalPipelineCache? = MetalPipelineCache.shared) throws {
         guard let runtime, let queue = runtime.device.makeCommandQueue(),
               let waveform = runtime.device.makeBuffer(length: Self.columns * Self.bins * 4, options: .storageModeShared),
-              let vectorscope = runtime.device.makeBuffer(length: Self.size * Self.size * 4, options: .storageModeShared)
+              let vectorscope = runtime.device.makeBuffer(length: Self.size * Self.size * 4, options: .storageModeShared),
+              let histogram = runtime.device.makeBuffer(length: 3 * 256 * 4, options: .storageModeShared)
         else { throw VideoColorError.noMetalDevice }
         func image(_ width: Int, _ height: Int) throws -> MTLTexture {
             let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: width, height: height, mipmapped: false)
@@ -69,6 +73,7 @@ final class ScopeRenderer: @unchecked Sendable {
         self.queue = queue
         waveformBuffer = waveform
         vectorscopeBuffer = vectorscope
+        histogramBuffer = histogram
         waveformTexture = try image(Self.columns, Self.displayHeight)
         vectorscopeTexture = try image(Self.size, Self.size)
         try runtime.prepare()
@@ -93,6 +98,7 @@ final class ScopeRenderer: @unchecked Sendable {
         }
         blit.fill(buffer: waveformBuffer, range: 0 ..< waveformBuffer.length, value: 0)
         blit.fill(buffer: vectorscopeBuffer, range: 0 ..< vectorscopeBuffer.length, value: 0)
+        blit.fill(buffer: histogramBuffer, range: 0 ..< histogramBuffer.length, value: 0)
         blit.endEncoding()
 
         let coefficients = matrix.coefficients
@@ -109,6 +115,9 @@ final class ScopeRenderer: @unchecked Sendable {
         accumulate.setComputePipelineState(try runtime.pipeline(named: "vectorscopeAccumulate"))
         accumulate.setBuffer(vectorscopeBuffer, offset: 0, index: 0)
         accumulate.setBytes(&vectorscopeParameters, length: MemoryLayout<ScopeParameters>.stride, index: 1)
+        dispatch(accumulate, frame.width, frame.height)
+        accumulate.setComputePipelineState(try runtime.pipeline(named: "histogramAccumulate"))
+        accumulate.setBuffer(histogramBuffer, offset: 0, index: 0)
         dispatch(accumulate, frame.width, frame.height)
 
         // A column of the frame spreads its pixels over its bins; show a quarter of a column at full brightness.
@@ -139,9 +148,16 @@ final class ScopeRenderer: @unchecked Sendable {
                                                  count: Self.columns * Self.bins))
         let vectorscope = Array(UnsafeBufferPointer(start: vectorscopeBuffer.contents().bindMemory(to: UInt32.self, capacity: Self.size * Self.size),
                                                     count: Self.size * Self.size))
+        let counts = Array(UnsafeBufferPointer(start: histogramBuffer.contents().bindMemory(to: UInt32.self, capacity: 3 * 256), count: 3 * 256))
+        func channel(_ index: Int) -> [Double] {
+            let bins = counts[index * 256 ..< (index + 1) * 256].map(Double.init)
+            let peak = bins.max() ?? 0
+            return peak > 0 ? bins.map { $0 / peak } : bins
+        }
         return ScopeAnalysis(
             waveform: waveform, vectorscope: vectorscope, columns: Self.columns, bins: Self.bins, size: Self.size,
             waveformImage: try Self.image(waveformTexture), vectorscopeImage: try Self.image(vectorscopeTexture),
+            histogram: HistogramData(red: channel(0), green: channel(1), blue: channel(2)),
             gpuMilliseconds: (commandBuffer.gpuEndTime - commandBuffer.gpuStartTime) * 1000
         )
     }

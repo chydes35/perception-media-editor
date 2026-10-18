@@ -101,6 +101,7 @@ Gate G9, `RealVideoScopeTests` with `PME_VLOG_SHORT=P1107158.MOV`, release, 8 GB
 |---|---|
 | Update rate during playback | 14.6 Hz (every second frame) |
 | Analysis (waveform + vectorscope, 512 × 288 capture) | 0.67 ms GPU median |
+| Analysis with the RGB histogram added (synthetic 8-bar 512 × 288 capture, release, 100 runs; the bars put every pixel in 8 bins, the worst case for atomic contention) | 0.84 ms GPU median, 1.87 ms p99 (1.25 ms median with global atomics only; the kernel counts per threadgroup first). Real V-Log footage with the histogram is NOT VERIFIED (G9 not re-run) |
 | Capture downsample in the compositor | 0.43 ms at 1080p, 1.46 ms at UHD |
 
 ## Acceptance workload

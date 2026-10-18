@@ -223,7 +223,7 @@ extension EditorStore {
                 return perform(command)
             default: return false
             }
-        case .video, .export, .agents:
+        case .video, .videoExport, .export, .agents:
             return false
         }
     }

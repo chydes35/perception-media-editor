@@ -620,7 +620,7 @@ final class EditorStore: ObservableObject {
         guard let selectedTimelineClipID, let selectedTimelineClip else { return }
         var adjustments = selectedAudioAdjustments
         update(&adjustments)
-        adjustments.volume = min(1, max(0, adjustments.volume))
+        adjustments.gainDecibels = min(ClipAudioAdjustments.maximumGainDecibels, max(ClipAudioAdjustments.minimumGainDecibels, adjustments.gainDecibels))
         adjustments.pan = min(1, max(-1, adjustments.pan))
         let maximumFade = max(0, selectedTimelineClip.durationSeconds / 2)
         adjustments.fadeInSeconds = min(maximumFade, max(0, adjustments.fadeInSeconds))
@@ -1765,6 +1765,7 @@ final class EditorStore: ObservableObject {
         let renderingPath: TimelineRenderingPath = scopesVisible ? .compositor : .automatic
         let media = project.media
         let audioAdjustmentsByClipID = project.audioAdjustmentsByClipID
+        let masterGainDecibels = project.masterGainDecibels
         if usesProxiesForPlayback { regenerateMissingProxies(for: Set(clips.map(\.assetID))) }
         let proxyURLs = usesProxiesForPlayback ? proxyStore.readyURLs : [:]
         let requestID = UUID()
@@ -1783,6 +1784,7 @@ final class EditorStore: ObservableObject {
                 quality: .preview,
                 proxyURLsByAssetID: proxyURLs,
                 sequenceFrameRate: sequenceRate,
+                masterGainDecibels: masterGainDecibels,
                 renderingPath: renderingPath,
                 inputLUTsByAssetID: inputLUTs.resolved,
                 ocioInputsByAssetID: ocioInputs

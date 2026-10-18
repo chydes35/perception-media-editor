@@ -77,7 +77,7 @@ Their video workflow, in their words: trim each clip to length, grade it, add so
 
 - The exact SwiftUI structure and view state for the rail and mode switch, and how existing views migrate into it.
 - The beat-detection algorithm and its accuracy bar, within the constraints above.
-- How gain above 0 dB is applied (AVAudioMix limits, or processing the audio ourselves).
+- How gain above 0 dB is applied (AVAudioMix limits, or processing the audio ourselves). Decided in Task 9: `AVAudioMix` volumes above 1 amplify exactly on macOS 26 (spike: 0.5 / 1 / 2 / 4 measured −6.02 / 0.00 / +6.02 / +12.04 dB on a −12 dBFS 24-bit tone), so clip and master gain go through the mix; no tap.
 - Detailed spacing, typography, icons and the light and dark palettes.
 - Whether the rail remembers the last step per category (suggested).
 

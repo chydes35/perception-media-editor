@@ -252,13 +252,68 @@ struct TimelineClip: Identifiable, Codable, Equatable, Sendable {
     }
 }
 
+/// Clip audio (schema 12). Loudness is gain in dB; schema 11 stored a 0…1 `volume`, which is read
+/// once on open and converted (`decibels(forVolume:)`), and never written again.
 struct ClipAudioAdjustments: Codable, Equatable, Sendable {
-    var volume = 1.0
+    static let minimumGainDecibels = -60.0
+    static let maximumGainDecibels = 24.0
+    static let gainRange = minimumGainDecibels...maximumGainDecibels
+
+    /// −60…+24 dB. The −60 dB floor is silence (old volume 0 maps there).
+    var gainDecibels = 0.0
     var pan = 0.0
     var fadeInSeconds = 0.0
     var fadeOutSeconds = 0.0
 
     static let neutral = ClipAudioAdjustments()
+
+    init(gainDecibels: Double = 0, pan: Double = 0, fadeInSeconds: Double = 0, fadeOutSeconds: Double = 0) {
+        self.gainDecibels = gainDecibels
+        self.pan = pan
+        self.fadeInSeconds = fadeInSeconds
+        self.fadeOutSeconds = fadeOutSeconds
+    }
+
+    /// 20·log10(volume), clamped to the gain range; volume 0 (or anything under −60 dB) is the floor.
+    static func decibels(forVolume volume: Double) -> Double {
+        guard volume.isFinite, volume > 0 else { return minimumGainDecibels }
+        return min(maximumGainDecibels, max(minimumGainDecibels, 20 * log10(volume)))
+    }
+
+    /// 10^(dB/20). The −60 dB floor (and below) is silence, so a migrated volume of 0 stays silent.
+    static func linearGain(forDecibels decibels: Double) -> Double {
+        guard decibels.isFinite, decibels > minimumGainDecibels else { return 0 }
+        return pow(10, min(maximumGainDecibels, decibels) / 20)
+    }
+
+    /// The clip's linear gain in the mix.
+    var linearGain: Double { Self.linearGain(forDecibels: gainDecibels) }
+
+    private enum CodingKeys: String, CodingKey {
+        case gainDecibels, pan, fadeInSeconds, fadeOutSeconds
+        /// Schema 11 and earlier; decode only.
+        case volume
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if let gain = try container.decodeIfPresent(Double.self, forKey: .gainDecibels) {
+            gainDecibels = min(Self.maximumGainDecibels, max(Self.minimumGainDecibels, gain))
+        } else if let volume = try container.decodeIfPresent(Double.self, forKey: .volume) {
+            gainDecibels = Self.decibels(forVolume: volume)
+        }
+        pan = try container.decodeIfPresent(Double.self, forKey: .pan) ?? 0
+        fadeInSeconds = try container.decodeIfPresent(Double.self, forKey: .fadeInSeconds) ?? 0
+        fadeOutSeconds = try container.decodeIfPresent(Double.self, forKey: .fadeOutSeconds) ?? 0
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(gainDecibels, forKey: .gainDecibels)
+        try container.encode(pan, forKey: .pan)
+        try container.encode(fadeInSeconds, forKey: .fadeInSeconds)
+        try container.encode(fadeOutSeconds, forKey: .fadeOutSeconds)
+    }
 }
 
 enum CropAspect: String, Codable, CaseIterable, Identifiable, Sendable {
@@ -459,7 +514,7 @@ struct PhotoPreset: Identifiable, Codable, Equatable, Sendable {
 }
 
 struct EditorProject: Codable, Equatable {
-    static let currentSchemaVersion = 11
+    static let currentSchemaVersion = 12
 
     var schemaVersion = currentSchemaVersion
     var id = UUID()
@@ -473,6 +528,8 @@ struct EditorProject: Codable, Equatable {
     var timelineClips: [TimelineClip] = []
     /// Per media item (schema 11); a missing entry means `.automatic`.
     var colorInputByAssetID: [UUID: ColorInputTransform] = [:]
+    /// Schema 12: applied to the whole mix on top of each clip's gain. Missing in older files means 0 dB.
+    var masterGainDecibels = 0.0
 
     static let starter = EditorProject(name: "Untitled Project")
 
@@ -551,6 +608,7 @@ struct EditorProject: Codable, Equatable {
         case audioAdjustmentsByClipID
         case timelineClips
         case colorInputByAssetID
+        case masterGainDecibels
     }
 
     init(from decoder: Decoder) throws {
@@ -578,5 +636,7 @@ struct EditorProject: Codable, Equatable {
             [UUID: ColorInputTransform].self,
             forKey: .colorInputByAssetID
         ) ?? [:]
+        let masterGain = try container.decodeIfPresent(Double.self, forKey: .masterGainDecibels) ?? 0
+        masterGainDecibels = min(ClipAudioAdjustments.maximumGainDecibels, max(ClipAudioAdjustments.minimumGainDecibels, masterGain))
     }
 }

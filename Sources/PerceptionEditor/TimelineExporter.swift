@@ -48,6 +48,7 @@ struct TimelineExportJob: Sendable {
     var adjustmentsByClipID: [UUID: PhotoAdjustments] = [:]
     var audioAdjustmentsByClipID: [UUID: ClipAudioAdjustments] = [:]
     var sequenceFrameRate: FrameRate?
+    var masterGainDecibels = 0.0
     var inputLUTsByAssetID: [UUID: ResolvedLUT] = [:]
     var ocioInputsByAssetID: [UUID: OCIOInputTransform] = [:]
 }
@@ -131,7 +132,7 @@ actor TimelineExporter {
         let composed = await TimelineCompositionService.shared.makePlayerItem(
             clips: job.clips, media: job.media, adjustmentsByClipID: job.adjustmentsByClipID,
             audioAdjustmentsByClipID: job.audioAdjustmentsByClipID, quality: .export,
-            sequenceFrameRate: job.sequenceFrameRate, renderingPath: .compositor, inputLUTsByAssetID: job.inputLUTsByAssetID,
+            sequenceFrameRate: job.sequenceFrameRate, masterGainDecibels: job.masterGainDecibels, renderingPath: .compositor, inputLUTsByAssetID: job.inputLUTsByAssetID,
             ocioInputsByAssetID: job.ocioInputsByAssetID
         )
         guard let item = composed.playerItem else {

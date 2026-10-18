@@ -82,10 +82,10 @@ struct VideoWorkspace: View {
                         }
 
                         audioAdjustment(
-                            "Volume",
-                            keyPath: \.volume,
-                            range: 0...1,
-                            display: { "\(Int(($0 * 100).rounded()))%" }
+                            "Gain",
+                            keyPath: \.gainDecibels,
+                            range: ClipAudioAdjustments.gainRange,
+                            display: { $0 <= ClipAudioAdjustments.minimumGainDecibels ? "Off" : String(format: "%+.1f dB", $0) }
                         )
                         audioAdjustment(
                             "Fade In",

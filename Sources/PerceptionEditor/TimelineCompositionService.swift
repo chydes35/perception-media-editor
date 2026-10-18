@@ -109,6 +109,7 @@ final class TimelineCompositionService {
         quality: MediaQuality,
         proxyURLsByAssetID: [UUID: URL] = [:],
         sequenceFrameRate: FrameRate? = nil,
+        masterGainDecibels: Double = 0,
         renderingPath: TimelineRenderingPath = .automatic,
         statisticsKey: UUID? = nil,
         inputLUTsByAssetID: [UUID: ResolvedLUT] = [:],
@@ -271,8 +272,11 @@ final class TimelineCompositionService {
             let audioParameters = AVMutableAudioMixInputParameters(track: compositionAudioTrack)
             // Fades are durations, not edit points, so they stay in seconds at the sequence timescale.
             let fadeScale = sequenceRate.timescale
+            // Gain is linear volume in the mix: clip gain times master gain. Volumes above 1 do
+            // amplify (measured on macOS 26: 2.0 → +6.02 dB, 4.0 → +12.04 dB), so no tap is needed.
+            let masterGain = ClipAudioAdjustments.linearGain(forDecibels: masterGainDecibels)
             for segment in audioSegments {
-                let volume = Float(min(1, max(0, segment.adjustments.volume)))
+                let volume = Float(segment.adjustments.linearGain * masterGain)
                 let maximumFade = max(0, segment.range.duration.seconds / 2)
                 let fadeIn = min(maximumFade, max(0, segment.adjustments.fadeInSeconds))
                 let fadeOut = min(maximumFade, max(0, segment.adjustments.fadeOutSeconds))

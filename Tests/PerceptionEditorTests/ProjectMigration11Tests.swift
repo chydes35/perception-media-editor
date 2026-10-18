@@ -129,7 +129,7 @@ struct ProjectMigration11Tests {
         // Reopening gives the same frames and nothing left to convert.
         let reopened = try document.project(from: document.data(for: project))
         #expect(reopened.timelineClips == project.timelineClips)
-        #expect(reopened.schemaVersion == 11)
+        #expect(reopened.schemaVersion == EditorProject.currentSchemaVersion)
     }
 
     @Test func clipsOfOfflineSourcesStayInSeconds() throws {
@@ -141,7 +141,7 @@ struct ProjectMigration11Tests {
 
     @Test func newerSchemasAreStillRejected() throws {
         var object = try #require(try JSONSerialization.jsonObject(with: schema10Project()) as? [String: Any])
-        object["schemaVersion"] = 12
+        object["schemaVersion"] = EditorProject.currentSchemaVersion + 1
         #expect(throws: ProjectDocumentError.self) {
             try document.project(from: JSONSerialization.data(withJSONObject: object))
         }

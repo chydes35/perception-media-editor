@@ -164,7 +164,7 @@ struct VideoProxyWorkflowTests {
         try await waitUntil { store.timelineUsedProxyCount == 1 }
 
         try FileManager.default.removeItem(at: proxy) // The user cleared the cache folder.
-        store.updateSelectedAudioAdjustments { $0.volume = 0.5 } // Any edit rebuilds the timeline.
+        store.updateSelectedAudioAdjustments { $0.gainDecibels = -6 } // Any edit rebuilds the timeline.
         // The file is published before the main actor marks it ready.
         try await waitUntil {
             FileManager.default.fileExists(atPath: proxy.path) && store.proxyStore.readyURL(for: asset.id) == proxy

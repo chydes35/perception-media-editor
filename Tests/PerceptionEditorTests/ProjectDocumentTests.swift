@@ -30,7 +30,7 @@ struct ProjectDocumentTests {
             media: [asset],
             adjustmentsByAssetID: [assetID: adjustments],
             videoAdjustmentsByClipID: [clip.id: PhotoAdjustments(exposure: 0.35, vibrance: 0.16)],
-            audioAdjustmentsByClipID: [clip.id: ClipAudioAdjustments(volume: 0.72, pan: -0.2, fadeInSeconds: 0.8, fadeOutSeconds: 1.1)],
+            audioAdjustmentsByClipID: [clip.id: ClipAudioAdjustments(gainDecibels: -2.85, pan: -0.2, fadeInSeconds: 0.8, fadeOutSeconds: 1.1)],
             timelineClips: [clip]
         )
         return (project, asset, clip)

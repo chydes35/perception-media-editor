@@ -12,6 +12,8 @@ final class EditorStore: ObservableObject {
         didSet {
             workspaceChangeTask?.cancel()
             workspaceChangeTask = nil
+            if workspace == .agents, oldValue != .agents { workspaceBeforeAgents = oldValue }
+            if workspace != .video { pauseVideoPlayback() }
             syncCategory()
             workspaceDidChange()
         }
@@ -631,7 +633,6 @@ final class EditorStore: ObservableObject {
 
     func openAgents() {
         guard workspace != .agents else { return }
-        workspaceBeforeAgents = workspace
         workspace = .agents
     }
 
@@ -1399,6 +1400,16 @@ final class EditorStore: ObservableObject {
     func previewTimeline() {
         showTimelinePlayback(at: timelinePlaybackPositionSeconds)
     }
+
+    /// Pauses the current player, if any. Used when navigation leaves the Cut screen.
+    func pauseVideoPlayback() {
+        guard isVideoPlaying || videoPlayer != nil else { return }
+        videoPlayer?.pause()
+        isVideoPlaying = false
+    }
+
+    /// Test seam: marks playback as running without a real player.
+    func markVideoPlayingForTesting() { isVideoPlaying = true }
 
     func toggleVideoPlayback() {
         guard let videoPlayer else {

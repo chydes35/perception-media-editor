@@ -57,4 +57,58 @@ struct EditorNavigationTests {
         store.closeAgents()
         #expect(store.workspace == .video)
     }
+
+    @Test func metricsMeetTheSpecMinimums() {
+        #expect(EditorMetrics.railButtonHeight >= 56)
+        #expect(EditorMetrics.categoryButtonHeight >= 36)
+        #expect(EditorMetrics.railWidth == 96)
+    }
+
+    @Test func switchingCategoryPausesVideoPlayback() async {
+        let store = EditorStore()
+        store.workspace = .video
+        store.markVideoPlayingForTesting()
+        #expect(store.isVideoPlaying)
+        store.requestCategoryChange(to: .photo)
+        await store.workspaceChangeTask?.value
+        #expect(!store.isVideoPlaying)
+    }
+
+    @Test func leavingAVideoScreenPausesPlayback() async {
+        let store = EditorStore()
+        store.workspace = .video
+        store.markVideoPlayingForTesting()
+        store.requestStepChange(EditorCategory.video.steps[2])
+        await store.workspaceChangeTask?.value
+        #expect(store.workspace == .videoExport)
+        #expect(!store.isVideoPlaying)
+    }
+
+    @Test func categoryChangeFromCullToVideoLandsOnTheLibraryStep() async {
+        let store = EditorStore()
+        store.workspace = .cull
+        store.requestCategoryChange(to: .video)
+        await store.workspaceChangeTask?.value
+        #expect(store.workspace == .library)
+        #expect(store.category == .video)
+    }
+
+    @Test func categoryChangeWhileAlreadyOnTargetStepStillSwitchesCategory() async {
+        let store = EditorStore()
+        #expect(store.workspace == .library)
+        store.requestCategoryChange(to: .video)
+        await store.workspaceChangeTask?.value
+        #expect(store.workspace == .library)
+        #expect(store.category == .video)
+    }
+
+    @Test func reachingAgentsThroughWorkspaceRequestStillReturnsCorrectly() async {
+        let store = EditorStore()
+        store.workspace = .video
+        store.requestWorkspaceChange(to: .agents)
+        await store.workspaceChangeTask?.value
+        #expect(store.workspace == .agents)
+        store.closeAgents()
+        #expect(store.workspace == .video)
+    }
 }

@@ -1,4 +1,11 @@
 import Foundation
+import CoreGraphics
+
+enum EditorMetrics {
+    static let railButtonHeight: CGFloat = 56
+    static let categoryButtonHeight: CGFloat = 36
+    static let railWidth: CGFloat = 96
+}
 
 enum EditorCategory: String, CaseIterable, Identifiable, Sendable {
     case photo = "Photo"

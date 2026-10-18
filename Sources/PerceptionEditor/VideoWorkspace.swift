@@ -1,4 +1,3 @@
-import AVKit
 import SwiftUI
 
 struct VideoWorkspace: View {
@@ -101,40 +100,6 @@ struct VideoWorkspace: View {
                             display: { String(format: "%.1fs", $0) }
                         )
                     }
-
-                    inspectorSection("CLIP COLOR") {
-                        HStack {
-                            Menu("Preset", systemImage: "camera.filters") {
-                                ForEach(store.presets) { preset in
-                                    Button(preset.name) {
-                                        store.applyVideoPreset(preset)
-                                    }
-                                }
-                            }
-                            Button("Reset", systemImage: "arrow.counterclockwise") {
-                                store.resetSelectedVideoAdjustments()
-                            }
-                        }
-                        .controlSize(.small)
-
-                        videoAdjustment("Exposure", keyPath: \.exposure, range: -3...3)
-                        videoAdjustment("Contrast", keyPath: \.contrast, range: -1...1)
-                        videoAdjustment("Highlights", keyPath: \.highlights, range: -1...1)
-                        videoAdjustment("Shadows", keyPath: \.shadows, range: -1...1)
-                        videoAdjustment("Temperature", keyPath: \.temperature, range: -1...1)
-                        videoAdjustment("Tint", keyPath: \.tint, range: -1...1)
-                        videoAdjustment("Vibrance", keyPath: \.vibrance, range: -1...1)
-                        videoAdjustment("Saturation", keyPath: \.saturation, range: -1...1)
-                        videoAdjustment("Sharpness", keyPath: \.sharpness, range: 0...1)
-                        videoAdjustment("Vignette", keyPath: \.vignette, range: 0...1)
-
-                        Text("LUT").font(.caption2.weight(.bold)).foregroundStyle(.secondary)
-                        LUTControls(
-                            application: store.selectedVideoAdjustments.lut,
-                            setLUT: { store.setClipLUT($0) },
-                            setIntensity: { value in store.updateSelectedVideoAdjustments { $0.lut?.intensity = value } }
-                        )
-                    }
                 } else {
                     Text("Select a timeline clip to trim, split, or reorder it.")
                         .font(.caption)
@@ -182,14 +147,6 @@ struct VideoWorkspace: View {
         .font(.caption)
     }
 
-    private func videoAdjustment(
-        _ label: String,
-        keyPath: WritableKeyPath<PhotoAdjustments, Double>,
-        range: ClosedRange<Double>
-    ) -> some View {
-        VideoAdjustmentSlider(label: label, keyPath: keyPath, range: range)
-    }
-
     private func audioAdjustment(
         _ label: String,
         keyPath: WritableKeyPath<ClipAudioAdjustments, Double>,
@@ -218,11 +175,5 @@ struct VideoWorkspace: View {
             )
             .tint(.blue)
         }
-    }
-    private func formatTime(_ seconds: Double) -> String {
-        let safeSeconds = max(0, seconds.isFinite ? seconds : 0)
-        let minutes = Int(safeSeconds) / 60
-        let remaining = safeSeconds - Double(minutes * 60)
-        return String(format: "%02d:%05.2f", minutes, remaining)
-    }
+     }
 }

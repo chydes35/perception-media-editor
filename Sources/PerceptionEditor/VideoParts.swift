@@ -92,13 +92,6 @@ struct VideoMediaBin: View {
             Button("Relink Media…") { store.relink(asset) }
         }
     }
-
-    private func formatTime(_ seconds: Double) -> String {
-        let safeSeconds = max(0, seconds.isFinite ? seconds : 0)
-        let minutes = Int(safeSeconds) / 60
-        let remaining = safeSeconds - Double(minutes * 60)
-        return String(format: "%02d:%05.2f", minutes, remaining)
-    }
 }
 
 /// Viewer with transport and an optional scope panel under it. Shared by the video screens.
@@ -214,13 +207,6 @@ struct VideoViewer: View {
         .padding(.horizontal, 16)
         .frame(height: 40)
         .background(Color(nsColor: .controlBackgroundColor))
-    }
-
-    private func formatTime(_ seconds: Double) -> String {
-        let safeSeconds = max(0, seconds.isFinite ? seconds : 0)
-        let minutes = Int(safeSeconds) / 60
-        let remaining = safeSeconds - Double(minutes * 60)
-        return String(format: "%02d:%05.2f", minutes, remaining)
     }
 }
 
@@ -439,13 +425,6 @@ struct VideoTimeline: View {
     private func timelineClipWidth(_ clip: TimelineClip) -> CGFloat {
         max(100, min(360, clip.durationSeconds * 18))
     }
-
-    private func formatTime(_ seconds: Double) -> String {
-        let safeSeconds = max(0, seconds.isFinite ? seconds : 0)
-        let minutes = Int(safeSeconds) / 60
-        let remaining = safeSeconds - Double(minutes * 60)
-        return String(format: "%02d:%05.2f", minutes, remaining)
-    }
 }
 
 private struct EditorPlayerView: NSViewRepresentable {
@@ -517,3 +496,11 @@ private struct ProxyBadge: View {
     }
 }
 
+
+/// Timecode text for the video screens: `MM:SS.ff`. Negative and non-finite input shows as zero.
+func formatTime(_ seconds: Double) -> String {
+    let safeSeconds = max(0, seconds.isFinite ? seconds : 0)
+    let minutes = Int(safeSeconds) / 60
+    let remaining = safeSeconds - Double(minutes * 60)
+    return String(format: "%02d:%05.2f", minutes, remaining)
+}

@@ -196,9 +196,19 @@ private struct ColorGradePanel: View {
                         .tracking(1.1)
                         .foregroundStyle(.secondary)
                     Spacer()
+                    Menu("Preset", systemImage: "camera.filters") {
+                        ForEach(store.presets) { preset in
+                            Button(preset.name) {
+                                store.applyVideoPreset(preset)
+                            }
+                        }
+                    }
+                    .frame(minHeight: EditorMetrics.categoryButtonHeight - 8)
+                    .help("Apply a preset's look to this clip")
                     Button("Reset", systemImage: "arrow.counterclockwise") {
                         store.resetSelectedVideoAdjustments()
                     }
+                    .frame(minHeight: EditorMetrics.categoryButtonHeight - 8)
                     .help("Reset this clip's grade")
                 }
 

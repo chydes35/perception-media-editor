@@ -33,6 +33,17 @@ struct PresetReplaceLookTests {
     }
 }
 
+/// Polls until `condition` holds, so a slow machine does not fail a timing-based test.
+@MainActor
+private func pollUntil(timeout: Duration = .seconds(10), _ condition: () async -> Bool) async -> Bool {
+    let deadline = ContinuousClock.now + timeout
+    while ContinuousClock.now < deadline {
+        if await condition() { return true }
+        try? await Task.sleep(for: .milliseconds(25))
+    }
+    return await condition()
+}
+
 @MainActor
 struct PresetHoverPreviewTests {
     private func makeStore(log: RenderLog) -> EditorStore {
@@ -59,16 +70,18 @@ struct PresetHoverPreviewTests {
         let historyBefore = store.selectedHistory.count
 
         store.hoverPreset(preset, isHovering: true)
-        try await Task.sleep(for: .milliseconds(500))
-        #expect(store.presetPreview?.id == preset.id)
-        #expect(await log.adjustments.contains { $0.contrast == 0.5 }, "the preview is rendered with the preset")
+        let shown = await pollUntil { store.presetPreview?.id == preset.id }
+        #expect(shown)
+        let rendered = await pollUntil { await log.adjustments.contains { $0.contrast == 0.5 } }
+        #expect(rendered, "the preview is rendered with the preset")
         #expect(store.selectedAdjustments == before, "the photo's own settings are untouched")
         #expect(store.selectedHistory.count == historyBefore, "and nothing is added to history")
 
         store.hoverPreset(preset, isHovering: false)
-        try await Task.sleep(for: .milliseconds(400))
-        #expect(store.presetPreview == nil)
-        #expect(await log.adjustments.last?.contrast == 0, "leaving restores the real photo")
+        let cleared = await pollUntil { store.presetPreview == nil }
+        #expect(cleared)
+        let restored = await pollUntil { await log.adjustments.last?.contrast == 0 }
+        #expect(restored, "leaving restores the real photo")
     }
 
     @Test func clickingAppliesAndEndsThePreview() async throws {
@@ -76,7 +89,8 @@ struct PresetHoverPreviewTests {
         let store = makeStore(log: log)
         let preset = PhotoPreset(name: "P", category: "T", adjustments: PhotoAdjustments(contrast: 0.5), groups: [.tone])
         store.hoverPreset(preset, isHovering: true)
-        try await Task.sleep(for: .milliseconds(400))
+        let shownBeforeClick = await pollUntil { store.presetPreview != nil }
+        #expect(shownBeforeClick)
         store.apply(preset)
         #expect(store.presetPreview == nil)
         #expect(store.selectedAdjustments.contrast == 0.5)

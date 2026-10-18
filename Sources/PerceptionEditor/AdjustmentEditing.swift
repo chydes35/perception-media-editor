@@ -5,7 +5,9 @@ import SwiftUI
 /// selected clip's adjustments instead.
 @MainActor
 struct AdjustmentEditing {
-    var current: PhotoAdjustments
+    /// Reads the target's adjustments live, so a value built once never goes stale.
+    var read: () -> PhotoAdjustments
+    var current: PhotoAdjustments { read() }
     var update: (@MainActor (inout PhotoAdjustments) -> Void) -> Void
     /// Bracket a drag so it records one undo step. Video clip edits have no undo history, so they do nothing.
     var beginEdit: @MainActor () -> Void = {}
@@ -54,7 +56,7 @@ extension EditorStore {
     /// The selected timeline clip's adjustments.
     var videoAdjustmentEditing: AdjustmentEditing {
         AdjustmentEditing(
-            current: selectedVideoAdjustments,
+            read: { [self] in selectedVideoAdjustments },
             update: { [self] change in updateSelectedVideoAdjustments(change) },
             isAvailable: selectedTimelineClipID != nil
         )
@@ -63,7 +65,7 @@ extension EditorStore {
     /// The selected photo's adjustments, used when the environment supplies nothing.
     var photoAdjustmentEditing: AdjustmentEditing {
         AdjustmentEditing(
-            current: selectedAdjustments,
+            read: { [self] in selectedAdjustments },
             update: { [self] change in updateAdjustments(change) },
             beginEdit: { [self] in beginAdjustmentEdit() },
             endEdit: { [self] in endAdjustmentEdit() },

@@ -57,4 +57,33 @@ struct AdjustmentEditingTests {
         #expect(store.selectedAdjustments.curves.isNeutral)
         #expect(store.selectedAdjustments.hsl == nil)
     }
+
+    @Test func aVideoEditingValueBuiltOnceSeesItsOwnEarlierEdits() {
+        let (store, _, clip) = makeStore()
+        let editing = store.videoAdjustmentEditing   // built once, like an injected environment value
+
+        var curve = editing.current.curves[.rgb] ?? .linear
+        let index = curve.addPoint(x: 0.5, y: curve.evaluate(0.5))
+        editing.setCurve(curve, channel: .rgb)
+        #expect(editing.current.curves[.rgb]?.points.count == 3, "current reads live, not a snapshot")
+
+        var moved = editing.current.curves[.rgb] ?? .linear
+        moved.movePoint(at: index ?? 1, to: CGPoint(x: 0.5, y: 0.8))
+        editing.setCurve(moved, channel: .rgb)
+
+        let stored = store.project.videoAdjustmentsByClipID[clip.id]?.curves[.rgb]
+        #expect(stored?.points.count == 3)
+        #expect(stored?.points.contains { abs($0.y - 0.8) < 1e-9 } == true)
+    }
+
+    @Test func aVideoEditLeavesPhotoUndoHistoryUntouched() {
+        let (store, _, _) = makeStore()
+        let before = (store.canUndoPhotoEdit, store.history.count)
+        store.videoAdjustmentEditing.beginEdit()
+        store.videoAdjustmentEditing.setCurve(.linear, channel: .rgb)
+        store.videoAdjustmentEditing.setHSL(0.2, band: .red, keyPath: \.hue)
+        store.videoAdjustmentEditing.endEdit()
+        #expect(store.canUndoPhotoEdit == before.0)
+        #expect(store.history.count == before.1)
+    }
 }

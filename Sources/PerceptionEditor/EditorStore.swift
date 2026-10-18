@@ -91,6 +91,8 @@ final class EditorStore: ObservableObject {
     /// Each photo's edit steps for this session, oldest first. Not saved in the project.
     @Published var history: [UUID: [HistoryEntry]] = [:]
     @Published var copiedSettings: CopiedSettings?
+    /// How strongly a preset is applied (0…1). Not saved with the project.
+    @Published var presetAmount = 1.0
     @Published var copySheetMode: CopySheetMode?
     @Published var isShowingSavePresetSheet = false
     /// A name for the next recorded edit, such as "Preset: Documentary Warm".

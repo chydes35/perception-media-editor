@@ -19,6 +19,17 @@ struct PresetPanel: View {
                     .foregroundStyle(.orange)
             }
 
+            HStack(spacing: 8) {
+                Text("Amount").font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                Slider(value: $store.presetAmount, in: 0 ... 1)
+                    .accessibilityLabel("Preset amount")
+                Text("\(Int((store.presetAmount * 100).rounded()))%")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .frame(width: 34, alignment: .trailing)
+            }
+            .help("How strongly a preset is applied. Pick a preset again to reapply it at a new amount.")
+
             ScrollView {
                 VStack(alignment: .leading, spacing: 10) {
                     ForEach(store.presetCategories, id: \.self) { category in

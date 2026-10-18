@@ -13,10 +13,12 @@ extension EditorStore {
     /// preset contains change; everything else about each photo is kept.
     func apply(_ preset: PhotoPreset, to ids: [UUID]? = nil) {
         let targets = ids ?? commandTargetIDs
-        guard applyToPhotos(targets, label: "Preset: \(preset.name)", { preset.apply(to: $0) }) > 0 else { return }
+        let amount = presetAmount
+        let suffix = amount < 1 ? " (\(Int((amount * 100).rounded()))%)" : ""
+        guard applyToPhotos(targets, label: "Preset: \(preset.name)\(suffix)", { preset.apply(to: $0, amount: amount) }) > 0 else { return }
         statusMessage = targets.count == 1
-            ? "Applied \(preset.name)"
-            : "Applied \(preset.name) to \(targets.count) photos"
+            ? "Applied \(preset.name)\(suffix)"
+            : "Applied \(preset.name)\(suffix) to \(targets.count) photos"
     }
 
     /// Changes several photos as a single undo step. Returns how many photos changed.

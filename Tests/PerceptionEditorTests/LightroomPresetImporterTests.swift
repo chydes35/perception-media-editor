@@ -84,3 +84,31 @@ extension LightroomPresetImporterTests {
         #expect(preset.adjustments.contrast == -0.075)
     }
 }
+
+struct PresetAmountTests {
+    private func preset() -> PhotoPreset {
+        var a = PhotoAdjustments(exposure: 1, contrast: 0.4)
+        a.curves[.rgb] = ToneCurve(points: [CurvePoint(x: 0, y: 0), CurvePoint(x: 0.5, y: 0.4), CurvePoint(x: 1, y: 1)])
+        a.hsl = HSLAdjustments(orange: HSLBandAdjustment(hue: 0.2, saturation: 0, luminance: 0))
+        return PhotoPreset(name: "P", category: "T", adjustments: a, groups: [.tone, .toneCurve, .hsl])
+    }
+
+    @Test func fullAmountMatchesPlainApply() {
+        let target = PhotoAdjustments(exposure: -0.5)
+        #expect(preset().apply(to: target, amount: 1) == preset().apply(to: target))
+    }
+
+    @Test func zeroAmountChangesNothing() {
+        let target = PhotoAdjustments(exposure: -0.5)
+        #expect(preset().apply(to: target, amount: 0) == target)
+    }
+
+    @Test func halfAmountMovesHalfway() throws {
+        let result = preset().apply(to: PhotoAdjustments(), amount: 0.5)
+        #expect(result.exposure == 0.5)
+        #expect(result.contrast == 0.2)
+        #expect(abs((result.hsl?.orange.hue ?? 0) - 0.1) < 1e-9)
+        let curve = try #require(result.curves.rgb)
+        #expect(abs(curve.evaluate(0.5) - 0.45) < 1e-9)
+    }
+}

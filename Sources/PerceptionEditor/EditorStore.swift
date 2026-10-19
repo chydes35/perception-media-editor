@@ -733,6 +733,9 @@ final class EditorStore: ObservableObject {
     }
 
     /// The Library sidebar section each category's Import step opens on.
+    /// The store the app launches with. See `PerceptionEditorApp.store`.
+    static func launchInstance() -> EditorStore { EditorStore() }
+
     private static func importSection(for category: EditorCategory) -> String {
         category == .video ? "Video" : "Photos"
     }

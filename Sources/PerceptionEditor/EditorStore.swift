@@ -1884,14 +1884,18 @@ final class EditorStore: ObservableObject {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(100))
                 guard let self, let player, self.videoPlayer === player else { return }
-                self.isVideoPlaying = player.timeControlStatus == .playing
+                // @Published fires on every assignment, even of an equal value, and each
+                // fire re-evaluates every view on the store. Write only real changes so a
+                // paused viewer stays idle.
+                let playing = player.timeControlStatus == .playing
+                if self.isVideoPlaying != playing { self.isVideoPlaying = playing }
                 guard self.isTimelinePlayback else { continue }
                 let seconds = player.currentTime().seconds
                 guard seconds.isFinite else { continue }
-                self.timelinePlaybackPositionSeconds = min(
-                    max(0, seconds),
-                    self.timelinePlaybackDurationSeconds
-                )
+                let position = min(max(0, seconds), self.timelinePlaybackDurationSeconds)
+                if self.timelinePlaybackPositionSeconds != position {
+                    self.timelinePlaybackPositionSeconds = position
+                }
                 self.synchronizeTimelineSelection(at: seconds)
             }
         }

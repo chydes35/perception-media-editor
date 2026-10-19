@@ -129,6 +129,31 @@ struct VideoProxyWorkflowTests {
         #expect(emissions <= 10, "Got \(emissions) emissions")
     }
 
+    @Test func pausedViewerDoesNotRepublishEveryMonitorTick() async throws {
+        let temp = try TempDirectory()
+        let store = try makeStore(temp)
+        let movie = try await writeTestMovie(to: temp.url.appendingPathComponent("A.MOV"), frames: 48, width: 160, height: 90)
+        await store.importURLs([movie]).value
+        let asset = try #require(store.project.media.first { $0.url == movie })
+        _ = try await waitForProxy(store.proxyStore, asset.id)
+
+        for timeline in [false, true] {
+            if timeline {
+                store.addToTimeline(asset)
+                try await waitUntil { store.isTimelinePlayback && store.timelinePlaybackDurationSeconds > 0 }
+            } else {
+                store.selectVideo(asset)
+                try await waitUntil { store.videoPlayer?.currentItem != nil && !store.isTimelinePlayback }
+            }
+            try await Task.sleep(for: .milliseconds(500)) // let the build and seek settle
+            var emissions = 0
+            let cancellable = store.objectWillChange.sink { emissions += 1 }
+            try await Task.sleep(for: .milliseconds(700)) // ~7 monitor ticks
+            cancellable.cancel()
+            #expect(emissions == 0, "\(timeline ? "Timeline" : "Source") viewer published \(emissions) times while paused")
+        }
+    }
+
     @Test func backgroundProxyNeverSwitchesViewerToTimelineMode() async throws {
         let temp = try TempDirectory()
         let store = try makeStore(temp)

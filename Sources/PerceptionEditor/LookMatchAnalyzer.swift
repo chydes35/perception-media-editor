@@ -289,8 +289,10 @@ final class LookMatchAnalyzer {
         var proposal = hero.photo.adjustments.look(keepingGeometryOf: target.adjustments)
         let goal = hero.measurement
 
-        // White balance.
-        if let heroInfo = hero.rawInfo, let targetInfo = survey?.rawInfo {
+        // White balance. A white balance the photographer set on the target stays, as
+        // `look(keepingGeometryOf:)` already kept it; otherwise carry the hero's offset.
+        if !target.adjustments.raw.hasWhiteBalance,
+           let heroInfo = hero.rawInfo, let targetInfo = survey?.rawInfo {
             let carried = Self.carriedWhiteBalance(hero: hero.photo.adjustments.raw,
                                                    heroAsShot: heroInfo, targetAsShot: targetInfo)
             proposal.raw.temperature = carried.0

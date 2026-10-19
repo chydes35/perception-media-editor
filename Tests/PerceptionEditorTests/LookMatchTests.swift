@@ -400,6 +400,32 @@ struct LookMatchAnalyzerTests {
         await #expect(throws: CancellationError.self) { try await task.value }
     }
 
+    /// Found on the 2026-10-18 shoot: a photo whose only edit was its white balance got a
+    /// proposal that reset it to as-shot. White balance belongs to the photo, so it stays.
+    @Test(.enabled(if: RawSample.isAvailable))
+    func aTargetsOwnRawWhiteBalanceIsKept() throws {
+        let directory = try #require(RawSample.url).deletingLastPathComponent()
+        let files = try FileManager.default.contentsOfDirectory(atPath: directory.path)
+            .filter { $0.uppercased().hasSuffix(".RW2") }.sorted().prefix(2)
+            .map { directory.appendingPathComponent($0) }
+        try #require(files.count == 2)
+        var look = LookMatchFixture.heroLook
+        look.raw.temperature = 4600
+        look.raw.tint = 6
+        var ownWhiteBalance = PhotoAdjustments.neutral
+        ownWhiteBalance.raw.temperature = 5127
+        ownWhiteBalance.raw.tint = -3
+        let hero = LookMatchPhoto(id: UUID(), url: files[0], adjustments: look)
+        let target = LookMatchPhoto(id: UUID(), url: files[1], adjustments: ownWhiteBalance)
+
+        let result = try LookMatchAnalyzer().analyze(LookMatchRequest(
+            photos: [hero, target], selectedID: hero.id, thresholds: LookMatchFixture.oneScene))
+        let proposal = try #require(result.scenes.first?.proposals.first)
+        #expect(proposal.adjustments.raw.temperature == 5127)
+        #expect(proposal.adjustments.raw.tint == -3)
+        #expect(proposal.adjustments.vibrance == look.vibrance)
+    }
+
     @Test(.enabled(if: RawSample.isAvailable))
     func rawTargetsGetTheHerosWhiteBalanceOffsetFromTheirOwnAsShot() throws {
         let directory = try #require(RawSample.url).deletingLastPathComponent()

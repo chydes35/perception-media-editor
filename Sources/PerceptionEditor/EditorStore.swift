@@ -78,6 +78,16 @@ final class EditorStore: ObservableObject {
     @Published var isAnalyzingAuto = false
     var autoRequestID = UUID()
     let autoAnalyzer = AutoAdjustmentService()
+    @Published var isRunningLookMatch = false
+    /// Photos analyzed and total analysis steps for the running Look Match.
+    @Published var lookMatchProgress: (done: Int, total: Int) = (0, 0)
+    var lookMatchRequestID = UUID()
+    var lookMatchTask: Task<Void, Never>?
+    /// The analyzed adjustments of the latest Look Match report, to detect edits made since.
+    var lookMatchBaseline: (reportID: UUID, adjustments: [UUID: PhotoAdjustments])?
+    var lookMatchThresholds = LookMatchThresholds.default
+    let lookMatchService = LookMatchService()
+    let lookMatchAnalyzer: (@Sendable (LookMatchRequest) async throws -> LookMatchResult)?
     @Published var brushSize = 0.06
     @Published var brushFeather = 0.5
     @Published var brushErasing = false
@@ -271,6 +281,7 @@ final class EditorStore: ObservableObject {
         ingestScanner: @escaping @Sendable (URL) -> [SourceFile] = { IngestService.scan($0) },
         autoAdjustmentAnalyzer: (@Sendable (URL, PhotoAdjustments) async throws -> AutoAdjustmentSuggestion)? = nil,
         batchPhotoExporter: BatchPhotoExporter? = nil,
+        lookMatchAnalyzer: (@Sendable (LookMatchRequest) async throws -> LookMatchResult)? = nil,
         previewRenderOperation: (@Sendable (URL, PhotoAdjustments, UUID?, Bool) async
             -> (RenderedImage?, PhotoPreviewResult?))? = nil,
         proxyStore: ProxyStore = ProxyStore(),
@@ -288,6 +299,7 @@ final class EditorStore: ObservableObject {
         usesProxiesForPlayback = proxyDefaults.object(forKey: Self.useProxiesKey) as? Bool ?? true
         self.ingestScanner = ingestScanner
         self.autoAdjustmentAnalyzer = autoAdjustmentAnalyzer
+        self.lookMatchAnalyzer = lookMatchAnalyzer
         self.batchPhotoExporter = batchPhotoExporter
         self.previewRenderOperation = previewRenderOperation
         userPresetRepository = presetRepository
@@ -587,6 +599,10 @@ final class EditorStore: ObservableObject {
 
     func runAgent(_ kind: AgentKind) {
         selectedAgentKind = kind
+        if kind == .lookMatching {
+            startLookMatch()
+            return
+        }
         statusMessage = "Running \(kind.rawValue)…"
         latestAgentReport = AgentEngine.run(
             kind,
@@ -598,6 +614,10 @@ final class EditorStore: ObservableObject {
 
     func applyLatestAgentChanges() {
         guard let report = latestAgentReport, !report.proposedChanges.isEmpty else { return }
+        if report.proposedChanges.contains(where: { $0.kind == .matchLook }) {
+            applyLookMatchChanges(report)
+            return
+        }
 
         let before = project.adjustmentsByAssetID
         var applied = 0
@@ -1173,6 +1193,8 @@ final class EditorStore: ObservableObject {
         previewTask?.cancel()
         isRenderingPreview = false
         cancelAutoAdjustment()
+        cancelLookMatch()
+        discardLookMatch()
         endMaskEditing()
         endRetouchEditing()
         cancelWhiteBalancePicking()

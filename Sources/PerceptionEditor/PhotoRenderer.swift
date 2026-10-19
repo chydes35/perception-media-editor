@@ -109,12 +109,7 @@ enum PhotoSourceLoader {
         }
 
         // Temperature and tint are coupled, so set both from the as-shot values when only one is given.
-        if settings.hasWhiteBalance {
-            let temperature = settings.temperature ?? Double(filter.neutralTemperature)
-            let tint = settings.tint ?? Double(filter.neutralTint)
-            filter.neutralTemperature = Float(min(50000, max(2000, temperature)))
-            filter.neutralTint = Float(min(150, max(-150, tint)))
-        }
+        applyWhiteBalance(settings, to: filter)
         if filter.isLuminanceNoiseReductionSupported, let value = settings.luminanceNoiseReduction {
             filter.luminanceNoiseReductionAmount = Float(min(1, max(0, value)))
         }
@@ -131,6 +126,16 @@ enum PhotoSourceLoader {
             filter.isLensCorrectionEnabled = enabled
         }
         return filter
+    }
+
+    /// Sets temperature and tint on `filter`. Both come from the as-shot values when only one is given,
+    /// so `filter` must not have had a white balance applied yet unless `settings` carries both.
+    static func applyWhiteBalance(_ settings: RawSettings, to filter: CIRAWFilter) {
+        guard settings.hasWhiteBalance else { return }
+        let temperature = settings.temperature ?? Double(filter.neutralTemperature)
+        let tint = settings.tint ?? Double(filter.neutralTint)
+        filter.neutralTemperature = Float(min(50000, max(2000, temperature)))
+        filter.neutralTint = Float(min(150, max(-150, tint)))
     }
 
     /// As-shot white balance and the RAW engine's defaults for a file.
@@ -181,8 +186,19 @@ enum PhotoSourceLoader {
     /// A RAW photo with its own RAW settings (white balance, noise reduction) is decoded instead,
     /// so its thumbnail reflects the edit.
     static func loadThumbnail(_ url: URL, maxDimension: CGFloat, raw: RawSettings = RawSettings()) -> CIImage? {
+        loadThumbnailSource(url, maxDimension: maxDimension, raw: raw)?.image
+    }
+
+    /// Whether a full decode of this file keeps values above white (RAW decodes do), so its
+    /// renders need `HighlightRolloff`.
+    static func hasHeadroom(_ url: URL) -> Bool { isRAW(url) }
+
+    /// `loadThumbnail`, also saying whether the image is a RAW decode with headroom (true) or a
+    /// display-referred image such as the camera's embedded JPEG (false).
+    static func loadThumbnailSource(_ url: URL, maxDimension: CGFloat,
+                                    raw: RawSettings = RawSettings()) -> (image: CIImage, hasHeadroom: Bool)? {
         if isRAW(url), !raw.isDefault {
-            return load(url, maxDimension: maxDimension, raw: raw)
+            return load(url, maxDimension: maxDimension, raw: raw).map { ($0, true) }
         }
         if isRAW(url),
            let source = CGImageSourceCreateWithURL(url as CFURL, nil),
@@ -192,9 +208,9 @@ enum PhotoSourceLoader {
                kCGImageSourceThumbnailMaxPixelSize: Int(maxDimension)
            ] as CFDictionary),
            CGFloat(max(embedded.width, embedded.height)) >= maxDimension / 2 {
-            return CIImage(cgImage: embedded)
+            return (CIImage(cgImage: embedded), false)
         }
-        return load(url, maxDimension: maxDimension, raw: raw)
+        return load(url, maxDimension: maxDimension, raw: raw).map { ($0, hasHeadroom(url)) }
     }
 }
 
@@ -228,6 +244,19 @@ actor PhotoRenderer {
     private var fullResolution: WorkingEntry?
     private var rawInfoCache: [String: RawInfo?] = [:]
 
+    /// One RAW filter kept for the current photo so white-balance changes re-render from the
+    /// engine's cached demosaic (about 90 ms) instead of building and decoding a new filter (330-700 ms).
+    private struct HeldRawFilter {
+        var url: String
+        /// Every RAW setting except white balance; the filter is only reused while these match.
+        var otherSettingsKey: String
+        var filter: CIRAWFilter
+        /// The camera's white balance, restored when an edit clears temperature or tint.
+        var asShotTemperature: Float
+        var asShotTint: Float
+    }
+    private var heldRawFilter: HeldRawFilter?
+
     /// The context budget controls temporary render allocations, not the entire process.
     /// Half-float working precision is retained for RAW highlight recovery.
     init(workingCacheLimit: Int = 4, memoryTargetMB: Int? = 256) {
@@ -259,7 +288,8 @@ actor PhotoRenderer {
                 PhotoPreviewDiagnostics.record("renderer preview source unavailable")
                 return nil
             }
-            let edited = MediaColorRenderer.render(source, adjustments: adjustments, includesGeometry: true)
+            let edited = MediaColorRenderer.render(source, adjustments: adjustments, includesGeometry: true,
+                                                   highlightRolloff: PhotoSourceLoader.hasHeadroom(url))
             guard let image = bitmap(edited, maxDimension: Self.previewDimension) else {
                 PhotoPreviewDiagnostics.record("renderer preview bitmap unavailable")
                 return nil
@@ -301,7 +331,9 @@ actor PhotoRenderer {
     func original(url: URL) -> RenderedImage? {
         return autoreleasepool {
             guard let source = workingSource(for: url, raw: RawSettings()) else { return nil }
-            return bitmap(source, maxDimension: Self.previewDimension)
+            let shown = PhotoSourceLoader.hasHeadroom(url)
+                ? HighlightRolloff.apply(source, white: HighlightRolloff.baseWhite) : source
+            return bitmap(shown, maxDimension: Self.previewDimension)
         }
     }
 
@@ -325,14 +357,15 @@ actor PhotoRenderer {
     /// Thumbnails decode at thumbnail size and are never kept in the working cache.
     func thumbnail(url: URL, adjustments: PhotoAdjustments) -> RenderedImage? {
         return autoreleasepool {
-            guard let source = PhotoSourceLoader.loadThumbnail(
+            guard let (source, hasHeadroom) = PhotoSourceLoader.loadThumbnailSource(
                 url,
                 maxDimension: Self.thumbnailDimension,
                 raw: adjustments.raw
             ) else {
                 return nil
             }
-            let edited = MediaColorRenderer.render(source, adjustments: adjustments, includesGeometry: true)
+            let edited = MediaColorRenderer.render(source, adjustments: adjustments, includesGeometry: true,
+                                                   highlightRolloff: hasHeadroom)
             return bitmap(edited, maxDimension: Self.thumbnailDimension)
         }
     }
@@ -355,7 +388,8 @@ actor PhotoRenderer {
             guard let source = PhotoSourceLoader.load(url, maxDimension: nil, raw: adjustments.raw) else {
                 throw PhotoRenderError.unreadableSource(url.lastPathComponent)
             }
-            var image = MediaColorRenderer.render(source, adjustments: adjustments, includesGeometry: true)
+            var image = MediaColorRenderer.render(source, adjustments: adjustments, includesGeometry: true,
+                                                  highlightRolloff: PhotoSourceLoader.hasHeadroom(url))
             if let longEdgePixels, longEdgePixels > 0 {
                 let currentLongEdge = max(image.extent.width, image.extent.height)
                 if currentLongEdge > CGFloat(longEdgePixels) {
@@ -401,7 +435,8 @@ actor PhotoRenderer {
                   let source = fullResolutionSource(for: url, raw: adjustments.raw)
             else { return nil }
 
-            let finished = MediaColorRenderer.render(source, adjustments: adjustments, includesGeometry: true)
+            let finished = MediaColorRenderer.render(source, adjustments: adjustments, includesGeometry: true,
+                                                     highlightRolloff: PhotoSourceLoader.hasHeadroom(url))
             let extent = finished.extent.integral
             guard extent.width >= 1, extent.height >= 1 else { return nil }
 
@@ -442,6 +477,7 @@ actor PhotoRenderer {
     func releaseMemoryUnderPressure() {
         // Preserve only the most recent source(s), so the visible photo stays responsive.
         if workingSources.count > 2 { workingSources.removeFirst(workingSources.count - 2) }
+        heldRawFilter = nil
         rawInfoCache.removeAll()
         clearRenderCaches()
     }
@@ -471,12 +507,14 @@ actor PhotoRenderer {
     func evict(url: URL) {
         let prefix = url.path + "|"
         workingSources.removeAll { $0.url.hasPrefix(prefix) }
+        if heldRawFilter?.url.hasPrefix(prefix) == true { heldRawFilter = nil }
         rawInfoCache = rawInfoCache.filter { !$0.key.hasPrefix(prefix) }
         if fullResolution?.url.hasPrefix(prefix) == true { fullResolution = nil }
     }
 
     func evictAll() {
         workingSources.removeAll()
+        heldRawFilter = nil
         fullResolution = nil
         rawInfoCache.removeAll()
         clearRenderCaches()
@@ -495,10 +533,50 @@ actor PhotoRenderer {
         PhotoSourceLoader.isRAW(url) ? raw.cacheKey : RawSettings().cacheKey
     }
 
+    /// Decodes `url` at working size. A RAW photo keeps its filter from its first decode, so the
+    /// first white balance edit and each one after it only mutate that filter; any other RAW change
+    /// starts a new filter.
+    private func decode(_ url: URL, key: String, raw: RawSettings) -> CIImage? {
+        guard PhotoSourceLoader.isRAW(url) else {
+            return PhotoSourceLoader.load(url, maxDimension: Self.workingDimension, raw: raw)
+        }
+        let otherKey = raw.withoutWhiteBalance.cacheKey
+        if var held = heldRawFilter, held.url == key, held.otherSettingsKey == otherKey {
+            Self.setWhiteBalance(raw, on: &held)
+            heldRawFilter = held
+            return held.filter.outputImage
+        }
+        heldRawFilter = nil
+        guard let filter = PhotoSourceLoader.makeRawFilter(url, settings: raw.withoutWhiteBalance, maxDimension: Self.workingDimension)
+        else { return nil }
+        var held = HeldRawFilter(
+            url: key, otherSettingsKey: otherKey, filter: filter,
+            asShotTemperature: filter.neutralTemperature, asShotTint: filter.neutralTint)
+        Self.setWhiteBalance(raw, on: &held)
+        heldRawFilter = held
+        return filter.outputImage
+    }
+
+    /// A small render of the held-filter decode, so tests can compare it without moving a `CIImage` out of the actor.
+    func heldDecodeThumbnail(url: URL, raw: RawSettings, width: CGFloat) -> CGImage? {
+        guard let image = decode(url, key: cacheKey(for: url), raw: raw), image.extent.width > 0 else { return nil }
+        let scaled = image.transformed(by: CGAffineTransform(scaleX: width / image.extent.width, y: width / image.extent.width))
+        return context.createCGImage(scaled, from: scaled.extent, format: .RGBA8, colorSpace: displayColorSpace)
+    }
+
+    /// Both values are set every time, so a temperature or tint that goes back to unset returns to as-shot.
+    private static func setWhiteBalance(_ raw: RawSettings, on held: inout HeldRawFilter) {
+        let temperature = raw.temperature.map { Float(min(50000, max(2000, $0))) } ?? held.asShotTemperature
+        let tint = raw.tint.map { Float(min(150, max(-150, $0))) } ?? held.asShotTint
+        if held.filter.neutralTemperature != temperature { held.filter.neutralTemperature = temperature }
+        if held.filter.neutralTint != tint { held.filter.neutralTint = tint }
+    }
+
     private func workingSource(for url: URL, raw: RawSettings) -> CIImage? {
         let key = cacheKey(for: url)
         let variant = rawKey(for: url, raw: raw)
         let defaultVariant = RawSettings().cacheKey
+        if let held = heldRawFilter, held.url != key { heldRawFilter = nil }
 
         if let index = workingSources.firstIndex(where: { $0.url == key && $0.rawKey == variant }) {
             let entry = workingSources.remove(at: index)
@@ -506,7 +584,7 @@ actor PhotoRenderer {
             return entry.image
         }
 
-        guard let decoded = PhotoSourceLoader.load(url, maxDimension: Self.workingDimension, raw: raw),
+        guard let decoded = decode(url, key: key, raw: raw),
               let image = materialize(decoded)
         else { return nil }
 

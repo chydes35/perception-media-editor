@@ -18,7 +18,8 @@ private func clipStatistics(_ image: CGImage) -> (median: Double, clipped: Doubl
     var clipped = 0
     for index in stride(from: 0, to: pixels.count, by: 4) {
         let r = pixels[index], g = pixels[index + 1], b = pixels[index + 2]
-        lumas.append((0.2126 * Double(r) + 0.7152 * Double(g) + 0.0722 * Double(b)) / 255)
+        let weighted: Double = 0.2126 * Double(r) + 0.7152 * Double(g) + 0.0722 * Double(b)
+        lumas.append(weighted / 255)
         if max(r, g, b) >= 254 { clipped += 1 }
     }
     lumas.sort()
@@ -97,7 +98,10 @@ struct HighlightRolloffCurveTests {
                                                               includesGeometry: false, highlightRolloff: true))
         let skyDim = linearPixel(MediaColorRenderer.render(solid(0.45, 0.63, 0.82), adjustments: .neutral,
                                                            includesGeometry: false, highlightRolloff: true))
-        func luma(_ p: (Float, Float, Float)) -> Float { 0.2126 * p.0 + 0.7152 * p.1 + 0.0722 * p.2 }
+        func luma(_ p: (Float, Float, Float)) -> Float {
+            let weighted: Float = 0.2126 * p.0 + 0.7152 * p.1 + 0.0722 * p.2
+            return weighted
+        }
         #expect(luma(skyBright) > luma(skyDim))
         #expect(max(skyBright.0, skyBright.1, skyBright.2) <= 1.0001)
         // A bright warm highlight, well above white in linear light, stays in range, keeps its
@@ -180,9 +184,16 @@ private func darkerThanCamera(_ image: CGImage, camera: CGImage, x: ClosedRange<
                                 space: CGColorSpace(name: CGColorSpace.sRGB)!,
                                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
         context.draw(source, in: CGRect(x: 0, y: 0, width: width, height: height))
-        return stride(from: 0, to: pixels.count, by: 4).map {
-            (0.2126 * Double(pixels[$0]) + 0.7152 * Double(pixels[$0 + 1]) + 0.0722 * Double(pixels[$0 + 2])) / 255
+        var result: [Double] = []
+        result.reserveCapacity(width * height)
+        for index in stride(from: 0, to: pixels.count, by: 4) {
+            let r = Double(pixels[index])
+            let g = Double(pixels[index + 1])
+            let b = Double(pixels[index + 2])
+            let weighted: Double = 0.2126 * r + 0.7152 * g + 0.0722 * b
+            result.append(weighted / 255)
         }
+        return result
     }
     let width = 512, height = max(1, Int(Double(image.height) / Double(image.width) * 512))
     let ours = lumas(image, width, height), theirs = lumas(camera, width, height)
@@ -232,7 +243,8 @@ private func colorStatistics(_ image: CGImage) -> (meanSaturation: Double, brigh
         let high = max(r, g, b), low = min(r, g, b)
         let s = high > 0 ? (high - low) / high : 0
         saturation += s
-        if 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.85 && s > 0.12 { tinted += 1 }
+        let luminance: Double = 0.2126 * r + 0.7152 * g + 0.0722 * b
+        if luminance > 0.85 && s > 0.12 { tinted += 1 }
     }
     let count = Double(pixels.count / 4)
     return (saturation / count, Double(tinted) / count)

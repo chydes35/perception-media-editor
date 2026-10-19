@@ -274,7 +274,8 @@ final class LookMatchAnalyzer {
         if rawInfo == nil, let neutral = ImageStatistics.neutralReference(statistics.pixels(source)) {
             neutralFit = statistics.fitWhiteBalance(neutral)
         }
-        let rendered = MediaColorRenderer.render(source, adjustments: photo.adjustments, includesGeometry: true)
+        let rendered = MediaColorRenderer.render(source, adjustments: photo.adjustments, includesGeometry: true,
+                                                 highlightRolloff: PhotoSourceLoader.hasHeadroom(photo.url))
         return Hero(photo: photo, rawInfo: rawInfo, measurement: try measure(rendered), neutralFit: neutralFit)
     }
 
@@ -318,7 +319,8 @@ final class LookMatchAnalyzer {
         let base = hero.photo.adjustments
         let exposureRange = (base.exposure - thresholds.maximumExposureOffset) ... (base.exposure + thresholds.maximumExposureOffset)
         func rendered(_ adjustments: PhotoAdjustments) throws -> Measurement {
-            try measure(MediaColorRenderer.render(source, adjustments: adjustments, includesGeometry: true))
+            try measure(MediaColorRenderer.render(source, adjustments: adjustments, includesGeometry: true,
+                                                  highlightRolloff: PhotoSourceLoader.hasHeadroom(target.url)))
         }
         var current = try rendered(proposal)
         for _ in 0 ..< 3 {

@@ -7,7 +7,8 @@ enum MediaColorRenderer {
     static func render(
         _ source: CIImage,
         adjustments: PhotoAdjustments,
-        includesGeometry: Bool
+        includesGeometry: Bool,
+        highlightRolloff: Bool = false
     ) -> CIImage {
         let sourceExtent = source.extent
         let repaired = includesGeometry ? RetouchRenderer.apply(source, strokes: adjustments.retouches) : source
@@ -24,11 +25,19 @@ enum MediaColorRenderer {
         controls.saturation = Float(max(0, 1 + adjustments.saturation))
         image = controls.outputImage ?? image
 
+        // On RAW decodes the Highlights slider drives the shoulder below: Core Image's highlight
+        // adjustment amplifies values above white (up to 58× on a sunny S5 frame at −1).
         let highlightShadow = CIFilter.highlightShadowAdjust()
         highlightShadow.inputImage = image
-        highlightShadow.highlightAmount = Float(1 + adjustments.highlights)
+        highlightShadow.highlightAmount = Float(highlightRolloff ? 1 : 1 + adjustments.highlights)
         highlightShadow.shadowAmount = Float(adjustments.shadows)
         image = highlightShadow.outputImage ?? image
+
+        // RAW photos carry highlights above white. Bring them into range here, before curves,
+        // HSL and LUTs, which expect 0–1. Other photos and video have no such headroom.
+        if highlightRolloff {
+            image = HighlightRolloff.apply(image, highlights: adjustments.highlights)
+        }
 
         // Curves and HSL work on gamma-encoded color, where equal steps look equal. Both are
         // skipped when untouched so highlights above white keep their headroom.

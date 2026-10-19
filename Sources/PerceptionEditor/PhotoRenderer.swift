@@ -186,8 +186,19 @@ enum PhotoSourceLoader {
     /// A RAW photo with its own RAW settings (white balance, noise reduction) is decoded instead,
     /// so its thumbnail reflects the edit.
     static func loadThumbnail(_ url: URL, maxDimension: CGFloat, raw: RawSettings = RawSettings()) -> CIImage? {
+        loadThumbnailSource(url, maxDimension: maxDimension, raw: raw)?.image
+    }
+
+    /// Whether a full decode of this file keeps values above white (RAW decodes do), so its
+    /// renders need `HighlightRolloff`.
+    static func hasHeadroom(_ url: URL) -> Bool { isRAW(url) }
+
+    /// `loadThumbnail`, also saying whether the image is a RAW decode with headroom (true) or a
+    /// display-referred image such as the camera's embedded JPEG (false).
+    static func loadThumbnailSource(_ url: URL, maxDimension: CGFloat,
+                                    raw: RawSettings = RawSettings()) -> (image: CIImage, hasHeadroom: Bool)? {
         if isRAW(url), !raw.isDefault {
-            return load(url, maxDimension: maxDimension, raw: raw)
+            return load(url, maxDimension: maxDimension, raw: raw).map { ($0, true) }
         }
         if isRAW(url),
            let source = CGImageSourceCreateWithURL(url as CFURL, nil),
@@ -197,9 +208,9 @@ enum PhotoSourceLoader {
                kCGImageSourceThumbnailMaxPixelSize: Int(maxDimension)
            ] as CFDictionary),
            CGFloat(max(embedded.width, embedded.height)) >= maxDimension / 2 {
-            return CIImage(cgImage: embedded)
+            return (CIImage(cgImage: embedded), false)
         }
-        return load(url, maxDimension: maxDimension, raw: raw)
+        return load(url, maxDimension: maxDimension, raw: raw).map { ($0, hasHeadroom(url)) }
     }
 }
 
@@ -277,7 +288,8 @@ actor PhotoRenderer {
                 PhotoPreviewDiagnostics.record("renderer preview source unavailable")
                 return nil
             }
-            let edited = MediaColorRenderer.render(source, adjustments: adjustments, includesGeometry: true)
+            let edited = MediaColorRenderer.render(source, adjustments: adjustments, includesGeometry: true,
+                                                   highlightRolloff: PhotoSourceLoader.hasHeadroom(url))
             guard let image = bitmap(edited, maxDimension: Self.previewDimension) else {
                 PhotoPreviewDiagnostics.record("renderer preview bitmap unavailable")
                 return nil
@@ -319,7 +331,9 @@ actor PhotoRenderer {
     func original(url: URL) -> RenderedImage? {
         return autoreleasepool {
             guard let source = workingSource(for: url, raw: RawSettings()) else { return nil }
-            return bitmap(source, maxDimension: Self.previewDimension)
+            let shown = PhotoSourceLoader.hasHeadroom(url)
+                ? HighlightRolloff.apply(source, white: HighlightRolloff.baseWhite) : source
+            return bitmap(shown, maxDimension: Self.previewDimension)
         }
     }
 
@@ -343,14 +357,15 @@ actor PhotoRenderer {
     /// Thumbnails decode at thumbnail size and are never kept in the working cache.
     func thumbnail(url: URL, adjustments: PhotoAdjustments) -> RenderedImage? {
         return autoreleasepool {
-            guard let source = PhotoSourceLoader.loadThumbnail(
+            guard let (source, hasHeadroom) = PhotoSourceLoader.loadThumbnailSource(
                 url,
                 maxDimension: Self.thumbnailDimension,
                 raw: adjustments.raw
             ) else {
                 return nil
             }
-            let edited = MediaColorRenderer.render(source, adjustments: adjustments, includesGeometry: true)
+            let edited = MediaColorRenderer.render(source, adjustments: adjustments, includesGeometry: true,
+                                                   highlightRolloff: hasHeadroom)
             return bitmap(edited, maxDimension: Self.thumbnailDimension)
         }
     }
@@ -373,7 +388,8 @@ actor PhotoRenderer {
             guard let source = PhotoSourceLoader.load(url, maxDimension: nil, raw: adjustments.raw) else {
                 throw PhotoRenderError.unreadableSource(url.lastPathComponent)
             }
-            var image = MediaColorRenderer.render(source, adjustments: adjustments, includesGeometry: true)
+            var image = MediaColorRenderer.render(source, adjustments: adjustments, includesGeometry: true,
+                                                  highlightRolloff: PhotoSourceLoader.hasHeadroom(url))
             if let longEdgePixels, longEdgePixels > 0 {
                 let currentLongEdge = max(image.extent.width, image.extent.height)
                 if currentLongEdge > CGFloat(longEdgePixels) {
@@ -419,7 +435,8 @@ actor PhotoRenderer {
                   let source = fullResolutionSource(for: url, raw: adjustments.raw)
             else { return nil }
 
-            let finished = MediaColorRenderer.render(source, adjustments: adjustments, includesGeometry: true)
+            let finished = MediaColorRenderer.render(source, adjustments: adjustments, includesGeometry: true,
+                                                     highlightRolloff: PhotoSourceLoader.hasHeadroom(url))
             let extent = finished.extent.integral
             guard extent.width >= 1, extent.height >= 1 else { return nil }
 

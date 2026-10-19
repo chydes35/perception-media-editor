@@ -84,7 +84,7 @@ final class AutoAdjustmentAnalyzer {
         }
         // Tone follows the visible crop, without compounding existing global/local edits.
         let visible = MediaColorRenderer.finishedGeometry(source, current)
-        let tone = try fitTone(visible)
+        let tone = try fitTone(visible, highlightRolloff: PhotoSourceLoader.hasHeadroom(url))
         suggestion.basic.exposure = tone.exposure
         suggestion.basic.contrast = tone.contrast
         suggestion.basic.highlights = tone.highlights
@@ -126,8 +126,10 @@ final class AutoAdjustmentAnalyzer {
     private func fitWhiteBalance(_ reference: Pixel) -> (Double, Double) { statistics.fitWhiteBalance(reference) }
     private func colorCast(_ reference: Pixel) -> Double { ImageStatistics.colorCast(reference) }
 
-    private func fitTone(_ source: CIImage) throws -> PhotoAdjustments {
-        let input = pixels(source).map(\.luma).sorted()
+    /// `highlightRolloff` is true for RAW sources, so candidates are judged as they will be shown.
+    private func fitTone(_ source: CIImage, highlightRolloff: Bool = false) throws -> PhotoAdjustments {
+        let shown = highlightRolloff ? HighlightRolloff.apply(source, white: HighlightRolloff.baseWhite) : source
+        let input = pixels(shown).map(\.luma).sorted()
         guard input.count >= 16 else { throw AutoAdjustmentError.unreadable }
         let original = quantiles(input)
         let shift = clamp((0.48 - original[1]) * 0.65, -0.12, 0.12)
@@ -142,12 +144,13 @@ final class AutoAdjustmentAnalyzer {
         ]
         let scale = 64 / max(source.extent.width, source.extent.height)
         let small = source.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
-        let baseline = pixels(small)
+        let baseline = pixels(highlightRolloff ? HighlightRolloff.apply(small, white: HighlightRolloff.baseWhite) : small)
         let exposureRange: ClosedRange<Double> = original[1] < 0.35 ? 0.04 ... 1.4
             : original[1] > 0.65 ? -1.4 ... -0.04 : -1.4 ... 1.4
         func recentered(_ adjustments: PhotoAdjustments) -> PhotoAdjustments {
             var result = adjustments
-            let output = pixels(MediaColorRenderer.render(small, adjustments: result, includesGeometry: false))
+            let output = pixels(MediaColorRenderer.render(small, adjustments: result, includesGeometry: false,
+                                                          highlightRolloff: highlightRolloff))
                 .map(\.luma).sorted()
             guard !output.isEmpty else { return result }
             let current = output[output.count / 2]
@@ -156,7 +159,8 @@ final class AutoAdjustmentAnalyzer {
             return result
         }
         func loss(_ adjustments: PhotoAdjustments) -> Double {
-            let samples = pixels(MediaColorRenderer.render(small, adjustments: adjustments, includesGeometry: false))
+            let samples = pixels(MediaColorRenderer.render(small, adjustments: adjustments, includesGeometry: false,
+                                                           highlightRolloff: highlightRolloff))
             let values = samples.map(\.luma).sorted()
             guard !values.isEmpty else { return .infinity }
             let q = quantiles(values)

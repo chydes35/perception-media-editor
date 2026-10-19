@@ -13,7 +13,14 @@ enum AgentEngine {
         case .photoCulling:
             result = culling(project: project)
         case .lookMatching:
-            result = lookMatching(project: project, selectedAssetID: selectedAssetID)
+            // Image analysis runs in the background through EditorStore.startLookMatch().
+            if let preflight = lookMatchingPreflight(project: project) { return preflight }
+            result = (
+                "Look Matching analyzes the photos in the background. Run it from the Agents workspace.",
+                [],
+                [],
+                nil
+            )
         case .batchEditing:
             result = batchEditing(project: project, selectedAssetID: selectedAssetID)
         case .photoQuality:
@@ -96,47 +103,108 @@ enum AgentEngine {
         )
     }
 
-    private static func lookMatching(
+    static let lookMatchingLimitation = "Look Matching adapts global exposure, white balance and look settings per photo. It does not yet re-detect subject or sky masks, check skin tones, or review flagged photos with AI."
+
+    /// A report when Look Matching cannot help yet, or nil when analysis should run.
+    static func lookMatchingPreflight(project: EditorProject) -> AgentReport? {
+        let startedAt = Date.now
+        let photos = project.media.filter { $0.kind == .photo }
+        if photos.count < 2 {
+            return AgentReport(
+                kind: .lookMatching, startedAt: startedAt,
+                summary: "Look Matching needs at least two photos.",
+                findings: [AgentFinding(severity: .info, title: "Not enough photos",
+                                        detail: "Import a shoot, edit one hero photo per scene, then run Look Matching.")],
+                limitation: lookMatchingLimitation
+            )
+        }
+        guard photos.contains(where: { LookMatchScenes.lookGroupCount(project.adjustmentsByAssetID[$0.id]) > 0 }) else {
+            return AgentReport(
+                kind: .lookMatching, startedAt: startedAt,
+                summary: "Edit one hero photo in each scene before matching.",
+                findings: [AgentFinding(severity: .high, title: "No edited hero photo",
+                                        detail: "None of the \(photos.count) photos has a look edit to match.",
+                                        recommendation: "Edit one photo per lighting scene, then run Look Matching again.")],
+                limitation: lookMatchingLimitation
+            )
+        }
+        return nil
+    }
+
+    /// Turns analysis into a reviewable report. Flagged proposals start unselected.
+    static func lookMatchReport(
+        _ result: LookMatchResult,
         project: EditorProject,
-        selectedAssetID: UUID?
-    ) -> (String, [AgentFinding], [AgentChange], String?) {
-        guard let selectedAssetID,
-              let source = project.media.first(where: { $0.id == selectedAssetID && $0.kind == .photo })
-        else {
-            return (
-                "Select a reference photo before preparing a look match.",
-                [AgentFinding(severity: .high, title: "Reference photo required", detail: "The selected photo supplies the source adjustments.")],
-                [],
-                nil
-            )
+        thresholds: LookMatchThresholds,
+        startedAt: Date
+    ) -> AgentReport {
+        let names = Dictionary(project.media.map { ($0.id, $0.filename) }, uniquingKeysWith: { a, _ in a })
+        func name(_ id: UUID?) -> String { id.flatMap { names[$0] } ?? "an unknown photo" }
+        var findings: [AgentFinding] = []
+        var changes: [AgentChange] = []
+
+        for scene in result.scenes {
+            let range = scene.assetIDs.count == 1 ? name(scene.assetIDs.first)
+                : "\(name(scene.assetIDs.first)) – \(name(scene.assetIDs.last))"
+            if scene.heroID == nil {
+                findings.append(AgentFinding(
+                    severity: .medium,
+                    title: "Scene \(scene.index) needs a hero",
+                    detail: "\(scene.assetIDs.count) photo\(scene.assetIDs.count == 1 ? "" : "s") (\(range)) have no edited photo, so nothing was proposed. Suggested hero: \(name(scene.suggestedHeroID)).",
+                    recommendation: "Edit \(name(scene.suggestedHeroID)), then run Look Matching again.",
+                    assetID: scene.suggestedHeroID
+                ))
+            }
+            for id in scene.alreadyEdited {
+                findings.append(AgentFinding(
+                    severity: .info,
+                    title: "Already edited",
+                    detail: "\(name(id)) in scene \(scene.index) already has its own look and was left unchanged.",
+                    assetID: id
+                ))
+            }
+            for id in scene.unreadable {
+                findings.append(AgentFinding(
+                    severity: .high,
+                    title: "Could not analyze",
+                    detail: "\(name(id)) in scene \(scene.index) could not be read at analysis size.",
+                    recommendation: "Check that the original is available, then run Look Matching again.",
+                    assetID: id
+                ))
+            }
+            for proposal in scene.proposals {
+                changes.append(AgentChange(
+                    kind: .matchLook,
+                    sourceAssetID: proposal.heroID,
+                    targetAssetID: proposal.targetID,
+                    detail: "Match \(name(proposal.targetID)) to \(name(proposal.heroID)).",
+                    proposedAdjustments: proposal.adjustments,
+                    confidence: proposal.confidence,
+                    sceneIndex: scene.index,
+                    isSelected: !proposal.isFlagged
+                ))
+            }
         }
 
-        let siblingPhotos = project.media.filter {
-            $0.kind == .photo && $0.id != source.id &&
-                $0.url.deletingLastPathComponent() == source.url.deletingLastPathComponent()
+        let flagged = changes.filter { !$0.isSelected }.count
+        if flagged > 0 {
+            findings.append(AgentFinding(
+                severity: .low,
+                title: "\(flagged) low-confidence match\(flagged == 1 ? "" : "es")",
+                detail: "Below \(Int((thresholds.minimumConfidence * 100).rounded()))% confidence. These are flagged and left unselected.",
+                recommendation: "Compare them with the hero before selecting, or edit them by hand."
+            ))
         }
-        let targets = siblingPhotos.isEmpty
-            ? project.media.filter { $0.kind == .photo && $0.id != source.id }
-            : siblingPhotos
-        let changes = targets.map {
-            AgentChange(
-                kind: .copyPhotoAdjustments,
-                sourceAssetID: source.id,
-                targetAssetID: $0.id,
-                detail: "Copy the look from \(source.filename) to \($0.filename)."
-            )
-        }
-
-        return (
-            "Prepared a look-match proposal from \(source.filename) for \(changes.count) photo\(changes.count == 1 ? "" : "s").",
-            [AgentFinding(
-                severity: changes.isEmpty ? .info : .medium,
-                title: changes.isEmpty ? "No matching targets" : "Review proposed look match",
-                detail: changes.isEmpty ? "There are no other photos in the project." : "The proposal copies global adjustments only; composition and local edits remain untouched.",
-                recommendation: changes.isEmpty ? nil : "Preview the targets and apply only if lighting and camera conditions are comparable."
-            )],
-            changes,
-            "This first version copies the non-destructive global adjustment model. It does not yet match faces, lighting, masks, or camera profiles."
+        let heroes = result.scenes.filter { $0.heroID != nil }.count
+        let photoCount = result.scenes.reduce(0) { $0 + $1.assetIDs.count }
+        let sceneCount = result.scenes.count
+        return AgentReport(
+            kind: .lookMatching,
+            startedAt: startedAt,
+            summary: "Found \(sceneCount) scene\(sceneCount == 1 ? "" : "s") in \(photoCount) photo\(photoCount == 1 ? "" : "s") and prepared \(changes.count) proposal\(changes.count == 1 ? "" : "s") from \(heroes) hero\(heroes == 1 ? "" : "es")\(flagged > 0 ? " (\(flagged) flagged)" : "").",
+            findings: findings.sorted { $0.severity.sortOrder < $1.severity.sortOrder },
+            proposedChanges: changes,
+            limitation: lookMatchingLimitation
         )
     }
 

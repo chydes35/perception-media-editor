@@ -407,3 +407,249 @@ struct LookMatchAnalyzerTests {
         #expect(try files.map { try Data(contentsOf: $0) } == before)
     }
 }
+
+/// Holds a fake analysis until the test releases it.
+private actor AnalysisGate {
+    private var isOpen = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        if isOpen { return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func open() {
+        isOpen = true
+        waiters.forEach { $0.resume() }
+        waiters = []
+    }
+}
+
+@MainActor
+struct LookMatchStoreTests {
+    private struct Shoot {
+        var store: EditorStore
+        var hero: MediaAsset
+        var target: MediaAsset
+        var flagged: MediaAsset
+        var folder: TempDirectory
+    }
+
+    private static var heroLook: PhotoAdjustments {
+        var look = PhotoAdjustments.neutral
+        look.exposure = 0.3
+        look.vibrance = 0.2
+        return look
+    }
+
+    private static func proposed(exposure: Double) -> PhotoAdjustments {
+        var look = heroLook
+        look.exposure = exposure
+        return look
+    }
+
+    /// A store with a hero, a target and a third photo whose proposal is flagged. The injected
+    /// analysis waits for `gate` when one is given.
+    private func makeShoot(gate: AnalysisGate? = nil) throws -> Shoot {
+        let folder = try TempDirectory()
+        let assets = try ["hero.jpg", "target.jpg", "flagged.jpg"].map {
+            MediaAsset(url: try writeTestJPEG(to: folder.url.appendingPathComponent($0)), pixelWidth: 400, pixelHeight: 300)
+        }
+        let ids = assets.map(\.id)
+        let matched = Self.proposed(exposure: 1.1), lowConfidence = Self.proposed(exposure: -0.9)
+        let analyze: @Sendable (LookMatchRequest) async throws -> LookMatchResult = { _ in
+            await gate?.wait()
+            try Task.checkCancellation()
+            return LookMatchResult(scenes: [LookMatchScene(
+                index: 1, assetIDs: ids, heroID: ids[0],
+                proposals: [
+                    LookMatchProposal(targetID: ids[1], heroID: ids[0], adjustments: matched,
+                                      confidence: 0.92, isFlagged: false),
+                    LookMatchProposal(targetID: ids[2], heroID: ids[0], adjustments: lowConfidence,
+                                      confidence: 0.31, isFlagged: true)
+                ]
+            )])
+        }
+        let defaults = UserDefaults(suiteName: "pme-lookmatch-\(UUID())")!
+        let store = EditorStore(presetRepository: UserPresetRepository(defaults: defaults), lookMatchAnalyzer: analyze)
+        store.project.media = assets
+        for asset in assets { store.project.adjustmentsByAssetID[asset.id] = .neutral }
+        store.project.adjustmentsByAssetID[ids[0]] = Self.heroLook
+        store.select(assets[0])
+        store.workspace = .agents
+        return Shoot(store: store, hero: assets[0], target: assets[1], flagged: assets[2], folder: folder)
+    }
+
+    private func run(_ store: EditorStore) async throws {
+        let task = try #require(store.startLookMatch())
+        await task.value
+    }
+
+    @Test func runningLookMatchProducesSelectedAndFlaggedProposals() async throws {
+        let shoot = try makeShoot()
+        shoot.store.selectedAgentKind = .lookMatching
+        shoot.store.runSelectedAgent()
+        try await waitUntil { !shoot.store.isRunningLookMatch }
+        let report = try #require(shoot.store.latestAgentReport)
+        #expect(report.kind == .lookMatching)
+        let changes = report.proposedChanges
+        #expect(changes.map(\.kind) == [.matchLook, .matchLook])
+        #expect(changes.map(\.targetAssetID) == [shoot.target.id, shoot.flagged.id])
+        #expect(changes.map(\.isSelected) == [true, false])
+        #expect(changes.map(\.sceneIndex) == [1, 1])
+        #expect(changes[1].confidence == 0.31)
+        #expect(report.findings.contains { $0.title.contains("low-confidence") })
+        // Nothing changes until the photographer applies.
+        #expect(shoot.store.project.adjustmentsByAssetID[shoot.target.id] == .neutral)
+    }
+
+    @Test func applyWritesOnlySelectedProposalsAsOneUndoStep() async throws {
+        let shoot = try makeShoot()
+        let store = shoot.store
+        try await run(store)
+        let before = store.project.adjustmentsByAssetID
+        store.applyLatestAgentChanges()
+
+        #expect(store.project.adjustmentsByAssetID[shoot.target.id] == Self.proposed(exposure: 1.1))
+        #expect(store.project.adjustmentsByAssetID[shoot.flagged.id] == .neutral)
+        #expect(store.project.adjustmentsByAssetID[shoot.hero.id] == Self.heroLook)
+        #expect(store.history[shoot.target.id]?.last?.name == "Look Match")
+        #expect(store.latestAgentReport?.proposedChanges.isEmpty == true)
+
+        store.undoPhotoEdit()
+        #expect(store.project.adjustmentsByAssetID == before)
+        #expect(!store.canUndoPhotoEdit)
+    }
+
+    @Test func selectingAFlaggedProposalAppliesBothAndOneUndoRestoresBoth() async throws {
+        let shoot = try makeShoot()
+        let store = shoot.store
+        try await run(store)
+        let before = store.project.adjustmentsByAssetID
+        let flaggedChange = try #require(store.latestAgentReport?.proposedChanges.first { !$0.isSelected })
+        store.setLookMatchChange(flaggedChange.id, selected: true)
+        store.applyLatestAgentChanges()
+        #expect(store.project.adjustmentsByAssetID[shoot.target.id]?.exposure == 1.1)
+        #expect(store.project.adjustmentsByAssetID[shoot.flagged.id]?.exposure == -0.9)
+        store.undoPhotoEdit()
+        #expect(store.project.adjustmentsByAssetID == before)
+    }
+
+    @Test func unselectingEveryProposalAppliesNothing() async throws {
+        let shoot = try makeShoot()
+        let store = shoot.store
+        try await run(store)
+        for change in store.latestAgentReport?.proposedChanges ?? [] {
+            store.setLookMatchChange(change.id, selected: false)
+        }
+        let before = store.project.adjustmentsByAssetID
+        store.applyLatestAgentChanges()
+        #expect(store.project.adjustmentsByAssetID == before)
+        #expect(!store.canUndoPhotoEdit)
+    }
+
+    @Test func aTargetEditedAfterAnalysisIsSkippedAndReported() async throws {
+        let shoot = try makeShoot()
+        let store = shoot.store
+        try await run(store)
+        var manual = PhotoAdjustments.neutral
+        manual.saturation = -0.5
+        store.project.adjustmentsByAssetID[shoot.target.id] = manual
+        store.applyLatestAgentChanges()
+        #expect(store.project.adjustmentsByAssetID[shoot.target.id] == manual)
+        let report = try #require(store.latestAgentReport)
+        #expect(report.findings.contains { $0.title == "Edited since analysis" && $0.assetID == shoot.target.id })
+        #expect(report.summary.contains("1 skipped"))
+    }
+
+    @Test func resultsArrivingAfterProjectReplacementAreDiscarded() async throws {
+        let gate = AnalysisGate()
+        let shoot = try makeShoot(gate: gate)
+        let store = shoot.store
+        let task = try #require(store.startLookMatch())
+        #expect(store.isRunningLookMatch)
+        store.resetToEmptyProject(named: "Next shoot")
+        await gate.open()
+        await task.value
+        #expect(!store.isRunningLookMatch)
+        #expect(store.latestAgentReport == nil)
+        #expect(store.lookMatchBaseline == nil)
+        #expect(store.project.adjustmentsByAssetID.isEmpty)
+    }
+
+    @Test func staleCompletionFromAnOlderRequestIsIgnored() async throws {
+        let shoot = try makeShoot()
+        let store = shoot.store
+        let generation = store.projectGeneration
+        store.isRunningLookMatch = true
+        store.lookMatchRequestID = UUID()
+        store.finishLookMatch(LookMatchResult(scenes: []), request: LookMatchRequest(photos: []),
+                              projectID: store.project.id, generation: generation,
+                              requestID: UUID(), startedAt: .now)
+        #expect(store.latestAgentReport == nil)
+        store.cancelLookMatch()
+    }
+
+    @Test func cancellationLeavesTheProjectUnchanged() async throws {
+        let gate = AnalysisGate()
+        let shoot = try makeShoot(gate: gate)
+        let store = shoot.store
+        let before = store.project
+        let task = try #require(store.startLookMatch())
+        store.cancelLookMatch()
+        await gate.open()
+        await task.value
+        #expect(!store.isRunningLookMatch)
+        #expect(store.latestAgentReport == nil)
+        #expect(store.project == before)
+        #expect(store.statusMessage == "Look Match canceled")
+    }
+
+    @Test func withoutAnEditedHeroNoAnalysisRuns() throws {
+        let shoot = try makeShoot()
+        let store = shoot.store
+        store.project.adjustmentsByAssetID[shoot.hero.id] = .neutral
+        #expect(store.startLookMatch() == nil)
+        #expect(!store.isRunningLookMatch)
+        #expect(store.latestAgentReport?.findings.first?.title == "No edited hero photo")
+    }
+
+    @Test func otherAgentsKeepTheirCopyBehavior() throws {
+        let shoot = try makeShoot()
+        let store = shoot.store
+        store.runAgent(.batchEditing)
+        let changes = try #require(store.latestAgentReport?.proposedChanges)
+        #expect(changes.allSatisfy { $0.kind == .copyPhotoAdjustments && $0.proposedAdjustments == nil })
+        store.applyLatestAgentChanges()
+        #expect(store.project.adjustmentsByAssetID[shoot.target.id]?.exposure == Self.heroLook.exposure)
+    }
+
+    @Test func endToEndAnalysisLeavesOriginalsUntouched() async throws {
+        let folder = try TempDirectory()
+        let scene = LookMatchFixture.scene()
+        let heroURL = try LookMatchFixture.write(scene, to: folder.url.appendingPathComponent("hero.png"))
+        let targetURL = try LookMatchFixture.write(LookMatchFixture.darkened(scene, ev: -1),
+                                                   to: folder.url.appendingPathComponent("target.png"))
+        let originals = try [Data(contentsOf: heroURL), Data(contentsOf: targetURL)]
+        let defaults = UserDefaults(suiteName: "pme-lookmatch-\(UUID())")!
+        let store = EditorStore(presetRepository: UserPresetRepository(defaults: defaults))
+        store.lookMatchThresholds = LookMatchFixture.oneScene
+        let hero = MediaAsset(url: heroURL), target = MediaAsset(url: targetURL)
+        store.project.media = [hero, target]
+        store.project.adjustmentsByAssetID = [hero.id: LookMatchFixture.heroLook, target.id: .neutral]
+        let task = try #require(store.startLookMatch())
+        await task.value
+        let change = try #require(store.latestAgentReport?.proposedChanges.first)
+        #expect(change.kind == .matchLook && change.targetAssetID == target.id && change.isSelected)
+        store.applyLatestAgentChanges()
+        let exposure = try #require(store.project.adjustmentsByAssetID[target.id]?.exposure)
+        #expect(abs(exposure - (LookMatchFixture.heroLook.exposure + 1)) <= 0.1)
+        // The project saves at the current schema with no Look Match data in it.
+        let data = try ProjectDocument().data(for: store.project)
+        let object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(object["schemaVersion"] as? Int == 10)
+        let json = try #require(String(data: data, encoding: .utf8))
+        #expect(!json.contains("confidence") && !json.contains("matchLook"))
+        #expect(try [Data(contentsOf: heroURL), Data(contentsOf: targetURL)] == originals)
+    }
+}

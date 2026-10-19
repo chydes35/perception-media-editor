@@ -726,10 +726,10 @@ struct LookMatchStoreTests {
         store.applyLatestAgentChanges()
         let exposure = try #require(store.project.adjustmentsByAssetID[target.id]?.exposure)
         #expect(abs(exposure - (LookMatchFixture.heroLook.exposure + 1)) <= 0.1)
-        // The project saves at the current schema with no Look Match data in it.
+        // The project saves at the current schema (unchanged by Look Match) with no Look Match data in it.
         let data = try ProjectDocument().data(for: store.project)
         let object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
-        #expect(object["schemaVersion"] as? Int == 10)
+        #expect(object["schemaVersion"] as? Int == EditorProject.currentSchemaVersion)
         let json = try #require(String(data: data, encoding: .utf8))
         #expect(!json.contains("confidence") && !json.contains("matchLook"))
         #expect(try [Data(contentsOf: heroURL), Data(contentsOf: targetURL)] == originals)

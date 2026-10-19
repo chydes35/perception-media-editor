@@ -4,7 +4,9 @@ import SwiftUI
 @main
 struct PerceptionEditorApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @StateObject private var store = EditorStore()
+    // Built by a plain function, not inline: CI's Swift 6.1.2 compiler crashes in SIL generation when
+    // EditorStore()'s many default arguments sit inside @StateObject's autoclosure.
+    @StateObject private var store = EditorStore.launchInstance()
 
     var body: some Scene {
         WindowGroup("Perception Media Editor") {

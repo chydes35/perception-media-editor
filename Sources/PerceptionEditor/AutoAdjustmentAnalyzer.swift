@@ -34,16 +34,9 @@ actor AutoAdjustmentService {
 }
 
 final class AutoAdjustmentAnalyzer {
-    private let space = CGColorSpace(name: CGColorSpace.sRGB)!
+    private typealias Pixel = ImageStatistics.Pixel
     private lazy var context = CIContext(options: [.cacheIntermediates: false, .memoryTarget: 128])
-    private struct Pixel {
-        var r: Double
-        var g: Double
-        var b: Double
-        var x: Double
-        var y: Double
-        var luma: Double { 0.2126 * r + 0.7152 * g + 0.0722 * b }
-    }
+    private lazy var statistics = ImageStatistics(context: context)
 
     func analyze(url: URL, current: PhotoAdjustments) throws -> AutoAdjustmentSuggestion {
         try Task.checkCancellation()
@@ -91,7 +84,7 @@ final class AutoAdjustmentAnalyzer {
         }
         // Tone follows the visible crop, without compounding existing global/local edits.
         let visible = MediaColorRenderer.finishedGeometry(source, current)
-        let tone = try fitTone(visible)
+        let tone = try fitTone(visible, highlightRolloff: PhotoSourceLoader.hasHeadroom(url))
         suggestion.basic.exposure = tone.exposure
         suggestion.basic.contrast = tone.contrast
         suggestion.basic.highlights = tone.highlights
@@ -117,27 +110,7 @@ final class AutoAdjustmentAnalyzer {
         return suggestion
     }
 
-    private func pixels(_ image: CIImage) -> [Pixel] {
-        let extent = image.extent
-        guard extent.width.isFinite, extent.height.isFinite,
-              extent.width > 0, extent.height > 0 else { return [] }
-        let scale = 64 / max(extent.width, extent.height)
-        let width = max(1, Int((extent.width * scale).rounded()))
-        let height = max(1, Int((extent.height * scale).rounded()))
-        let small = image.transformed(by: CGAffineTransform(translationX: -extent.minX, y: -extent.minY))
-            .transformed(by: CGAffineTransform(scaleX: scale, y: scale))
-        var buffer = [Float](repeating: 0, count: width * height * 4)
-        context.render(small, toBitmap: &buffer, rowBytes: width * 16,
-                       bounds: CGRect(x: 0, y: 0, width: width, height: height), format: .RGBAf, colorSpace: space)
-        return (0 ..< width * height).compactMap { index in
-            let i = index * 4
-            guard buffer[i + 3] > 0.95, buffer[i].isFinite,
-                  buffer[i + 1].isFinite, buffer[i + 2].isFinite else { return nil }
-            return Pixel(r: Double(buffer[i]), g: Double(buffer[i + 1]), b: Double(buffer[i + 2]),
-                         x: (Double(index % width) + 0.5) / Double(width),
-                         y: (Double(index / width) + 0.5) / Double(height))
-        }
-    }
+    private func pixels(_ image: CIImage) -> [Pixel] { statistics.pixels(image) }
 
     /// CIImage graphs are lazy. Freeze the small decode once, otherwise each slider
     /// candidate can repeat RAW demosaicing. Half-float linear RGB retains highlight headroom.
@@ -149,60 +122,14 @@ final class AutoAdjustmentAnalyzer {
         return CIImage(cgImage: raster)
     }
 
-    private func neutralReference(_ samples: [Pixel]) -> Pixel? {
-        let candidates = samples.filter { p in
-            let lo = min(p.r, p.g, p.b), hi = max(p.r, p.g, p.b)
-            return p.luma > 0.28 && p.luma < 0.86 && lo > 0.1 && hi < 0.94 && hi / lo < 1.32
-        }
-        // Colored scenes and isolated bright objects are insufficient evidence for WB.
-        guard candidates.count >= max(24, samples.count / 12) else { return nil }
-        let cells = Set(candidates.map { Int($0.x * 3) + Int($0.y * 3) * 3 })
-        guard cells.count >= 4 else { return nil }
-        let r = median(candidates.map { log($0.r / $0.g) })
-        let b = median(candidates.map { log($0.b / $0.g) })
-        let consistent = candidates.filter {
-            abs(log($0.r / $0.g) - r) < 0.06 && abs(log($0.b / $0.g) - b) < 0.06
-        }
-        guard consistent.count >= candidates.count / 2 else { return nil }
-        let reference = consistent.min {
-            abs(log($0.r / $0.g) - r) + abs(log($0.b / $0.g) - b)
-                < abs(log($1.r / $1.g) - r) + abs(log($1.b / $1.g) - b)
-        }!
-        return Pixel(r: exp(r) * reference.g, g: reference.g, b: exp(b) * reference.g,
-                     x: reference.x, y: reference.y)
-    }
+    private func neutralReference(_ samples: [Pixel]) -> Pixel? { ImageStatistics.neutralReference(samples) }
+    private func fitWhiteBalance(_ reference: Pixel) -> (Double, Double) { statistics.fitWhiteBalance(reference) }
+    private func colorCast(_ reference: Pixel) -> Double { ImageStatistics.colorCast(reference) }
 
-    private func fitWhiteBalance(_ reference: Pixel) -> (Double, Double) {
-        guard let color = CIColor(red: reference.r, green: reference.g, blue: reference.b,
-                                  colorSpace: space) else { return (0, 0) }
-        let patch = CIImage(color: color).cropped(to: CGRect(x: 0, y: 0, width: 8, height: 8))
-        var best = PhotoAdjustments.neutral
-        func loss(_ adjustments: PhotoAdjustments) -> Double {
-            guard let p = pixels(MediaColorRenderer.render(patch, adjustments: adjustments, includesGeometry: false)).first,
-                  min(p.r, p.g, p.b) > 0 else { return .infinity }
-            return pow(log(p.r / p.g), 2) + pow(log(p.b / p.g), 2)
-        }
-        var score = loss(best)
-        for step in [0.2, 0.1, 0.05, 0.025] {
-            for key in [\PhotoAdjustments.temperature, \.tint] {
-                for direction in [-1.0, 1.0] {
-                    var trial = best
-                    trial[keyPath: key] = clamp(best[keyPath: key] + direction * step, -0.5, 0.5)
-                    let value = loss(trial)
-                    if value < score { best = trial; score = value }
-                }
-            }
-        }
-        // Preserve some lighting character rather than fully neutralizing every patch.
-        return (rounded(best.temperature * 0.75), rounded(best.tint * 0.75))
-    }
-
-    private func colorCast(_ reference: Pixel) -> Double {
-        pow(log(reference.r / reference.g), 2) + pow(log(reference.b / reference.g), 2)
-    }
-
-    private func fitTone(_ source: CIImage) throws -> PhotoAdjustments {
-        let input = pixels(source).map(\.luma).sorted()
+    /// `highlightRolloff` is true for RAW sources, so candidates are judged as they will be shown.
+    private func fitTone(_ source: CIImage, highlightRolloff: Bool = false) throws -> PhotoAdjustments {
+        let shown = highlightRolloff ? HighlightRolloff.apply(source, white: HighlightRolloff.baseWhite) : source
+        let input = pixels(shown).map(\.luma).sorted()
         guard input.count >= 16 else { throw AutoAdjustmentError.unreadable }
         let original = quantiles(input)
         let shift = clamp((0.48 - original[1]) * 0.65, -0.12, 0.12)
@@ -217,12 +144,13 @@ final class AutoAdjustmentAnalyzer {
         ]
         let scale = 64 / max(source.extent.width, source.extent.height)
         let small = source.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
-        let baseline = pixels(small)
+        let baseline = pixels(highlightRolloff ? HighlightRolloff.apply(small, white: HighlightRolloff.baseWhite) : small)
         let exposureRange: ClosedRange<Double> = original[1] < 0.35 ? 0.04 ... 1.4
             : original[1] > 0.65 ? -1.4 ... -0.04 : -1.4 ... 1.4
         func recentered(_ adjustments: PhotoAdjustments) -> PhotoAdjustments {
             var result = adjustments
-            let output = pixels(MediaColorRenderer.render(small, adjustments: result, includesGeometry: false))
+            let output = pixels(MediaColorRenderer.render(small, adjustments: result, includesGeometry: false,
+                                                          highlightRolloff: highlightRolloff))
                 .map(\.luma).sorted()
             guard !output.isEmpty else { return result }
             let current = output[output.count / 2]
@@ -231,7 +159,8 @@ final class AutoAdjustmentAnalyzer {
             return result
         }
         func loss(_ adjustments: PhotoAdjustments) -> Double {
-            let samples = pixels(MediaColorRenderer.render(small, adjustments: adjustments, includesGeometry: false))
+            let samples = pixels(MediaColorRenderer.render(small, adjustments: adjustments, includesGeometry: false,
+                                                           highlightRolloff: highlightRolloff))
             let values = samples.map(\.luma).sorted()
             guard !values.isEmpty else { return .infinity }
             let q = quantiles(values)
@@ -276,15 +205,10 @@ final class AutoAdjustmentAnalyzer {
         return best
     }
 
-    private func quantiles(_ sorted: [Double]) -> [Double] {
-        [0.10, 0.50, 0.90, 0.99].map { sorted[Int(Double(sorted.count - 1) * $0)] }
-    }
-    private func median(_ values: [Double]) -> Double { values.sorted()[values.count / 2] }
-    private func clamp(_ value: Double, _ low: Double, _ high: Double) -> Double { min(high, max(low, value)) }
-    private func rounded(_ value: Double) -> Double { (value * 100).rounded() / 100 }
-    private func linear(_ value: Double) -> Double {
-        value <= 0.04045 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4)
-    }
+    private func quantiles(_ sorted: [Double]) -> [Double] { ImageStatistics.quantiles(sorted) }
+    private func clamp(_ value: Double, _ low: Double, _ high: Double) -> Double { ImageStatistics.clamp(value, low, high) }
+    private func rounded(_ value: Double) -> Double { ImageStatistics.rounded(value) }
+    private func linear(_ value: Double) -> Double { ImageStatistics.linear(value) }
     private func chromaticity(_ pixel: Pixel) -> (Double, Double) {
         let r = max(0, linear(pixel.r)), g = max(0, linear(pixel.g)), b = max(0, linear(pixel.b))
         let sum = max(0.0001, r + g + b)

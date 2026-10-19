@@ -29,8 +29,9 @@ extension EditorStore {
         let analyze = lookMatchAnalyzer
         let progress: @Sendable (Int, Int) -> Void = { [weak self] done, total in
             Task { @MainActor [weak self] in
-                guard let self, isRunningLookMatch, lookMatchRequestID == requestID else { return }
-                lookMatchProgress = (done, total)
+                // Explicit self: Swift 6.1 (CI) rejects implicit self in this nested closure.
+                guard let self, self.isRunningLookMatch, self.lookMatchRequestID == requestID else { return }
+                self.lookMatchProgress = (done, total)
             }
         }
         let task = Task { [weak self] in

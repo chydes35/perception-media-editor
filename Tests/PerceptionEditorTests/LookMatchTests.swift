@@ -1,5 +1,6 @@
 import CoreGraphics
 import CoreImage
+import CryptoKit
 import Foundation
 import ImageIO
 import Testing
@@ -105,6 +106,8 @@ struct LookMatchSceneTests {
             let scenes = LookMatchScenes.group(shoot, thresholds: thresholds)
             #expect(scenes == [Array(shoot.prefix(3).map(\.assetID)), Array(shoot.suffix(2).map(\.assetID))],
                     "\(name) should split the shoot")
+            #expect(LookMatchScenes.splitReasons(shoot[2], shoot[3], thresholds: thresholds).count == 1,
+                    "only \(name) should be named as the reason")
         }
     }
 
@@ -651,5 +654,105 @@ struct LookMatchStoreTests {
         let json = try #require(String(data: data, encoding: .utf8))
         #expect(!json.contains("confidence") && !json.contains("matchLook"))
         #expect(try [Data(contentsOf: heroURL), Data(contentsOf: targetURL)] == originals)
+    }
+}
+
+/// Opt-in check on a real shoot, for threshold tuning and the acceptance counts. Set
+/// PME_LOOK_MATCH_PROJECT to a disposable .pmedit (its saved edits mark the heroes), or
+/// PME_LOOK_MATCH_FOLDER to a folder of photos (the first file gets a sample hero edit and
+/// everything is treated as one candidate shoot). PME_LOOK_MATCH_OUTPUT optionally names a
+/// text file for the report, and PME_LOOK_MATCH_ONE_SCENE=1 forces one scene for a worst-case
+/// timing. Originals are only read; the project is not saved.
+struct LookMatchRealShootTests {
+    private static let environment = ProcessInfo.processInfo.environment
+
+    private static func peakFootprintMB() -> Double {
+        var usage = rusage_info_current()
+        let result = withUnsafeMutablePointer(to: &usage) {
+            $0.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) {
+                proc_pid_rusage(getpid(), RUSAGE_INFO_CURRENT, $0)
+            }
+        }
+        return result == 0 ? Double(usage.ri_lifetime_max_phys_footprint) / 1_048_576 : -1
+    }
+
+    @Test(.enabled(if: environment["PME_LOOK_MATCH_PROJECT"] != nil || environment["PME_LOOK_MATCH_FOLDER"] != nil))
+    func realShootLookMatchReport() async throws {
+        var photos: [LookMatchPhoto] = []
+        var names: [UUID: String] = [:]
+        if let path = Self.environment["PME_LOOK_MATCH_PROJECT"] {
+            let project = try ProjectDocument().load(from: URL(fileURLWithPath: path))
+            for asset in project.media where asset.kind == .photo {
+                photos.append(LookMatchPhoto(id: asset.id, url: asset.url,
+                                             adjustments: project.adjustmentsByAssetID[asset.id] ?? .neutral))
+                names[asset.id] = asset.filename
+            }
+        } else {
+            let folder = URL(fileURLWithPath: try #require(Self.environment["PME_LOOK_MATCH_FOLDER"]))
+            let files = try FileManager.default.contentsOfDirectory(atPath: folder.path)
+                .filter { ["RW2", "JPG", "JPEG", "PNG", "DNG"].contains(($0 as NSString).pathExtension.uppercased()) }
+                .sorted()
+            for (index, file) in files.enumerated() {
+                var adjustments = PhotoAdjustments.neutral
+                if index == 0 {
+                    adjustments.exposure = 0.3
+                    adjustments.contrast = 0.1
+                    adjustments.vibrance = 0.12
+                }
+                let id = UUID()
+                photos.append(LookMatchPhoto(id: id, url: folder.appendingPathComponent(file), adjustments: adjustments))
+                names[id] = file
+            }
+        }
+        try #require(photos.count >= 2)
+        let hashes = try photos.map { Array(SHA256.hash(data: try Data(contentsOf: $0.url))) }
+        // PME_LOOK_MATCH_ONE_SCENE=1 solves every photo against one hero: a worst-case timing.
+        let thresholds = Self.environment["PME_LOOK_MATCH_ONE_SCENE"] == "1" ? LookMatchFixture.oneScene : .default
+        let footprintBefore = Self.peakFootprintMB()
+        // Auto on one photo first: the plan's memory budget is Auto's plus feature-print buffers.
+        _ = try await AutoAdjustmentService().analyze(url: photos[0].url, current: .neutral)
+        let footprintAuto = Self.peakFootprintMB()
+        let start = Date()
+        let result = try await LookMatchService().analyze(LookMatchRequest(photos: photos, selectedID: nil,
+                                                                            thresholds: thresholds))
+        let seconds = Date().timeIntervalSince(start)
+
+        var lines: [String] = []
+        let proposals = result.scenes.flatMap(\.proposals)
+        let flagged = proposals.filter(\.isFlagged).count
+        lines.append(String(format: "%d photos, %d scenes, %d proposals (%d unflagged, %d flagged) in %.1f s (%.2f s/photo)",
+                            photos.count, result.scenes.count, proposals.count, proposals.count - flagged, flagged,
+                            seconds, seconds / Double(photos.count)))
+        lines.append(String(format: "Test-process peak footprint: %.0f MB at start, %.0f MB after one Auto analysis, %.0f MB after Look Match",
+                            footprintBefore, footprintAuto, Self.peakFootprintMB()))
+        lines.append("Thresholds: \(thresholds)")
+        for scene in result.scenes {
+            let first = scene.assetIDs.first.flatMap { names[$0] } ?? "?"
+            let last = scene.assetIDs.last.flatMap { names[$0] } ?? "?"
+            lines.append("")
+            lines.append("Scene \(scene.index): \(scene.assetIDs.count) photos, \(first) – \(last)"
+                + (scene.splitReasons.isEmpty ? "" : "; new scene because \(scene.splitReasons.joined(separator: ", "))"))
+            if let hero = scene.heroID {
+                lines.append("  hero \(names[hero] ?? "?")")
+            } else {
+                lines.append("  NEEDS A HERO; suggested \(scene.suggestedHeroID.flatMap { names[$0] } ?? "?")")
+            }
+            for id in scene.alreadyEdited { lines.append("  already edited: \(names[id] ?? "?")") }
+            for id in scene.unreadable { lines.append("  could not analyze: \(names[id] ?? "?")") }
+            for proposal in scene.proposals {
+                let raw = proposal.adjustments.raw
+                lines.append(String(format: "  %@ %@ confidence %.2f  exposure %+.2f  highlights %+.2f  shadows %+.2f  WB %@",
+                                    proposal.isFlagged ? "FLAG" : "ok  ", names[proposal.targetID] ?? "?",
+                                    proposal.confidence, proposal.adjustments.exposure, proposal.adjustments.highlights,
+                                    proposal.adjustments.shadows,
+                                    raw.temperature.map { "\(Int($0)) K / \(Int(raw.tint ?? 0))" } ?? "as shot"))
+            }
+        }
+        let text = lines.joined(separator: "\n")
+        print(text)
+        if let output = Self.environment["PME_LOOK_MATCH_OUTPUT"] {
+            try text.write(toFile: output, atomically: true, encoding: .utf8)
+        }
+        #expect(try photos.map { Array(SHA256.hash(data: try Data(contentsOf: $0.url))) } == hashes)
     }
 }

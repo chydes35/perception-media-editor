@@ -65,13 +65,25 @@ enum LookMatchScenes {
     }
 
     static func startsNewScene(_ a: SceneSignal, _ b: SceneSignal, thresholds: LookMatchThresholds) -> Bool {
-        if let x = a.captureDate, let y = b.captureDate,
-           abs(y.timeIntervalSince(x)) > thresholds.captureGapSeconds { return true }
-        if let x = a.asShotMired, let y = b.asShotMired, abs(x - y) > thresholds.miredStep { return true }
-        if let x = a.exposureValue, let y = b.exposureValue, abs(x - y) > thresholds.exposureStep { return true }
-        if let distance = featureDistance(a.featurePrint, b.featurePrint),
-           distance > thresholds.featurePrintDistance { return true }
-        return false
+        !splitReasons(a, b, thresholds: thresholds).isEmpty
+    }
+
+    /// Which signals exceed their thresholds between two consecutive photos, for tuning.
+    static func splitReasons(_ a: SceneSignal, _ b: SceneSignal, thresholds: LookMatchThresholds) -> [String] {
+        var reasons: [String] = []
+        if let x = a.captureDate, let y = b.captureDate, abs(y.timeIntervalSince(x)) > thresholds.captureGapSeconds {
+            reasons.append(String(format: "%.0f s gap", abs(y.timeIntervalSince(x))))
+        }
+        if let x = a.asShotMired, let y = b.asShotMired, abs(x - y) > thresholds.miredStep {
+            reasons.append(String(format: "as-shot WB %.0f mired", abs(x - y)))
+        }
+        if let x = a.exposureValue, let y = b.exposureValue, abs(x - y) > thresholds.exposureStep {
+            reasons.append(String(format: "exposure %.1f EV", abs(x - y)))
+        }
+        if let distance = featureDistance(a.featurePrint, b.featurePrint), distance > thresholds.featurePrintDistance {
+            reasons.append(String(format: "content distance %.2f", distance))
+        }
+        return reasons
     }
 
     static func featureDistance(_ a: [Float]?, _ b: [Float]?) -> Double? {

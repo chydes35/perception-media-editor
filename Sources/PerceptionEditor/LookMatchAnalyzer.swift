@@ -32,6 +32,8 @@ struct LookMatchScene: Sendable, Equatable {
     var proposals: [LookMatchProposal] = []
     var alreadyEdited: [UUID] = []
     var unreadable: [UUID] = []
+    /// Why this scene starts where it does (empty for the first scene), for tuning thresholds.
+    var splitReasons: [String] = []
 }
 
 /// Analysis results. Never stored in the project.
@@ -108,6 +110,10 @@ final class LookMatchAnalyzer {
         var scenes: [LookMatchScene] = []
         for (index, ids) in groups.enumerated() {
             var scene = LookMatchScene(index: index + 1, assetIDs: ids)
+            if index > 0, let previous = groups[index - 1].last.flatMap({ surveys[$0]?.signal }),
+               let first = ids.first.flatMap({ surveys[$0]?.signal }) {
+                scene.splitReasons = LookMatchScenes.splitReasons(previous, first, thresholds: request.thresholds)
+            }
             scene.heroID = LookMatchScenes.hero(in: ids, adjustments: adjustments,
                                                 selectedID: request.selectedID, captureDates: captureDates)
             guard let heroID = scene.heroID, let heroPhoto = photos[heroID] else {

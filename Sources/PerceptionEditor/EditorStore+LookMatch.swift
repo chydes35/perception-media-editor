@@ -82,7 +82,6 @@ extension EditorStore {
         lookMatchBaseline = (report.id, Dictionary(request.photos.map { ($0.id, $0.adjustments) },
                                                    uniquingKeysWith: { a, _ in a }))
         latestAgentReport = report
-        selectedAgentKind = .lookMatching
         let flagged = report.proposedChanges.filter { !$0.isSelected }.count
         statusMessage = "Look Match: \(report.proposedChanges.count) proposals ready for review"
             + (flagged > 0 ? " (\(flagged) flagged)" : "")

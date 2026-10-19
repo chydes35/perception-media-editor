@@ -32,7 +32,7 @@ enum AgentKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .photoCulling:
             "Finds missing files, duplicate names, and assets that need a human quality decision."
         case .lookMatching:
-            "Proposes copying the selected photo's look to comparable photos in the project."
+            "Groups the shoot into lighting scenes and adapts each scene's edited hero to the other photos."
         case .batchEditing:
             "Prepares a reversible batch adjustment pass from the selected photo."
         case .photoQuality:
@@ -99,6 +99,8 @@ struct AgentFinding: Identifiable, Codable, Equatable, Sendable {
 
 enum AgentChangeKind: String, Codable, Sendable {
     case copyPhotoAdjustments
+    /// Look Match: set the target to `proposedAdjustments`, computed for that photo's light.
+    case matchLook
 }
 
 struct AgentChange: Identifiable, Codable, Equatable, Sendable {
@@ -107,19 +109,53 @@ struct AgentChange: Identifiable, Codable, Equatable, Sendable {
     let sourceAssetID: UUID?
     let targetAssetID: UUID?
     let detail: String
+    /// The target's complete adjustments after the change, when the agent computed them.
+    let proposedAdjustments: PhotoAdjustments?
+    /// 0–1, for proposals the agent scored.
+    let confidence: Double?
+    /// One-based scene number for Look Match proposals.
+    let sceneIndex: Int?
+    /// Only selected changes are applied.
+    var isSelected: Bool
 
     init(
         id: UUID = UUID(),
         kind: AgentChangeKind,
         sourceAssetID: UUID? = nil,
         targetAssetID: UUID? = nil,
-        detail: String
+        detail: String,
+        proposedAdjustments: PhotoAdjustments? = nil,
+        confidence: Double? = nil,
+        sceneIndex: Int? = nil,
+        isSelected: Bool = true
     ) {
         self.id = id
         self.kind = kind
         self.sourceAssetID = sourceAssetID
         self.targetAssetID = targetAssetID
         self.detail = detail
+        self.proposedAdjustments = proposedAdjustments
+        self.confidence = confidence
+        self.sceneIndex = sceneIndex
+        self.isSelected = isSelected
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, kind, sourceAssetID, targetAssetID, detail, proposedAdjustments, confidence, sceneIndex, isSelected
+    }
+
+    /// Reports saved before Look Match proposals existed decode with no payload and selected.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        kind = try container.decode(AgentChangeKind.self, forKey: .kind)
+        sourceAssetID = try container.decodeIfPresent(UUID.self, forKey: .sourceAssetID)
+        targetAssetID = try container.decodeIfPresent(UUID.self, forKey: .targetAssetID)
+        detail = try container.decode(String.self, forKey: .detail)
+        proposedAdjustments = try container.decodeIfPresent(PhotoAdjustments.self, forKey: .proposedAdjustments)
+        confidence = try container.decodeIfPresent(Double.self, forKey: .confidence)
+        sceneIndex = try container.decodeIfPresent(Int.self, forKey: .sceneIndex)
+        isSelected = try container.decodeIfPresent(Bool.self, forKey: .isSelected) ?? true
     }
 }
 
@@ -130,7 +166,7 @@ struct AgentReport: Identifiable, Codable, Equatable, Sendable {
     let finishedAt: Date
     let summary: String
     let findings: [AgentFinding]
-    let proposedChanges: [AgentChange]
+    var proposedChanges: [AgentChange]
     let limitation: String?
 
     var highestSeverity: AgentSeverity {

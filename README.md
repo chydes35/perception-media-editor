@@ -17,6 +17,7 @@ This repository contains a photo-first integration candidate. RAW develop, masks
 - Continuous mouse-wheel zoom over the photo while editing masks or crops; press the wheel or hold Command and drag to pan, or click Fit to reset
 - Save presets by settings group, organize them in categories, apply them to a whole selection, copy and paste settings between photos, and step back through an edit history
 - Rotate and apply common social/photo aspect ratios
+- Video proxies are generated automatically for smooth playback in the timeline and source viewer; toggle with "Proxies" in the timeline toolbar. Proxies are used only for playback (sound always comes from the original), and the originals are kept for export once video export exists
 - Apply four built-in Perception presets
 - Save and delete reusable user presets
 - Inspect a live RGB histogram

@@ -52,3 +52,7 @@ The opt-in `SelectionQualityTests` runner accepts `PME_SELECTION_MANIFEST`, `PME
 ## Workspace picker publication
 
 `WorkspaceTransitionTests` verifies no synchronous observable publication from the picker request, newest-request coalescing, direct-navigation priority and project replacement cancellation. Temporarily restoring immediate publication must fail the focused checks. Native `com.apple.runtime-issues` SwiftUI fault logs supplement target-Mac preview tracing; disappearance of those faults does not alone establish correction of an intermittent black canvas.
+
+## Real video gates
+
+`RealVideoProxyTests` is opt-in. Set `PME_VIDEO_SAMPLE` to a long S5 clip (for example `P1107157.MOV`) for the throughput and frame-count gate. Set `PME_VLOG_SHORT` to a short full-range V-Log clip (`P1107158.MOV`) to check that its proxy keeps the original's levels within 4/1023 per cell mean. Both read the originals only and assert the source file is unchanged. Run them with `--no-parallel`; use `-c release` for throughput numbers.

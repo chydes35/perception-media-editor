@@ -69,6 +69,7 @@ The [integration plan](../plans/completed/photo-workflow-integration.md) combine
 - [x] History: named steps for the current photo; click one to go back
 - [x] White balance eyedropper for RAW photos (click a neutral gray to set Kelvin and tint)
 - [x] Auto tone and auto white balance: one button beneath the histogram; bounded on-device analysis, photo-specific basic slider values, conservative neutral-reference WB, one undo step
+- [ ] Per-scene look matching (Agents → Look Matching): group a shoot into lighting scenes, find each scene's edited hero, adapt its look to every other photo's exposure and white balance, flag low-confidence matches, apply the selected ones as one undo step. Implemented on branch `look-match-lm1`; the real family-portrait shoot check is pending ([LM1 plan](../plans/active/look-match-agent.md))
 - [ ] Split `EditorStore` into photo, timeline, and project parts
 
 ### Phase 3 — Masks and healing (in progress)

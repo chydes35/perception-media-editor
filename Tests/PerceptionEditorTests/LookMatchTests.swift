@@ -506,6 +506,18 @@ struct LookMatchStoreTests {
         #expect(shoot.store.project.adjustmentsByAssetID[shoot.target.id] == .neutral)
     }
 
+    @Test func finishingDoesNotSwitchAwayFromTheAgentBeingViewed() async throws {
+        let gate = AnalysisGate()
+        let shoot = try makeShoot(gate: gate)
+        let store = shoot.store
+        let task = try #require(store.startLookMatch())
+        store.selectedAgentKind = .photoCulling
+        await gate.open()
+        await task.value
+        #expect(store.selectedAgentKind == .photoCulling)
+        #expect(store.latestAgentReport?.kind == .lookMatching)
+    }
+
     @Test func applyWritesOnlySelectedProposalsAsOneUndoStep() async throws {
         let shoot = try makeShoot()
         let store = shoot.store

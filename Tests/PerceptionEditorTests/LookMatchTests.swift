@@ -271,6 +271,22 @@ struct LookMatchAnalyzerTests {
         #expect(partial.0 == 3200 && partial.1 == 11)
     }
 
+    @Test func confidenceFollowsNeutralCastAndToneNotFramingColor() {
+        typealias M = LookMatchAnalyzer.Measurement
+        let hero = M(median: 0.45, low: 0.05, high: 0.92, neutralRedGreen: 0.02, neutralBlueGreen: -0.03)
+        let thresholds = LookMatchThresholds.default
+        // Same tone, no neutral area in the target (different clothing or framing): no color penalty.
+        let noNeutral = M(median: 0.45, low: 0.05, high: 0.92, neutralRedGreen: nil, neutralBlueGreen: nil)
+        #expect(LookMatchAnalyzer.confidence(final: noNeutral, goal: hero, sceneDistance: 0, thresholds: thresholds) == 1)
+        // A real cast on the neutral area costs the full color weight.
+        let cast = M(median: 0.45, low: 0.05, high: 0.92, neutralRedGreen: 0.2, neutralBlueGreen: -0.15)
+        #expect(LookMatchAnalyzer.confidence(final: cast, goal: hero, sceneDistance: 0, thresholds: thresholds) == 0.7)
+        // More than half a stop of remaining exposure error costs the full exposure weight.
+        let dark = M(median: 0.3, low: 0.05, high: 0.92,
+                     neutralRedGreen: 0.02, neutralBlueGreen: -0.03)
+        #expect(LookMatchAnalyzer.confidence(final: dark, goal: hero, sceneDistance: 0, thresholds: thresholds) < 0.7)
+    }
+
     @Test func aFrameOneStopDarkerSolvesToOneStopMoreExposure() throws {
         let folder = try TempDirectory()
         let scene = LookMatchFixture.scene()
@@ -717,6 +733,29 @@ struct LookMatchRealShootTests {
             }
         }
         try #require(photos.count >= 2)
+        if let csv = Self.environment["PME_LOOK_MATCH_SIGNALS"] {
+            // Per-photo signals in capture order, with distances to the previous frame and to
+            // the first frame of the current default-threshold scene.
+            let analyzer = LookMatchAnalyzer()
+            let signals = LookMatchScenes.ordered(photos.map { analyzer.sceneSignal(for: $0) })
+            var rows = ["file,time,mired,ev,distance_previous,distance_scene_start,new_scene"]
+            var sceneStart: SceneSignal?
+            var previous: SceneSignal?
+            for signal in signals {
+                let split = previous.map { LookMatchScenes.startsNewScene($0, signal, thresholds: .default) } ?? true
+                if split { sceneStart = signal }
+                func text(_ value: Double?) -> String { value.map { String(format: "%.3f", $0) } ?? "" }
+                rows.append([names[signal.assetID] ?? "?",
+                             signal.captureDate.map { ISO8601DateFormatter().string(from: $0) } ?? "",
+                             text(signal.asShotMired), text(signal.exposureValue),
+                             text(LookMatchScenes.featureDistance(previous?.featurePrint, signal.featurePrint)),
+                             text(LookMatchScenes.featureDistance(sceneStart?.featurePrint, signal.featurePrint)),
+                             split ? "1" : "0"].joined(separator: ","))
+                previous = signal
+            }
+            try rows.joined(separator: "\n").write(toFile: csv, atomically: true, encoding: .utf8)
+            return
+        }
         let hashes = try photos.map { Array(SHA256.hash(data: try Data(contentsOf: $0.url))) }
         // PME_LOOK_MATCH_ONE_SCENE=1 solves every photo against one hero: a worst-case timing.
         let thresholds = Self.environment["PME_LOOK_MATCH_ONE_SCENE"] == "1" ? LookMatchFixture.oneScene : .default
@@ -758,6 +797,43 @@ struct LookMatchRealShootTests {
                                     proposal.confidence, proposal.adjustments.exposure, proposal.adjustments.highlights,
                                     proposal.adjustments.shadows,
                                     raw.temperature.map { "\(Int($0)) K / \(Int(raw.tint ?? 0))" } ?? "as shot"))
+            }
+        }
+        if let directory = Self.environment["PME_LOOK_MATCH_RENDER_DIR"] {
+            // Contact sheets for a visual check: per scene, the hero first, then each proposal as
+            // it would look after Apply, left to right in capture order, 6 per row.
+            try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+            let context = CIContext()
+            let byID = Dictionary(photos.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+            for scene in result.scenes {
+                guard let heroID = scene.heroID, let hero = byID[heroID] else { continue }
+                var cells: [(UUID, PhotoAdjustments)] = [(heroID, hero.adjustments)]
+                cells += scene.proposals.map { ($0.targetID, $0.adjustments) }
+                for page in stride(from: 0, to: cells.count, by: 36) {
+                    let slice = Array(cells[page ..< min(cells.count, page + 36)])
+                    let cell = 300.0, columns = 6
+                    let rows = (slice.count + columns - 1) / columns
+                    var sheet = CIImage(color: CIColor(red: 0.12, green: 0.12, blue: 0.12))
+                        .cropped(to: CGRect(x: 0, y: 0, width: cell * Double(columns), height: cell * Double(rows)))
+                    for (index, item) in slice.enumerated() {
+                        guard let photo = byID[item.0],
+                              let source = PhotoSourceLoader.load(photo.url, maxDimension: cell - 8, raw: item.1.raw)
+                        else { continue }
+                        let rendered = MediaColorRenderer.render(source, adjustments: item.1, includesGeometry: true)
+                        let extent = rendered.extent
+                        let scale = (cell - 8) / max(extent.width, extent.height)
+                        let x = Double(index % columns) * cell + 4, y = Double(rows - 1 - index / columns) * cell + 4
+                        let placed = rendered.transformed(by: CGAffineTransform(translationX: -extent.minX, y: -extent.minY)
+                            .concatenating(CGAffineTransform(scaleX: scale, y: scale))
+                            .concatenating(CGAffineTransform(translationX: x, y: y)))
+                        sheet = placed.composited(over: sheet)
+                    }
+                    let name = "scene\(scene.index)-\(page / 36 + 1).jpg"
+                    try context.writeJPEGRepresentation(of: sheet, to: URL(fileURLWithPath: directory).appendingPathComponent(name),
+                                                        colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
+                    lines.append("Sheet \(name): " + slice.map { names[$0.0] ?? "?" }.joined(separator: " "))
+                    context.clearCaches()
+                }
             }
         }
         let text = lines.joined(separator: "\n")

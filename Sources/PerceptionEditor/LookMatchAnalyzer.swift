@@ -70,13 +70,14 @@ final class LookMatchAnalyzer {
         var medianLuma = 0.5
     }
 
-    /// Tone and color of a rendered photo, in sRGB-encoded luma and log chroma ratios.
+    /// Tone of a rendered photo in sRGB-encoded luma, and the color cast of its neutral
+    /// evidence (log R/G and log B/G), nil when the photo has no credible neutral area.
     struct Measurement: Equatable {
         var median: Double
         var low: Double
         var high: Double
-        var redGreen: Double
-        var blueGreen: Double
+        var neutralRedGreen: Double?
+        var neutralBlueGreen: Double?
     }
 
     private struct Hero {
@@ -164,6 +165,14 @@ final class LookMatchAnalyzer {
 
     // MARK: - Survey
 
+    /// The scene-grouping signals for one photo, for tuning diagnostics.
+    func sceneSignal(for photo: LookMatchPhoto) -> SceneSignal {
+        defer { clearCachesAfterSurvey() }
+        return autoreleasepool { survey(photo).signal }
+    }
+
+    private func clearCachesAfterSurvey() { context.clearCaches() }
+
     private func survey(_ photo: LookMatchPhoto) -> Survey {
         let metadata = PhotoSourceLoader.metadata(of: photo.url)
         let rawInfo = PhotoSourceLoader.rawInfo(of: photo.url)
@@ -243,13 +252,13 @@ final class LookMatchAnalyzer {
         let samples = statistics.pixels(image)
         let lumas = samples.map(\.luma).sorted()
         guard lumas.count >= 16 else { throw LookMatchError.unreadable }
-        let colored = samples.filter { $0.luma > 0.08 && $0.luma < 0.92 && min($0.r, $0.g, $0.b) > 0.005 }
-        let redGreen = colored.isEmpty ? 0 : ImageStatistics.median(colored.map { log($0.r / $0.g) })
-        let blueGreen = colored.isEmpty ? 0 : ImageStatistics.median(colored.map { log($0.b / $0.g) })
+        // Whole-frame color follows clothing and framing; only neutral areas show a cast.
+        let neutral = ImageStatistics.neutralReference(samples)
         return Measurement(median: ImageStatistics.percentile(lumas, 0.5),
                            low: ImageStatistics.percentile(lumas, 0.02),
                            high: ImageStatistics.percentile(lumas, 0.98),
-                           redGreen: redGreen, blueGreen: blueGreen)
+                           neutralRedGreen: neutral.map { log($0.r / $0.g) },
+                           neutralBlueGreen: neutral.map { log($0.b / $0.g) })
     }
 
     private func measureHero(_ photo: LookMatchPhoto, rawInfo: RawInfo?) throws -> Hero {
@@ -344,16 +353,23 @@ final class LookMatchAnalyzer {
     }
 
     /// 1 for a perfect match. Penalties: remaining median exposure error (full at 0.5 EV),
-    /// 2nd/98th percentile error (full at 0.2), median chroma difference (full at 0.12 in log
-    /// ratio), and visual distance from the hero (full at twice the scene threshold).
+    /// 2nd/98th percentile error (full at 0.4), the difference between the hero's and the
+    /// target's neutral-area color cast (full at 0.12 in log ratio; none when either has no
+    /// neutral area), and visual distance from the hero (full at twice the scene threshold).
+    /// Range and distance limits were widened after the 2026-10-18 family-portrait shoot, where
+    /// framing changes alone flagged most frames under steady light.
     static func confidence(final: Measurement, goal: Measurement, sceneDistance: Double?,
                            thresholds: LookMatchThresholds) -> Double {
         let exposureError = abs(log2(max(0.0001, ImageStatistics.linear(goal.median))
             / max(0.0001, ImageStatistics.linear(final.median))))
         let rangeError = abs(goal.high - final.high) + abs(goal.low - final.low)
-        let chromaError = hypot(goal.redGreen - final.redGreen, goal.blueGreen - final.blueGreen)
+        var chromaError = 0.0
+        if let a = goal.neutralRedGreen, let b = goal.neutralBlueGreen,
+           let c = final.neutralRedGreen, let d = final.neutralBlueGreen {
+            chromaError = hypot(a - c, b - d)
+        }
         let scene = (sceneDistance ?? 0) / max(0.0001, thresholds.featurePrintDistance * 2)
-        let penalty = 0.35 * min(1, exposureError / 0.5) + 0.15 * min(1, rangeError / 0.2)
+        let penalty = 0.35 * min(1, exposureError / 0.5) + 0.15 * min(1, rangeError / 0.4)
             + 0.3 * min(1, chromaError / 0.12) + 0.2 * min(1, scene)
         return ImageStatistics.rounded(ImageStatistics.clamp(1 - penalty, 0, 1))
     }

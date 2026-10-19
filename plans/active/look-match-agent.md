@@ -71,6 +71,7 @@ Record progress under each step as it completes.
 10. **Docs.** Update `docs/AGENTS.md`, `docs/CURRENT_STATUS.md`, and add a Phase 2 roadmap line for per-scene look matching. Record tuned thresholds and gate results here.
     - *Done.* Also `docs/ARCHITECTURE.md` (module list). Thresholds below are starting values, not tuned.
 11. **Gates.** `./scripts/qa.sh`, then the real-shoot check (acceptance 8) on the 8 GB M1.
+    - *Automated gates done 2026-10-18 at `64fae1e` (see Verification).* Real-shoot, runtime/UI and performance gates are open: LM1 stays **active** until the photographer runs the procedure below.
 
 ## Safety and performance
 
@@ -83,11 +84,25 @@ Record progress under each step as it completes.
 
 | Gate | Required check | Result and evidence |
 | --- | --- | --- |
-| Static/build | `git diff --check`; Swift build | PENDING |
-| Unit/integration | `./scripts/test.sh --filter LookMatchTests`, `--filter AgentEngineTests`, `--filter AutoAdjustmentTests`, then full `./scripts/qa.sh` | PENDING |
-| Runtime/UI | Run Look Matching on a real shoot: scenes shown, flags unselected, apply + one undo | PENDING |
-| Media quality | Real family-portrait RW2 shoot: acceptance 8 counts | PENDING |
-| Performance | 8 GB M1, 100–200 RW2: total time and peak footprint vs. Auto baseline | PENDING |
+| Static/build | `git diff --check`; Swift build | **PASS** — `git diff --check` clean at every commit; debug build of `PerceptionEditor` with no warnings in new/changed files; app build passes inside every QA run. |
+| Unit/integration | `./scripts/test.sh --filter LookMatchTests`, `--filter AgentEngineTests`, `--filter AutoAdjustmentTests`, then full `./scripts/qa.sh` | **PASS by substitute.** Focused: `--filter "LookMatch\|AgentEngine"` 37 tests (36 run, real-shoot runner skipped without env); `AutoAdjustmentTests` 11/11 including the RW2 test. Full suite at each step commit: 334 → 338 → 344 → 352 → 354 → 365 → 365 → 368 tests, all passing, 26–27 skipped (opt-in real-media tests). Final head `64fae1e`: **369 tests in 79 suites passed, 342 executed / 27 skipped**, app build passed. `./scripts/qa.sh` itself cannot run here (no `rg` binary), so its source-review step is **NOT VERIFIED**. |
+| Runtime/UI | Run Look Matching on a real shoot: scenes shown, flags unselected, apply + one undo | **NOT VERIFIED** — not run in the app. Store-level behavior (flagged unselected, apply selected as one undo step, undo restores all) is covered by `LookMatchStoreTests`. Photographer runs the procedure above. |
+| Media quality | Real family-portrait RW2 shoot: acceptance 8 counts | **NOT VERIFIED** — needs the photographer's shoot. Only evidence so far: the 16-file `110_PANA` sample split into 3 scenes on 44-mired as-shot steps (not a family-portrait shoot, no kept/touched counts). |
+| Performance | 8 GB M1, 100–200 RW2: total time and peak footprint vs. Auto baseline | **NOT VERIFIED** — no 100–200-photo or whole-app measurement. Test-process evidence on this 8 GB M1 with 16 RW2: 0.6–3.4 s/photo worst case; peak ≈ Auto + 80–120 MB (see Decisions). |
+
+### Real-shoot check procedure (acceptance 8, photographer)
+
+1. Copy one family-portrait shoot (100–200 RW2, ideally with window, open shade and flash frames) to the **internal disk**, e.g. `~/Pictures/LM1-check/`. Work only on this copy.
+2. Build and open the branch app: `SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk ./scripts/build-app.sh`, then `open PerceptionEditor.app`.
+3. New project → Add Files in Place → select the copied folder's RW2 files. Save the project as `LM1-check.pmedit` next to the copy.
+4. Cull as usual, then edit **one hero per lighting scene** in Photo. Note which frame you edited for each scene and which light it was (window / shade / flash). Save, then duplicate the `.pmedit` as `LM1-check-heroes.pmedit` (a snapshot for step 9).
+5. Agents → Look Matching → Run Agent. Note the time shown from start to report (or use a stopwatch). Watch Activity Monitor → PerceptionEditor → Memory, and note the peak.
+6. Record: number of scenes, scenes marked "needs a hero" (is the suggested frame sensible?), flagged count, "already edited" list. Check each scene: does it hold one light? Note any scene that mixes window, shade or flash frames, and whether those frames were flagged.
+7. Leave flagged proposals unselected. Apply Selected. Press ⌘Z once and confirm every matched photo returns; press ⇧⌘Z to redo.
+8. In Photo, step through every photo that received an **unflagged** proposal. Count the ones you keep with no slider change ("kept") and the ones you adjust ("touched"). Pass when kept ÷ (kept + touched) ≥ 85% and every mixed-light scene from step 6 was split or flagged.
+9. Optional, for tuning: quit the app and run the analysis report on the hero snapshot:
+   `PME_LOOK_MATCH_PROJECT=~/Pictures/LM1-check/LM1-check-heroes.pmedit PME_LOOK_MATCH_OUTPUT=~/Pictures/LM1-check/look-match-report.txt SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk ./scripts/test.sh --no-parallel --filter realShootLookMatchReport -Xswiftc -plugin-path -Xswiftc /Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing` The report lists each scene's split reason and each proposal's confidence, which shows which threshold to move.
+10. Record the counts, time, peak memory, and any threshold changes in the Verification table and the thresholds table above.
 
 ## Decisions, discoveries, and remaining work
 

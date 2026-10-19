@@ -287,7 +287,7 @@ struct LookMatchAnalyzerTests {
         #expect(LookMatchAnalyzer.confidence(final: dark, goal: hero, sceneDistance: 0, thresholds: thresholds) < 0.7)
     }
 
-    @Test func aFrameOneStopDarkerSolvesToOneStopMoreExposure() throws {
+    @Test func aFrameOneStopDarkerSolvesToOneStopMoreExposure() async throws {
         let folder = try TempDirectory()
         let scene = LookMatchFixture.scene()
         let heroURL = try LookMatchFixture.write(scene, to: folder.url.appendingPathComponent("hero.png"))
@@ -297,7 +297,7 @@ struct LookMatchAnalyzerTests {
         let hero = LookMatchPhoto(id: UUID(), url: heroURL, adjustments: LookMatchFixture.heroLook)
         let target = LookMatchPhoto(id: UUID(), url: targetURL, adjustments: .neutral)
 
-        let result = try LookMatchAnalyzer().analyze(LookMatchRequest(
+        let result = try await LookMatchService().analyze(LookMatchRequest(
             photos: [hero, target], selectedID: nil, thresholds: LookMatchFixture.oneScene))
 
         let scene0 = try #require(result.scenes.first)
@@ -315,7 +315,7 @@ struct LookMatchAnalyzerTests {
         #expect(try [Data(contentsOf: heroURL), Data(contentsOf: targetURL)] == before)
     }
 
-    @Test func exposureIsClampedToOneAndAHalfStopsAndTheProposalIsFlagged() throws {
+    @Test func exposureIsClampedToOneAndAHalfStopsAndTheProposalIsFlagged() async throws {
         let folder = try TempDirectory()
         let scene = LookMatchFixture.scene()
         let heroURL = try LookMatchFixture.write(scene, to: folder.url.appendingPathComponent("hero.png"))
@@ -323,7 +323,7 @@ struct LookMatchAnalyzerTests {
                                                    to: folder.url.appendingPathComponent("target.png"))
         let hero = LookMatchPhoto(id: UUID(), url: heroURL, adjustments: LookMatchFixture.heroLook)
         let target = LookMatchPhoto(id: UUID(), url: targetURL, adjustments: .neutral)
-        let result = try LookMatchAnalyzer().analyze(LookMatchRequest(
+        let result = try await LookMatchService().analyze(LookMatchRequest(
             photos: [hero, target], selectedID: nil, thresholds: LookMatchFixture.oneScene))
         let proposal = try #require(result.scenes.first?.proposals.first)
         #expect(abs(proposal.adjustments.exposure - (LookMatchFixture.heroLook.exposure + 1.5)) < 0.011)
@@ -331,7 +331,7 @@ struct LookMatchAnalyzerTests {
         #expect(proposal.confidence < LookMatchThresholds.default.minimumConfidence)
     }
 
-    @Test func editedTargetsAreSkippedAndLocalWorkStaysWithItsPhoto() throws {
+    @Test func editedTargetsAreSkippedAndLocalWorkStaysWithItsPhoto() async throws {
         let folder = try TempDirectory()
         let scene = LookMatchFixture.scene()
         let heroURL = try LookMatchFixture.write(scene, to: folder.url.appendingPathComponent("hero.png"))
@@ -351,7 +351,7 @@ struct LookMatchAnalyzerTests {
         local.masks = [LocalMask(name: "Target brush", shape: .brush(strokes: []))]
 
         let ids = (hero: UUID(), edited: UUID(), local: UUID())
-        let result = try LookMatchAnalyzer().analyze(LookMatchRequest(photos: [
+        let result = try await LookMatchService().analyze(LookMatchRequest(photos: [
             LookMatchPhoto(id: ids.hero, url: heroURL, adjustments: heroLook),
             LookMatchPhoto(id: ids.edited, url: editedURL, adjustments: edited),
             LookMatchPhoto(id: ids.local, url: localURL, adjustments: local)
@@ -369,7 +369,7 @@ struct LookMatchAnalyzerTests {
         #expect(proposal.adjustments.masks.map(\.name) == ["Target brush"])
     }
 
-    @Test func aSceneWithoutAnEditGetsNoProposalsAndASuggestedHero() throws {
+    @Test func aSceneWithoutAnEditGetsNoProposalsAndASuggestedHero() async throws {
         let folder = try TempDirectory()
         let scene = LookMatchFixture.scene()
         let photos = try (0 ..< 3).map { index in
@@ -377,7 +377,7 @@ struct LookMatchAnalyzerTests {
                 LookMatchFixture.darkened(scene, ev: index == 1 ? 0 : -1.5),
                 to: folder.url.appendingPathComponent("p\(index).png")), adjustments: .neutral)
         }
-        let result = try LookMatchAnalyzer().analyze(LookMatchRequest(
+        let result = try await LookMatchService().analyze(LookMatchRequest(
             photos: photos, selectedID: nil, thresholds: LookMatchFixture.oneScene))
         let scene0 = try #require(result.scenes.first)
         #expect(scene0.heroID == nil)
@@ -403,7 +403,7 @@ struct LookMatchAnalyzerTests {
     /// Found on the 2026-10-18 shoot: a photo whose only edit was its white balance got a
     /// proposal that reset it to as-shot. White balance belongs to the photo, so it stays.
     @Test(.enabled(if: RawSample.isAvailable))
-    func aTargetsOwnRawWhiteBalanceIsKept() throws {
+    func aTargetsOwnRawWhiteBalanceIsKept() async throws {
         let directory = try #require(RawSample.url).deletingLastPathComponent()
         let files = try FileManager.default.contentsOfDirectory(atPath: directory.path)
             .filter { $0.uppercased().hasSuffix(".RW2") }.sorted().prefix(2)
@@ -418,7 +418,7 @@ struct LookMatchAnalyzerTests {
         let hero = LookMatchPhoto(id: UUID(), url: files[0], adjustments: look)
         let target = LookMatchPhoto(id: UUID(), url: files[1], adjustments: ownWhiteBalance)
 
-        let result = try LookMatchAnalyzer().analyze(LookMatchRequest(
+        let result = try await LookMatchService().analyze(LookMatchRequest(
             photos: [hero, target], selectedID: hero.id, thresholds: LookMatchFixture.oneScene))
         let proposal = try #require(result.scenes.first?.proposals.first)
         #expect(proposal.adjustments.raw.temperature == 5127)
@@ -426,8 +426,33 @@ struct LookMatchAnalyzerTests {
         #expect(proposal.adjustments.vibrance == look.vibrance)
     }
 
+    /// Found on 2026-10-19: analyses blocked inside Vision on Swift's cooperative threads.
+    /// With enough at once, every cooperative thread waited on Vision and nothing ran. The
+    /// service must keep its blocking work off that pool. The wait below is a kernel
+    /// timeout, so a deadlock fails the test instead of hanging it.
+    @Test func manyConcurrentAnalysesFinish() throws {
+        let folder = try TempDirectory()
+        let url = try LookMatchFixture.write(LookMatchFixture.scene(), to: folder.url.appendingPathComponent("a.png"))
+        let request = LookMatchRequest(photos: [
+            LookMatchPhoto(id: UUID(), url: url, adjustments: LookMatchFixture.heroLook),
+            LookMatchPhoto(id: UUID(), url: url, adjustments: .neutral)
+        ], selectedID: nil, thresholds: LookMatchFixture.oneScene)
+        let group = DispatchGroup()
+        let finished = Collector<Bool>()
+        for _ in 0 ..< 24 {
+            group.enter()
+            Task.detached {
+                let result = try? await LookMatchService().analyze(request)
+                finished.add(result?.scenes.first?.proposals.count == 1)
+                group.leave()
+            }
+        }
+        #expect(group.wait(timeout: .now() + 120) == .success, "Look Match analyses deadlocked")
+        #expect(finished.values.count == 24 && finished.values.allSatisfy { $0 })
+    }
+
     @Test(.enabled(if: RawSample.isAvailable))
-    func rawTargetsGetTheHerosWhiteBalanceOffsetFromTheirOwnAsShot() throws {
+    func rawTargetsGetTheHerosWhiteBalanceOffsetFromTheirOwnAsShot() async throws {
         let directory = try #require(RawSample.url).deletingLastPathComponent()
         let files = try FileManager.default.contentsOfDirectory(atPath: directory.path)
             .filter { $0.uppercased().hasSuffix(".RW2") }.sorted().prefix(2)
@@ -442,7 +467,7 @@ struct LookMatchAnalyzerTests {
         let hero = LookMatchPhoto(id: UUID(), url: files[0], adjustments: look)
         let target = LookMatchPhoto(id: UUID(), url: files[1], adjustments: .neutral)
 
-        let result = try LookMatchAnalyzer().analyze(LookMatchRequest(
+        let result = try await LookMatchService().analyze(LookMatchRequest(
             photos: [hero, target], selectedID: hero.id, thresholds: LookMatchFixture.oneScene))
         let proposal = try #require(result.scenes.first?.proposals.first)
         let expected = LookMatchAnalyzer.carriedWhiteBalance(hero: look.raw, heroAsShot: heroInfo, targetAsShot: targetInfo)

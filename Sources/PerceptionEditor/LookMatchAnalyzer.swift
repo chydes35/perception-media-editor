@@ -47,7 +47,14 @@ enum LookMatchError: LocalizedError {
 }
 
 /// Runs Look Match off the main actor and away from the preview renderer.
+///
+/// Analysis blocks inside RAW decoding and Vision. Swift's cooperative threads must not
+/// block: with enough analyses at once, every cooperative thread waited on Vision and nothing
+/// else could run (a deadlock seen on 2026-10-19). The actor therefore runs on its own
+/// serial dispatch queue, whose thread may block without starving the rest of the app.
 actor LookMatchService {
+    private let queue = DispatchSerialQueue(label: "com.perceptionmedia.editor.look-match", qos: .userInitiated)
+    nonisolated var unownedExecutor: UnownedSerialExecutor { queue.asUnownedSerialExecutor() }
     private let analyzer = LookMatchAnalyzer()
     func analyze(_ request: LookMatchRequest,
                  progress: @escaping @Sendable (Int, Int) -> Void = { _, _ in }) throws -> LookMatchResult {

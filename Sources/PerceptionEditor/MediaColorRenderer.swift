@@ -10,6 +10,11 @@ enum MediaColorRenderer {
         includesGeometry: Bool,
         highlightRolloff: Bool = false
     ) -> CIImage {
+        // Photos on process version 2 take the scene-referred pipeline. Video and process version 1
+        // keep this one unchanged, so existing edits render exactly as they always have.
+        if includesGeometry, adjustments.processVersion >= 2 {
+            return renderScene(source, adjustments: adjustments, isRAW: highlightRolloff)
+        }
         let sourceExtent = source.extent
         let repaired = includesGeometry ? RetouchRenderer.apply(source, strokes: adjustments.retouches) : source
         var image = includesGeometry ? orient(repaired, adjustments) : repaired
@@ -205,7 +210,7 @@ enum MediaColorRenderer {
         return image
     }
 
-    private static func crop(_ image: CIImage, to aspect: CropAspect, rect: CropRect?) -> CIImage {
+    static func crop(_ image: CIImage, to aspect: CropAspect, rect: CropRect?) -> CIImage {
         guard let area = ImageGeometry.cropArea(in: image.extent, aspect: aspect, rect: rect) else { return image }
         let cropped = image.cropped(to: area)
         return cropped.transformed(

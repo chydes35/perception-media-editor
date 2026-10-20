@@ -101,6 +101,19 @@ The [October 8 real-RAW selection pass](archive/SELECTION_QUALITY_2026-10-08.md)
 
 - Vision sharpness, closed-eye, and near-duplicate scoring
 
+### Image-quality program (planned 2026-10-19)
+
+Research: [PHOTO_PIPELINE_SOTA](research/PHOTO_PIPELINE_SOTA.md). Each phase is its own ExecPlan.
+
+- [ ] Phase Q0 — Image-quality harness (DeltaE2000/SSIM/OkLCh drift, synthetic fixtures, 16-bit goldens) and PV1 golden capture
+- [ ] Phase Q1 — Process Version 2: linear Rec.2020 scene pipeline, tone equalizer (adds Whites/Blacks), sigmoid display transform, OkLCh color, scene-linear masks, post-crop vignette, float P3/EDR preview
+- [ ] Phase Q2 — Detail and output: clarity/texture (local Laplacian), dehaze, deconvolution sharpening, output sharpening, 16-bit TIFF/HEIC/P3, metadata, export recipes, gain-map HDR
+- [ ] Phase Q3 — Pro local adjustments: add/subtract/intersect masks, range masks, SAM 2.1, BiRefNet, face parsing, depth
+- [ ] Phase Q4 — Retouch: MVC/Poisson heal, PatchMatch, LaMa
+- [ ] Phase Q5 — AI detail: AI denoise, Real-ESRGAN super resolution
+- [ ] Phase Q6 — Lens and geometry: lensfun, defringe, perspective, auto-upright
+- [ ] Phase Q7 — Learned auto and look transfer; smart culling
+
 Video (V0.3 below) resumes after the photo phases. Lumix S5 10-bit 4:2:2 and V-Log footage will likely need proxies and LUT support.
 
 ## V0.1 — Photo Engine (complete)

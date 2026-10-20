@@ -1,6 +1,6 @@
 # Click-to-select masks (SAM 2.1) and better selection edges
 
-Status: active (step 1 done: model downloaded, verified, scripted and bundled in the build; engine and UI not started)
+Status: active (steps 1 and 2 done: model bundled; engine behind `PromptableSegmenter` written and tested; memory, UI and edges not started)
 
 Roadmap: [Phase 3 masks and healing](../../docs/ROADMAP.md), image-quality program Q3 ([research](../../docs/research/PHOTO_PIPELINE_SOTA.md))
 
@@ -45,7 +45,7 @@ Out of scope for this plan: box and text prompts (the reference app only uses po
 ## Implementation steps
 
 1. **Model delivery. DONE 2026-10-20** (the user approved the download). `scripts/prepare-sam-model.sh` (pinned revision, per-file SHA-256, skips files already verified) and `scripts/compile-coreml-package.swift` compile the three packages to `.mlmodelc`; `scripts/build-app.sh` copies them into the app's `Resources/Models`; notice and Apache-2.0 license in `Resources/ModelNotices/SAM2`. Real input/output names and shapes recorded above. Run against the verified files it downloads nothing and compiles all three in 13 s. A fresh checkout downloads about 94 MB once on its first `build-app.sh`.
-2. **Engine behind a protocol.** `PromptableSegmenter` (encode a photo once, then decode masks for a list of labelled points) with a Core ML implementation and a deterministic fake for tests. Pure, testable pieces: mapping a displayed click to 1024-space through crop/rotation, upsample-then-threshold post-processing, orientation of the returned mask, an embedding cache keyed by photo with a memory cap.
+2. **Engine behind a protocol. DONE 2026-10-20** (`PromptableSegmenter.swift`, `SAM2Segmenter.swift`, `PromptableSegmenterTests`; the opt-in real-model test, `PM_SAM_MODELS=.build/models`, selected a synthetic disc: 3 candidates ordered part to whole, first encode in that run 4.1 s). Photo orientation and click-through-crop mapping stay in the UI step; the engine takes clicks in the oriented photo's 0…1 coordinates. `PromptableSegmenter` (encode a photo once, then decode masks for a list of labelled points) with a Core ML implementation and a deterministic fake for tests. Pure, testable pieces: mapping a displayed click to 1024-space through crop/rotation, upsample-then-threshold post-processing, orientation of the returned mask, an embedding cache keyed by photo with a memory cap.
 3. **Memory.** Load the models lazily off the main actor on `.cpuAndGPU` (the Neural Engine is ruled out above), run a visible warm-up on first use, measure peak footprint beside a 2,560 px working copy on the target Mac, unload after idle and on memory pressure (the store already has a pressure handler).
 4. **UI: a "Click to select" tool in the Masks panel** next to the existing subject/sky tools: include click, ⌥-click exclude, a granularity choice among the three candidates (part, object, whole), live preview after each click (a decode is about 20 ms), undo last click, accept to add a `SubjectMask`; reuse `SubjectPickingLayer`'s coordinate mapping and overlay rendering.
 5. **Edges.** Run the existing guided matte (`SubjectEdgeMatting`) on the SAM mask with the full-resolution photo as the guide; keep the existing shift/feather/contrast controls.

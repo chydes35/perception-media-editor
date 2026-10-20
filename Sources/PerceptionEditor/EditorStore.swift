@@ -271,6 +271,9 @@ final class EditorStore: ObservableObject {
     private var pendingVideoThumbnails: Set<UUID> = []
     private var pendingAudioWaveforms: Set<UUID> = []
     private var compositionRebuildTask: Task<Void, Never>?
+    /// The timeline build that has not yet replaced the player. While it is pending the live player still shows
+    /// the previous timeline, so its position must not move the selection back to the old clip.
+    private var pendingTimelineBuildID: UUID?
     private var playbackMonitorTask: Task<Void, Never>?
     private var playbackRequestID = UUID()
     /// How many preview builds (timeline or source) have started. A test seam for rebuild counts.
@@ -979,6 +982,7 @@ final class EditorStore: ObservableObject {
         selectedVideoAssetID = nil
         selectedTimelineClipID = nil
         playbackRequestID = UUID()
+        pendingTimelineBuildID = nil
         compositionRebuildTask?.cancel()
         replaceVideoPlayer(nil, timelineMode: false)
         timelinePlaybackDurationSeconds = 0
@@ -1859,6 +1863,7 @@ final class EditorStore: ObservableObject {
         let proxyURLs = usesProxiesForPlayback ? proxyStore.readyURLs : [:]
         let requestID = UUID()
         playbackRequestID = requestID
+        pendingTimelineBuildID = requestID
         playbackBuildCount += 1
         compositionRebuildTask?.cancel()
         statusMessage = "Building timeline preview…"
@@ -1880,6 +1885,7 @@ final class EditorStore: ObservableObject {
                 ocioInputsByAssetID: ocioInputs
             )
             guard !Task.isCancelled, playbackRequestID == requestID else { return }
+            pendingTimelineBuildID = nil
 
             timelinePlaybackWarnings = result.warnings + inputLUTs.warnings
             timelineUsedProxyCount = result.usedProxyCount
@@ -1929,7 +1935,7 @@ final class EditorStore: ObservableObject {
                 if self.timelinePlaybackPositionSeconds != position {
                     self.timelinePlaybackPositionSeconds = position
                 }
-                self.synchronizeTimelineSelection(at: seconds)
+                if self.pendingTimelineBuildID == nil { self.synchronizeTimelineSelection(at: seconds) }
             }
         }
     }

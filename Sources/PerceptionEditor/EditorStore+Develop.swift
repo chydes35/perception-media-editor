@@ -214,3 +214,14 @@ extension EditorStore {
         }
     }
 }
+
+extension EditorStore {
+    /// Moves the selected photo to another process. The sliders keep their values, and the change is
+    /// one undo step ("Process" in History), so it can be taken back if the look is not wanted.
+    func setProcessVersion(_ version: Int) {
+        guard selectedAsset?.kind == .photo,
+              (1...PhotoAdjustments.newestProcessVersion).contains(version),
+              selectedAdjustments.processVersion != version else { return }
+        updateAdjustments { $0.processVersion = version }
+    }
+}

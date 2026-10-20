@@ -353,10 +353,24 @@ struct CropRect: Codable, Equatable, Sendable {
 }
 
 struct PhotoAdjustments: Codable, Equatable, Sendable {
+    /// The process new photos start on. Version 2 (scene-referred linear pipeline, schema 13) is
+    /// opt-in per photo until it has had the photographer's visual sign-off on real RAW files and Auto
+    /// and Look Match are fitted to it; flipping this constant to 2 then makes it the default.
+    static let currentProcessVersion = 1
+    /// The newest process the renderer knows.
+    static let newestProcessVersion = 2
+
+    /// Which color pipeline renders this photo. 1 is the original display-referred pipeline and is
+    /// kept so existing edits look exactly as they did; 2 is the scene-referred pipeline. Files
+    /// saved before schema 13 have no value and decode as 1.
+    var processVersion = PhotoAdjustments.currentProcessVersion
     var exposure = 0.0
     var contrast = 0.0
     var highlights = 0.0
     var shadows = 0.0
+    /// Process version 2 only: the brightest and darkest tones of the tone equalizer.
+    var whites = 0.0
+    var blacks = 0.0
     var temperature = 0.0
     var tint = 0.0
     var vibrance = 0.0
@@ -385,6 +399,21 @@ struct PhotoAdjustments: Codable, Equatable, Sendable {
 
     static let neutral = PhotoAdjustments()
 
+    /// The RAW decode settings for this photo: `raw` plus the decode mode its process version needs.
+    var decodeSettings: RawSettings {
+        var settings = raw
+        settings.sceneLinear = processVersion >= 2
+        return settings
+    }
+
+    /// True when nothing is adjusted, whichever process version the photo uses. Video always renders
+    /// through the original pipeline, so its checks must not depend on the version.
+    var isUntouched: Bool {
+        var copy = self
+        copy.processVersion = Self.neutral.processVersion
+        return copy == .neutral
+    }
+
     /// Every look setting: tone, color, presence, curves, HSL, and RAW detail. Crop, rotation,
     /// straighten, and white balance belong to an individual photo, so they are left out.
     var lookOnly: PhotoAdjustments {
@@ -408,17 +437,22 @@ struct PhotoAdjustments: Codable, Equatable, Sendable {
 
 extension PhotoAdjustments {
     enum CodingKeys: String, CodingKey {
-        case exposure, contrast, highlights, shadows, temperature, tint, vibrance, saturation
+        case processVersion
+        case exposure, contrast, highlights, shadows, whites, blacks, temperature, tint, vibrance, saturation
         case sharpness, vignette, rotationQuarterTurns, cropAspect, cropRect, straightenDegrees, raw, curves, hsl, grading, grain, masks, retouches, lut
     }
 
     /// Every field decodes with a default, so projects saved before a field existed still open.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        // Missing means the file predates process versions, so it was edited with version 1.
+        processVersion = try container.decodeIfPresent(Int.self, forKey: .processVersion) ?? 1
         exposure = try container.decodeIfPresent(Double.self, forKey: .exposure) ?? 0
         contrast = try container.decodeIfPresent(Double.self, forKey: .contrast) ?? 0
         highlights = try container.decodeIfPresent(Double.self, forKey: .highlights) ?? 0
         shadows = try container.decodeIfPresent(Double.self, forKey: .shadows) ?? 0
+        whites = try container.decodeIfPresent(Double.self, forKey: .whites) ?? 0
+        blacks = try container.decodeIfPresent(Double.self, forKey: .blacks) ?? 0
         temperature = try container.decodeIfPresent(Double.self, forKey: .temperature) ?? 0
         tint = try container.decodeIfPresent(Double.self, forKey: .tint) ?? 0
         vibrance = try container.decodeIfPresent(Double.self, forKey: .vibrance) ?? 0
@@ -522,7 +556,7 @@ struct PhotoPreset: Identifiable, Codable, Equatable, Sendable {
 }
 
 struct EditorProject: Codable, Equatable {
-    static let currentSchemaVersion = 12
+    static let currentSchemaVersion = 13
 
     var schemaVersion = currentSchemaVersion
     var id = UUID()

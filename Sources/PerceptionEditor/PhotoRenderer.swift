@@ -101,6 +101,8 @@ enum PhotoSourceLoader {
     static func makeRawFilter(_ url: URL, settings: RawSettings, maxDimension: CGFloat?) -> CIRAWFilter? {
         guard let filter = CIRAWFilter(imageURL: url) else { return nil }
         filter.extendedDynamicRangeAmount = 2
+        // Process version 2 does its own tone mapping, so the engine's boost curve must not run first.
+        if settings.sceneLinear { filter.boostAmount = 0 }
 
         if let maxDimension {
             let native = filter.nativeSize
@@ -284,7 +286,7 @@ actor PhotoRenderer {
 
     func preview(url: URL, adjustments: PhotoAdjustments, overlayMaskID: UUID? = nil) -> PhotoPreviewResult? {
         return autoreleasepool {
-            guard let source = workingSource(for: url, raw: adjustments.raw) else {
+            guard let source = workingSource(for: url, raw: adjustments.decodeSettings) else {
                 PhotoPreviewDiagnostics.record("renderer preview source unavailable")
                 return nil
             }
@@ -322,7 +324,7 @@ actor PhotoRenderer {
     }
 
     func subjectSelectionOverlay(url: URL, png: Data, adjustments: PhotoAdjustments) -> RenderedImage? {
-        guard let source = workingSource(for: url, raw: adjustments.raw) else { return nil }
+        guard let source = workingSource(for: url, raw: adjustments.decodeSettings) else { return nil }
         let mask = LocalMask(shape: .subject(SubjectMask(png: png)))
         return maskOverlay(for: mask, source: source, adjustments: adjustments)
     }
@@ -360,7 +362,7 @@ actor PhotoRenderer {
             guard let (source, hasHeadroom) = PhotoSourceLoader.loadThumbnailSource(
                 url,
                 maxDimension: Self.thumbnailDimension,
-                raw: adjustments.raw
+                raw: adjustments.decodeSettings
             ) else {
                 return nil
             }
@@ -385,21 +387,7 @@ actor PhotoRenderer {
             let exportContext = fullResolutionContext(for: adjustments)
             let originals = protectedOriginals + [url]
             try ExportFileSafety.validate(destination, protecting: originals)
-            guard let source = PhotoSourceLoader.load(url, maxDimension: nil, raw: adjustments.raw) else {
-                throw PhotoRenderError.unreadableSource(url.lastPathComponent)
-            }
-            var image = MediaColorRenderer.render(source, adjustments: adjustments, includesGeometry: true,
-                                                  highlightRolloff: PhotoSourceLoader.hasHeadroom(url))
-            if let longEdgePixels, longEdgePixels > 0 {
-                let currentLongEdge = max(image.extent.width, image.extent.height)
-                if currentLongEdge > CGFloat(longEdgePixels) {
-                    let resize = CIFilter.lanczosScaleTransform()
-                    resize.inputImage = image
-                    resize.scale = Float(CGFloat(longEdgePixels) / currentLongEdge)
-                    resize.aspectRatio = 1
-                    image = resize.outputImage ?? image
-                }
-            }
+            let image = try finishedImage(url: url, adjustments: adjustments, longEdgePixels: longEdgePixels)
 
             try ExportFileSafety.writeAtomically(
                 to: destination, protecting: originals, replaceExisting: replaceExisting
@@ -418,6 +406,69 @@ actor PhotoRenderer {
         }
     }
 
+    /// Exports with a recipe: its format and bit depth, size, output sharpening and metadata.
+    /// The picture itself is the same render the preview shows.
+    func export(
+        url: URL,
+        adjustments: PhotoAdjustments,
+        to destination: URL,
+        recipe: BatchExportRecipe,
+        protectedOriginals: [URL] = [],
+        replaceExisting: Bool = true
+    ) throws {
+        try recipe.validate()
+        defer { clearRenderCaches() }
+        try autoreleasepool {
+            let exportContext = fullResolutionContext(for: adjustments)
+            let originals = protectedOriginals + [url]
+            try ExportFileSafety.validate(destination, protecting: originals)
+            var image = try finishedImage(url: url, adjustments: adjustments, longEdgePixels: recipe.longEdgePixels)
+            image = recipe.sharpening.apply(to: image)
+            image = image.settingProperties(ExportMetadata.properties(
+                from: ExportMetadata.sourceProperties(of: url), options: recipe.metadata))
+            let quality = [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: recipe.jpegQuality]
+
+            try ExportFileSafety.writeAtomically(
+                to: destination, protecting: originals, replaceExisting: replaceExisting
+            ) { temporary in
+                switch recipe.format {
+                case .jpeg:
+                    try exportContext.writeJPEGRepresentation(
+                        of: image, to: temporary, colorSpace: displayColorSpace, options: quality)
+                case .tiff16:
+                    try exportContext.writeTIFFRepresentation(
+                        of: image, to: temporary, format: .RGBA16, colorSpace: displayColorSpace, options: [:])
+                case .png16:
+                    try exportContext.writePNGRepresentation(
+                        of: image, to: temporary, format: .RGBA16, colorSpace: displayColorSpace, options: [:])
+                case .heic10:
+                    try exportContext.writeHEIF10Representation(
+                        of: image, to: temporary, colorSpace: displayColorSpace, options: quality)
+                }
+            }
+        }
+    }
+
+    /// The finished photo at full resolution, or Lanczos-reduced to `longEdgePixels`.
+    private func finishedImage(url: URL, adjustments: PhotoAdjustments, longEdgePixels: Int?) throws -> CIImage {
+        guard let source = PhotoSourceLoader.load(url, maxDimension: nil, raw: adjustments.decodeSettings) else {
+            throw PhotoRenderError.unreadableSource(url.lastPathComponent)
+        }
+        var image = MediaColorRenderer.render(source, adjustments: adjustments, includesGeometry: true,
+                                              highlightRolloff: PhotoSourceLoader.hasHeadroom(url))
+        if let longEdgePixels, longEdgePixels > 0 {
+            let currentLongEdge = max(image.extent.width, image.extent.height)
+            if currentLongEdge > CGFloat(longEdgePixels) {
+                let resize = CIFilter.lanczosScaleTransform()
+                resize.inputImage = image
+                resize.scale = Float(CGFloat(longEdgePixels) / currentLongEdge)
+                resize.aspectRatio = 1
+                image = resize.outputImage ?? image
+            }
+        }
+        return image
+    }
+
     // MARK: - 100% view
 
     /// A 1:1 pixel render of the part of the finished photo around `center`, for checking focus.
@@ -432,7 +483,7 @@ actor PhotoRenderer {
     ) -> FocusRender? {
         return autoreleasepool {
             guard viewportPixels.width >= 1, viewportPixels.height >= 1,
-                  let source = fullResolutionSource(for: url, raw: adjustments.raw)
+                  let source = fullResolutionSource(for: url, raw: adjustments.decodeSettings)
             else { return nil }
 
             let finished = MediaColorRenderer.render(source, adjustments: adjustments, includesGeometry: true,

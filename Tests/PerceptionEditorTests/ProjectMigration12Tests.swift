@@ -79,7 +79,7 @@ struct ProjectMigration12Tests {
         project.masterGainDecibels = -3.5
         let data = try document.data(for: project)
         let decoded = try document.project(from: data)
-        #expect(decoded.schemaVersion == 12)
+        #expect(decoded.schemaVersion == EditorProject.currentSchemaVersion)
         #expect(decoded.audioAdjustmentsByClipID == project.audioAdjustmentsByClipID)
         #expect(decoded.masterGainDecibels == -3.5)
         let text = try #require(String(data: data, encoding: .utf8))
@@ -92,19 +92,19 @@ struct ProjectMigration12Tests {
         #expect(opened.schemaVersion == 11)
         let data = try document.data(for: opened)
         let object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
-        #expect(object["schemaVersion"] as? Int == 12)
+        #expect(object["schemaVersion"] as? Int == EditorProject.currentSchemaVersion)
         let text = try #require(String(data: data, encoding: .utf8))
         #expect(!text.contains("\"volume\""))
         let reopened = try document.project(from: data)
-        #expect(reopened.schemaVersion == 12)
+        #expect(reopened.schemaVersion == EditorProject.currentSchemaVersion)
         #expect(reopened.audioAdjustmentsByClipID == opened.audioAdjustmentsByClipID)
         #expect(reopened.timelineClips == opened.timelineClips)
     }
 
     @Test func newerSchemasAreStillRefused() throws {
-        #expect(EditorProject.currentSchemaVersion == 12)
+        #expect(EditorProject.currentSchemaVersion >= 12)
         var object = try #require(try JSONSerialization.jsonObject(with: schema11Project()) as? [String: Any])
-        object["schemaVersion"] = 13
+        object["schemaVersion"] = EditorProject.currentSchemaVersion + 1
         #expect(throws: ProjectDocumentError.self) {
             try document.project(from: JSONSerialization.data(withJSONObject: object))
         }

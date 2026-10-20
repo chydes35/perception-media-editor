@@ -151,7 +151,7 @@ private struct SilentAudioTrack {
 
 /// Polls until the asset's proxy is ready or failed.
 @MainActor
-func waitForProxy(_ store: ProxyStore, _ id: UUID, timeout: Duration = .seconds(60)) async throws -> ProxyStatus {
+func waitForProxy(_ store: ProxyStore, _ id: UUID, timeout: Duration = TestDeadline.eventDuration) async throws -> ProxyStatus {
     let clock = ContinuousClock()
     let deadline = clock.now + timeout
     while clock.now < deadline {

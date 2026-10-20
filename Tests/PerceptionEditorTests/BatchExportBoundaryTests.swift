@@ -24,7 +24,7 @@ private final class BatchPublicationGate: @unchecked Sendable {
     func wait() throws {
         condition.lock(); defer { condition.unlock() }
         paused = true
-        let deadline = Date().addingTimeInterval(30)
+        let deadline = Date().addingTimeInterval(TestDeadline.event)
         while !open {
             guard condition.wait(until: deadline) || open else { throw BatchBoundaryFixtureError.timedOut }
         }
@@ -83,7 +83,7 @@ struct BatchExportBoundaryTests {
         return store
     }
     private func waitFor(_ gate: BatchPublicationGate) async throws {
-        let deadline = Date().addingTimeInterval(30)
+        let deadline = Date().addingTimeInterval(TestDeadline.event)
         while !gate.hasPaused, Date() < deadline { try await Task.sleep(for: .milliseconds(10)) }
         try #require(gate.hasPaused)
     }

@@ -34,7 +34,7 @@ enum AdjustmentGroup: String, CaseIterable, Codable, Identifiable, Sendable {
     var detail: String {
         switch self {
         case .whiteBalance: "Temperature and tint"
-        case .tone: "Exposure, contrast, highlights, shadows"
+        case .tone: "Exposure, contrast, highlights, shadows, whites, blacks"
         case .color: "Warmth, tint, vibrance, saturation"
         case .presence: "Sharpness and vignette"
         case .toneCurve: "RGB and channel curves"
@@ -70,6 +70,8 @@ extension PhotoAdjustments {
                 result.contrast = source.contrast
                 result.highlights = source.highlights
                 result.shadows = source.shadows
+                result.whites = source.whites
+                result.blacks = source.blacks
             case .color:
                 result.temperature = source.temperature
                 result.tint = source.tint
@@ -122,6 +124,9 @@ extension PhotoAdjustments {
         note("Contrast", contrast != old.contrast)
         note("Highlights", highlights != old.highlights)
         note("Shadows", shadows != old.shadows)
+        note("Whites", whites != old.whites)
+        note("Blacks", blacks != old.blacks)
+        note("Process", processVersion != old.processVersion)
         note("White Balance", raw.temperature != old.raw.temperature || raw.tint != old.raw.tint)
         note("Warmth", temperature != old.temperature)
         note("Tint", tint != old.tint)

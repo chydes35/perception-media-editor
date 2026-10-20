@@ -184,10 +184,10 @@ private func db(_ linear: Double) -> Double { 20 * log10(linear) }
             try await AudioLevelAnalyzer.analyze(url: url, range: nil, gainDecibels: 0) { probe.didRead() }
         }
         probe.set(task)
-        let start = ContinuousClock.now
         await #expect(throws: CancellationError.self) { try await task.value }
-        #expect(ContinuousClock.now - start < .seconds(1))
-        // The loop stops at its next check: at most one more buffer after the cancelling one.
+        // "Promptly" is bounded work, not elapsed time: the loop stops at its next check, so at most one
+        // more buffer is read after the cancelling one. A wall-clock bound here measured the test
+        // environment's scheduling delay (1.9 s against a 1 s bound under a full parallel run), not the loop.
         #expect(probe.readCount <= 4)
     }
 

@@ -269,7 +269,7 @@ final class LookMatchAnalyzer {
     }
 
     private func measureHero(_ photo: LookMatchPhoto, rawInfo: RawInfo?) throws -> Hero {
-        let source = try decode(photo.url, raw: photo.adjustments.raw)
+        let source = try decode(photo.url, raw: photo.adjustments.decodeSettings)
         var neutralFit: (Double, Double)?
         if rawInfo == nil, let neutral = ImageStatistics.neutralReference(statistics.pixels(source)) {
             neutralFit = statistics.fitWhiteBalance(neutral)
@@ -306,7 +306,7 @@ final class LookMatchAnalyzer {
             proposal.raw.temperature = carried.0
             proposal.raw.tint = carried.1
         }
-        let source = try decode(target.url, raw: proposal.raw)
+        let source = try decode(target.url, raw: proposal.decodeSettings)
         if survey?.rawInfo == nil, hero.rawInfo == nil, let heroFit = hero.neutralFit,
            let neutral = ImageStatistics.neutralReference(statistics.pixels(source)) {
             let fit = statistics.fitWhiteBalance(neutral)

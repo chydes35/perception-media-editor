@@ -20,4 +20,33 @@ jobs:
       - name: Swift version
         run: swift --version
       - name: Test and build
-        run: ./scripts/qa.sh
+        # Under a pseudo-terminal the output is flushed line by line; piped to the log it is block-buffered
+        # and a process that dies loses its last buffer (see the script's header).
+        # Under a terminal, git opens a pager for `git diff --check` and waits for a keypress forever.
+        env:
+          GIT_PAGER: cat
+          PAGER: cat
+        run: python3 scripts/run-in-pty.py ./scripts/qa.sh
+      # The test process can die without a message (a crash or a kill shows only as exit code 1), so on a
+      # failure print what macOS recorded: crash reports, the GPU the runner exposes, and memory.
+      - name: Crash reports and machine details
+        if: failure()
+        run: |
+          echo "== Crash reports"
+          ls -la ~/Library/Logs/DiagnosticReports 2>/dev/null || echo "none"
+          for f in ~/Library/Logs/DiagnosticReports/*; do
+            [ -f "$f" ] && { echo "=== $f"; head -c 8000 "$f"; echo; }
+          done
+          echo "== System crash reports"
+          ls -la /Library/Logs/DiagnosticReports 2>/dev/null || echo "none"
+          echo "== Unified log: kills, memory pressure, crashes and GPU faults in the last 6 minutes"
+          sudo log show --last 6m --style compact --predicate \
+            'eventMessage CONTAINS[c] "jetsam" OR eventMessage CONTAINS[c] "memorystatus" OR eventMessage CONTAINS[c] "killed" OR eventMessage CONTAINS[c] "crash" OR eventMessage CONTAINS[c] "terminated" OR eventMessage CONTAINS[c] "GPU" OR process == "ReportCrash"' \
+            2>/dev/null | tail -80 || true
+          echo "== Kernel messages"
+          sudo dmesg 2>/dev/null | tail -30 || true
+          echo "== GPU"
+          system_profiler SPDisplaysDataType 2>/dev/null | head -30 || true
+          echo "== Memory"
+          sysctl hw.memsize hw.ncpu
+          vm_stat | head -12

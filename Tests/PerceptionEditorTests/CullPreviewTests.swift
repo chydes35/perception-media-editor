@@ -56,7 +56,7 @@ struct CullPreviewCacheTests {
         cache.onLoaded = { _ in loaded += 1 }
 
         cache.prefetch(assets)
-        let deadline = Date().addingTimeInterval(10)
+        let deadline = Date().addingTimeInterval(TestDeadline.event)
         while loaded < 4, Date() < deadline {
             try await Task.sleep(for: .milliseconds(20))
         }
@@ -76,7 +76,7 @@ struct CullPreviewCacheTests {
         cache.onLoaded = { _ in loaded += 1 }
 
         cache.prefetch([original])
-        let deadline = Date().addingTimeInterval(10)
+        let deadline = Date().addingTimeInterval(TestDeadline.event)
         while loaded < 1, Date() < deadline { try await Task.sleep(for: .milliseconds(20)) }
         #expect(cache.image(for: original) != nil)
 
@@ -92,7 +92,7 @@ struct CullPreviewCacheTests {
         var loaded = 0
         cache.onLoaded = { _ in loaded += 1 }
         cache.prefetch([asset])
-        let deadline = Date().addingTimeInterval(10)
+        let deadline = Date().addingTimeInterval(TestDeadline.event)
         while loaded < 1, Date() < deadline { try await Task.sleep(for: .milliseconds(20)) }
 
         cache.remove(asset.id)

@@ -115,6 +115,7 @@ final class TimelineCompositionService {
         renderingPath: TimelineRenderingPath = .automatic,
         meters: Bool = false,
         statisticsKey: UUID? = nil,
+        scopeTap: ScopeTap = .shared,
         inputLUTsByAssetID: [UUID: ResolvedLUT] = [:],
         ocioInputsByAssetID: [UUID: OCIOInputTransform] = [:]
     ) async -> TimelineCompositionResult {
@@ -324,7 +325,7 @@ final class TimelineCompositionService {
         applyVideoComposition(
             to: playerItem, composition: composition, track: compositionVideoTrack, segments: videoSegments,
             quality: quality, sequenceRate: sequenceRate, renderingPath: renderingPath,
-            statisticsKey: statisticsKey, warnings: &warnings
+            statisticsKey: statisticsKey, scopeTap: scopeTap, warnings: &warnings
         )
 
         return TimelineCompositionResult(
@@ -367,6 +368,7 @@ final class TimelineCompositionService {
         sequenceRate: FrameRate,
         renderingPath: TimelineRenderingPath,
         statisticsKey: UUID?,
+        scopeTap: ScopeTap,
         warnings: inout [String]
     ) {
         guard let first = segments.first else { return }
@@ -399,18 +401,19 @@ final class TimelineCompositionService {
             if segment.range.start > cursor {
                 instructions.append(TimelineCompositionInstruction(
                     timeRange: CMTimeRange(start: cursor, end: segment.range.start), sourceTrackID: trackID, recipe: nil,
-                    statisticsKey: statisticsKey
+                    statisticsKey: statisticsKey, scopeTap: scopeTap
                 ))
             }
             instructions.append(TimelineCompositionInstruction(
-                timeRange: segment.range, sourceTrackID: trackID, recipe: segment.recipe, statisticsKey: statisticsKey
+                timeRange: segment.range, sourceTrackID: trackID, recipe: segment.recipe,
+                statisticsKey: statisticsKey, scopeTap: scopeTap
             ))
             cursor = segment.range.end
         }
         if composition.duration > cursor {
             instructions.append(TimelineCompositionInstruction(
                 timeRange: CMTimeRange(start: cursor, end: composition.duration), sourceTrackID: trackID, recipe: nil,
-                statisticsKey: statisticsKey
+                statisticsKey: statisticsKey, scopeTap: scopeTap
             ))
         }
 

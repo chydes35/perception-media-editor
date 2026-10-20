@@ -16,7 +16,19 @@ struct RawSettings: Codable, Equatable, Sendable {
     var detail: Double?
     var lensCorrection: Bool?
 
-    var isDefault: Bool { self == RawSettings() }
+    /// Decode scene-linear data without the RAW engine's own tone curve, for process version 2. It is
+    /// not stored in the project: it follows the photo's process version (`PhotoAdjustments.decodeSettings`).
+    var sceneLinear = false
+
+    private enum CodingKeys: String, CodingKey {
+        case temperature, tint, luminanceNoiseReduction, colorNoiseReduction, sharpness, detail, lensCorrection
+    }
+
+    var isDefault: Bool {
+        var copy = self
+        copy.sceneLinear = false
+        return copy == RawSettings()
+    }
 
     var hasWhiteBalance: Bool { temperature != nil || tint != nil }
 
@@ -32,7 +44,8 @@ struct RawSettings: Codable, Equatable, Sendable {
         func text(_ value: Double?) -> String { value.map { String(format: "%.4f", $0) } ?? "-" }
         return [
             text(temperature), text(tint), text(luminanceNoiseReduction), text(colorNoiseReduction),
-            text(sharpness), text(detail), lensCorrection.map { $0 ? "1" : "0" } ?? "-"
+            text(sharpness), text(detail), lensCorrection.map { $0 ? "1" : "0" } ?? "-",
+            sceneLinear ? "scene" : "display"
         ].joined(separator: "|")
     }
 }

@@ -53,7 +53,7 @@ final class ColorGradeStage: @unchecked Sendable {
             guard let wrapped = CIImage(mtlTexture: input, options: [.colorSpace: space]) else { return false }
             image = wrapped.transformed(by: flip)
         }
-        if adjustments != .neutral {
+        if !adjustments.isUntouched {
             image = MediaColorRenderer.render(image, adjustments: adjustments, includesGeometry: false)
         }
         context.render(image.cropped(to: bounds).transformed(by: flip), to: output, commandBuffer: commandBuffer, bounds: bounds, colorSpace: space)

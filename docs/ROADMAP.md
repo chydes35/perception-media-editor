@@ -94,12 +94,25 @@ The [October 8 real-RAW selection pass](archive/SELECTION_QUALITY_2026-10-08.md)
 ### Phase 4 — Delivery (in progress)
 
 - [x] Sequential selected-photo JPEG export with quality, long-edge size, collision-safe naming, progress/cancel, and per-file results
-- [ ] Batch export recipes: persistent presets, output sharpening, P3, copyright/IPTC, watermark
+- [~] Batch export recipes: persistent recipes, formats (JPEG, 16-bit TIFF/PNG, 10-bit HEIC), output sharpening and copyright/IPTC are implemented on `feat/pv2-scene-pipeline` ([plan](../plans/active/export-recipes.md); UI check in the app pending). P3 (E2), watermark and HDR gain-map output (E3) are not built
 - [ ] Real 100–200-photo delivery pass and whole-app export memory profile
 
 ### Phase 5 — Smart culling
 
 - Vision sharpness, closed-eye, and near-duplicate scoring
+
+### Image-quality program (planned 2026-10-19)
+
+Research: [PHOTO_PIPELINE_SOTA](research/PHOTO_PIPELINE_SOTA.md). Each phase is its own ExecPlan.
+
+- [ ] Phase Q0 — Image-quality harness (DeltaE2000/SSIM/OkLCh drift, synthetic fixtures, 16-bit goldens) and PV1 golden capture
+- [ ] Phase Q1 — Process Version 2: linear Rec.2020 scene pipeline, tone equalizer (adds Whites/Blacks), sigmoid display transform, OkLCh color, scene-linear masks, post-crop vignette, float P3/EDR preview
+- [ ] Phase Q2 — Detail and output: clarity/texture (local Laplacian), dehaze, deconvolution sharpening, output sharpening, 16-bit TIFF/HEIC/P3, metadata, export recipes, gain-map HDR
+- [ ] Phase Q3 — Pro local adjustments: add/subtract/intersect masks, range masks, SAM 2.1, BiRefNet, face parsing, depth
+- [ ] Phase Q4 — Retouch: MVC/Poisson heal, PatchMatch, LaMa
+- [ ] Phase Q5 — AI detail: AI denoise, Real-ESRGAN super resolution
+- [ ] Phase Q6 — Lens and geometry: lensfun, defringe, perspective, auto-upright
+- [ ] Phase Q7 — Learned auto and look transfer; smart culling
 
 Video (V0.3 below) resumes after the photo phases. Lumix S5 10-bit 4:2:2 and V-Log footage will likely need proxies and LUT support.
 

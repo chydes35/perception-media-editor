@@ -10,7 +10,8 @@ import Testing
 @Suite(.enabled(if: MTLCreateSystemDefaultDevice() != nil))
 struct HSLPrecisionTests {
     static let space = CGColorSpace(name: CGColorSpace.extendedSRGB)!
-    static let context = CIContext(mtlDevice: MTLCreateSystemDefaultDevice()!, options: [
+    /// `nonisolated(unsafe)`: `CIContext` is not `Sendable` in every SDK, and Core Image allows shared use.
+    nonisolated(unsafe) static let context = CIContext(mtlDevice: MTLCreateSystemDefaultDevice()!, options: [
         .workingFormat: CIFormat.RGBAh, .cacheIntermediates: false
     ])
 

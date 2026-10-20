@@ -108,7 +108,7 @@ final class VideoCompositingEngine: @unchecked Sendable {
     /// render size decodes straight into the output texture.
     func encode(
         source: CVPixelBuffer?, recipe: ClipRenderRecipe?, output: CVPixelBuffer, commandBuffer: MTLCommandBuffer,
-        compositionSeconds: Double? = nil
+        compositionSeconds: Double? = nil, scopeTap: ScopeTap = .shared
     ) throws -> FrameResources {
         var resources = FrameResources()
         func temporary(_ width: Int, _ height: Int) -> MTLTexture {
@@ -130,8 +130,8 @@ final class VideoCompositingEngine: @unchecked Sendable {
 
         do {
             // Only preview frames feed the scopes, and only while the scope panel is open.
-            let tap = outputFormat == kCVPixelFormatType_64RGBAHalf && ScopeTap.shared.shouldCapture(compositionSeconds: compositionSeconds)
-                ? ScopeTap.shared : nil
+            let tap = outputFormat == kCVPixelFormatType_64RGBAHalf && scopeTap.shouldCapture(compositionSeconds: compositionSeconds)
+                ? scopeTap : nil
             guard let source, let recipe else {
                 try kernels.fillBlack(final, commandBuffer: commandBuffer)
                 if let tap { try capture(final, for: tap, commandBuffer: commandBuffer, resources: &resources) }
@@ -158,7 +158,7 @@ final class VideoCompositingEngine: @unchecked Sendable {
                     current = fitted
                 }
                 if let ocio, let transform = recipe.ocioInput {
-                    if recipe.adjustments == .neutral {
+                    if recipe.adjustments.isUntouched {
                         try ocio.toDisplay(current, from: transform, into: final, commandBuffer: commandBuffer)
                     } else {
                         // Grade in scene-linear Rec. 709, between OCIO's input and output transforms.
@@ -348,7 +348,7 @@ class TimelineVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable
             let resources = try autoreleasepool {
                 try engine.encode(
                     source: source, recipe: source == nil ? nil : instruction.recipe, output: output, commandBuffer: commandBuffer,
-                    compositionSeconds: request.compositionTime.seconds
+                    compositionSeconds: request.compositionTime.seconds, scopeTap: instruction.scopeTap
                 )
             }
             CompositorStatisticsStore.shared.update(key) {
@@ -370,7 +370,7 @@ class TimelineVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable
                 if currentGeneration() != expected {
                     answer(box.value, key: key, interval: interval, .cancelled)
                 } else if buffer.status == .completed {
-                    if let capture = held.value.2.scopeCapture { ScopeTap.shared.publish(capture) }
+                    if let capture = held.value.2.scopeCapture { instruction.scopeTap.publish(capture) }
                     answer(box.value, key: key, interval: interval, .frame(held.value.1))
                 } else {
                     answer(box.value, key: key, interval: interval, .failure(buffer.error ?? VideoColorError.noMetalDevice))

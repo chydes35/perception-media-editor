@@ -138,7 +138,8 @@ actor TimelineExporter {
         guard let item = composed.playerItem else {
             throw TimelineExportError.nothingToExport(composed.warnings.first ?? "The timeline has no clips to export.")
         }
-        guard let base = item.videoComposition, let videoComposition = base.mutableCopy() as? AVMutableVideoComposition else {
+        // `await`: the video composition is main-actor isolated in CI's SDK; where it is not, this only warns.
+        guard let base = await item.videoComposition, let videoComposition = base.mutableCopy() as? AVMutableVideoComposition else {
             throw TimelineExportError.failed(composed.warnings.first ?? "the GPU compositor is unavailable")
         }
         let renderSize = settings.size.renderSize(for: base.renderSize)

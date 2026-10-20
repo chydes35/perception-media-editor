@@ -21,3 +21,18 @@ jobs:
         run: swift --version
       - name: Test and build
         run: ./scripts/qa.sh
+      # The test process can die without a message (a crash or a kill shows only as exit code 1), so on a
+      # failure print what macOS recorded: crash reports, the GPU the runner exposes, and memory.
+      - name: Crash reports and machine details
+        if: failure()
+        run: |
+          echo "== Crash reports"
+          ls -la ~/Library/Logs/DiagnosticReports 2>/dev/null || echo "none"
+          for f in ~/Library/Logs/DiagnosticReports/*; do
+            [ -f "$f" ] && { echo "=== $f"; head -c 8000 "$f"; echo; }
+          done
+          echo "== GPU"
+          system_profiler SPDisplaysDataType 2>/dev/null | head -30 || true
+          echo "== Memory"
+          sysctl hw.memsize hw.ncpu
+          vm_stat | head -12

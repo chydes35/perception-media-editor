@@ -7,7 +7,9 @@ enum IQRender {
     static let outputSpace = CGColorSpace(name: CGColorSpace.sRGB)!
 
     /// One context for every image-quality render, so the suite does not create a new GPU context per call.
-    static let sharedContext = CIContext(options: [.workingFormat: CIFormat.RGBAh, .cacheIntermediates: false])
+    /// `nonisolated(unsafe)`: `CIContext` is not `Sendable` on every SDK (the other test fixtures work around
+    /// the same thing), and Core Image documents a context as safe to use from several threads.
+    nonisolated(unsafe) static let sharedContext = CIContext(options: [.workingFormat: CIFormat.RGBAh, .cacheIntermediates: false])
 
     static func pixels(of image: CIImage, context: CIContext = IQRender.sharedContext) -> [UInt16] {
         let rect = image.extent.integral

@@ -16,12 +16,13 @@ import CoreImage.CIFilterBuiltins
 extension MediaColorRenderer {
     private static let sceneDisplayEncoding = CGColorSpace(name: CGColorSpace.sRGB)!
 
-    /// Linear sRGB primaries to linear Rec. 2020 (rows of the 3×3 matrix).
-    private static let srgbToRec2020 = (
-        r: CIVector(x: 0.627404, y: 0.329283, z: 0.043313, w: 0),
-        g: CIVector(x: 0.069097, y: 0.919540, z: 0.011362, w: 0),
-        b: CIVector(x: 0.016391, y: 0.088013, z: 0.895595, w: 0)
-    )
+    /// Linear sRGB primaries to linear Rec. 2020, the rows of the 3×3 matrix. Plain numbers, not
+    /// `CIVector`s: a static of non-`Sendable` type fails to compile under Swift 6.1's concurrency checks.
+    private static let srgbToRec2020Rows: [[CGFloat]] = [
+        [0.627404, 0.329283, 0.043313],
+        [0.069097, 0.919540, 0.011362],
+        [0.016391, 0.088013, 0.895595],
+    ]
 
     /// `includesGeometry: false` skips retouching, rotation, local masks, crop and grain, as it does in
     /// process 1; analysis (Auto) judges the global look only.
@@ -138,9 +139,10 @@ extension MediaColorRenderer {
     private static func toRec2020(_ image: CIImage) -> CIImage {
         let matrix = CIFilter.colorMatrix()
         matrix.inputImage = image
-        matrix.rVector = srgbToRec2020.r
-        matrix.gVector = srgbToRec2020.g
-        matrix.bVector = srgbToRec2020.b
+        let rows = srgbToRec2020Rows
+        matrix.rVector = CIVector(x: rows[0][0], y: rows[0][1], z: rows[0][2], w: 0)
+        matrix.gVector = CIVector(x: rows[1][0], y: rows[1][1], z: rows[1][2], w: 0)
+        matrix.bVector = CIVector(x: rows[2][0], y: rows[2][1], z: rows[2][2], w: 0)
         matrix.aVector = CIVector(x: 0, y: 0, z: 0, w: 1)
         matrix.biasVector = CIVector(x: 0, y: 0, z: 0, w: 0)
         return matrix.outputImage ?? image

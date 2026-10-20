@@ -54,7 +54,7 @@ struct RawProbeTests {
             let d1 = outputStats(out1), d2 = outputStats(out2)
             print(String(format: "PROBE-OUT %@ v1 median %.3f clip %.1f%% black %.1f%% | v2 median %.3f clip %.1f%% black %.1f%%",
                          name, d1.median, d1.clipped * 100, d1.dark * 100, d2.median, d2.clipped * 100, d2.dark * 100))
-            for process in [1, 2] {
+            for process in [1, 2] where ProcessInfo.processInfo.environment["PM_RAW_PROBE_SKIP_AUTO"] == nil {
                 var current = PhotoAdjustments(); current.processVersion = process
                 guard let suggestion = try? AutoAdjustmentAnalyzer().analyze(url: url, current: current) else { continue }
                 let applied = suggestion.applying(to: current)

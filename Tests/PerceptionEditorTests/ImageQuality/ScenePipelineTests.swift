@@ -10,7 +10,7 @@ struct ScenePipelineTests {
     }
 
     @Test func displayCurveHitsItsAnchors() {
-        for (curve, white) in [(SceneDisplayCurve.raw, 4.0), (SceneDisplayCurve.displayReferred, 1.0)] {
+        for (curve, white) in [(SceneDisplayCurve.raw, 8.0), (SceneDisplayCurve.displayReferred, 1.0)] {
             #expect(abs(curve.map(0.18) - 0.18) < 1e-9, "middle grey stays put")
             #expect(abs(curve.map(white) - 1) < 1e-9, "the white point lands on display white")
             #expect(curve.map(0) == 0)

@@ -196,8 +196,10 @@ struct SceneDisplayCurve: Equatable, Sendable {
     /// middle grey sits. The slider stays at 0 for an untouched photo.
     static let rawExposureOffset = 1.0
 
-    /// RAW decodes carry two stops of headroom above 1.0; display-referred files end at 1.0 and
-    /// already have their own tone curve, so theirs is nearly straight.
-    static let raw = SceneDisplayCurve(contrast: 1.45, whitePoint: 4.0)
+    /// RAW decodes carry headroom above 1.0, and with `rawExposureOffset` applied the brightest tones
+    /// sit near 4: a white point of 4 clipped about half as much again as process 1 on 36 sunlit
+    /// frames (10.3% against 5.7% on the brightest), 8 clips less than process 1 on every one.
+    /// Display-referred files end at 1.0 and already have their own tone curve, so theirs is nearly straight.
+    static let raw = SceneDisplayCurve(contrast: 1.45, whitePoint: 8.0)
     static let displayReferred = SceneDisplayCurve(contrast: 1.1, whitePoint: 1.0)
 }

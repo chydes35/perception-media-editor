@@ -208,9 +208,22 @@ final class OCIOColorKernels: @unchecked Sendable {
               let texture = device.makeTexture(descriptor: descriptor) else {
             throw VideoColorError.shaderCompilationFailed("OCIO table \(table.name) is malformed")
         }
-        let texels = table.channels == 1
-            ? values
-            : (0 ..< table.width * rows).flatMap { [values[$0 * 3], values[$0 * 3 + 1], values[$0 * 3 + 2], Float(1)] }
+        // Three-channel tables are padded to RGBA. A plain loop: the older compiler on CI could not
+        // type-check the one-line flatMap form in reasonable time.
+        let texels: [Float]
+        if table.channels == 1 {
+            texels = values
+        } else {
+            var padded: [Float] = []
+            padded.reserveCapacity(table.width * rows * 4)
+            for index in 0 ..< table.width * rows {
+                padded.append(values[index * 3])
+                padded.append(values[index * 3 + 1])
+                padded.append(values[index * 3 + 2])
+                padded.append(1)
+            }
+            texels = padded
+        }
         let texelBytes = (table.channels == 1 ? 1 : 4) * MemoryLayout<Float>.size
         texels.withUnsafeBytes { bytes in
             let region = table.twoD ? MTLRegionMake2D(0, 0, table.width, rows) : MTLRegionMake1D(0, table.width)

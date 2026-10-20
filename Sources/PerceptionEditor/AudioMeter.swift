@@ -107,15 +107,29 @@ final class AudioMeterTap: @unchecked Sendable {
                     ._withUnsafeGuaranteedRef { $0.process(bufferList, frames: framesOut.pointee, range: range) }
             }
         )
-        var tap: MTAudioProcessingTap?
-        let status = MTAudioProcessingTapCreate(
-            kCFAllocatorDefault, &callbacks, flags, &tap
-        )
-        guard status == noErr, let tap else {
+        let (status, created) = Self.createTap { MTAudioProcessingTapCreate(kCFAllocatorDefault, &callbacks, flags, $0) }
+        guard status == noErr, let created, let tap = Self.retainedTap(created) else {
             Unmanaged.passUnretained(self).release()
             return nil
         }
         return tap
+    }
+
+    /// `MTAudioProcessingTapCreate` takes a pointer to an optional tap in newer SDKs and to an optional
+    /// `Unmanaged` tap in older ones (CI's Xcode 16). Letting the closure's own use pick `T` makes one
+    /// call compile against both.
+    private static func createTap<T>(_ create: (UnsafeMutablePointer<T?>) -> OSStatus) -> (OSStatus, T?) {
+        var tap: T?
+        let status = withUnsafeMutablePointer(to: &tap, create)
+        return (status, tap)
+    }
+
+    /// The created tap as an owned reference: the older SDK hands back a +1 `Unmanaged` one.
+    private static func retainedTap<T>(_ created: T) -> MTAudioProcessingTap? {
+        if let unmanaged = created as? Unmanaged<MTAudioProcessingTap> { return unmanaged.takeRetainedValue() }
+        // Newer SDKs already return the owned reference; a cast to a CoreFoundation type is a compile error.
+        guard MemoryLayout<T>.size == MemoryLayout<MTAudioProcessingTap>.size else { return nil }
+        return unsafeBitCast(created, to: MTAudioProcessingTap.self)
     }
 
     private func prepare(_ format: AudioStreamBasicDescription) {

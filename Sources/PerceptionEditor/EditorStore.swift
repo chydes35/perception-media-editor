@@ -226,6 +226,8 @@ final class EditorStore: ObservableObject {
     @Published var batchExportState = BatchExportState()
     var batchExportTask: Task<Void, Never>?
     let batchPhotoExporter: BatchPhotoExporter?
+    /// Saved export recipes and the one the Export workspace has selected.
+    let exportRecipes: ExportRecipeLibrary
     @Published private(set) var thumbnailRevision = 0
 
     var projectURL: URL?
@@ -281,6 +283,7 @@ final class EditorStore: ObservableObject {
         ingestScanner: @escaping @Sendable (URL) -> [SourceFile] = { IngestService.scan($0) },
         autoAdjustmentAnalyzer: (@Sendable (URL, PhotoAdjustments) async throws -> AutoAdjustmentSuggestion)? = nil,
         batchPhotoExporter: BatchPhotoExporter? = nil,
+        exportRecipes: ExportRecipeLibrary? = nil,
         lookMatchAnalyzer: (@Sendable (LookMatchRequest) async throws -> LookMatchResult)? = nil,
         previewRenderOperation: (@Sendable (URL, PhotoAdjustments, UUID?, Bool) async
             -> (RenderedImage?, PhotoPreviewResult?))? = nil,
@@ -301,6 +304,8 @@ final class EditorStore: ObservableObject {
         self.autoAdjustmentAnalyzer = autoAdjustmentAnalyzer
         self.lookMatchAnalyzer = lookMatchAnalyzer
         self.batchPhotoExporter = batchPhotoExporter
+        self.exportRecipes = exportRecipes
+            ?? ExportRecipeLibrary(defaults: TestIsolation.isRunningTests ? TestIsolation.defaults : .standard)
         self.previewRenderOperation = previewRenderOperation
         userPresetRepository = presetRepository
         userPresets = presetRepository.load()
@@ -1080,11 +1085,15 @@ final class EditorStore: ObservableObject {
             return
         }
 
+        // The selected recipe supplies size, sharpening and metadata; the file extension picks the format.
+        var recipe = exportRecipes.selected.recipe
         let panel = NSSavePanel()
         panel.title = "Export Edited Photo"
-        panel.allowedContentTypes = [.jpeg, .png]
-        panel.nameFieldStringValue = asset.url.deletingPathExtension().lastPathComponent + "_edited.jpg"
+        panel.allowedContentTypes = ExportFormat.allCases.map(\.contentType)
+        panel.nameFieldStringValue = asset.url.deletingPathExtension().lastPathComponent
+            + recipe.filenameSuffix + "." + recipe.format.fileExtension
         guard panel.runModal() == .OK, let url = panel.url else { return }
+        if let chosen = ExportFormat(fileExtension: url.pathExtension) { recipe.format = chosen }
 
         let protectedOriginals = project.media.map(\.url)
         do {
@@ -1093,7 +1102,6 @@ final class EditorStore: ObservableObject {
             lastError = error.localizedDescription
             return
         }
-        let type: UTType = url.pathExtension.lowercased() == "png" ? .png : .jpeg
         let adjustments = selectedAdjustments
         // Full-resolution decodes get their own renderer so they neither block previews
         // nor stay cached after the export finishes.
@@ -1104,7 +1112,7 @@ final class EditorStore: ObservableObject {
         Task {
             do {
                 try await exporter.export(
-                    url: asset.url, adjustments: adjustments, to: url, type: type,
+                    url: asset.url, adjustments: adjustments, to: url, recipe: recipe,
                     protectedOriginals: protectedOriginals
                 )
                 statusMessage = "Exported \(url.lastPathComponent)"

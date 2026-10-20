@@ -61,6 +61,7 @@ extension EditorStore {
                 do {
                     let destination = try BatchExportPlanner.destination(
                         for: item, in: folder, suffix: recipe.filenameSuffix,
+                        fileExtension: recipe.format.fileExtension,
                         reserved: &reserved, protecting: originals
                     )
                     if let exportFile {
@@ -68,9 +69,7 @@ extension EditorStore {
                     } else {
                         try await renderer.export(
                             url: item.source, adjustments: item.adjustments, to: destination,
-                            type: .jpeg, quality: recipe.jpegQuality,
-                            protectedOriginals: originals, longEdgePixels: recipe.longEdgePixels,
-                            replaceExisting: false
+                            recipe: recipe, protectedOriginals: originals, replaceExisting: false
                         )
                     }
                     guard generation == projectGeneration else { return }

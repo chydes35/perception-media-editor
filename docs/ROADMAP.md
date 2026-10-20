@@ -94,7 +94,7 @@ The [October 8 real-RAW selection pass](archive/SELECTION_QUALITY_2026-10-08.md)
 ### Phase 4 — Delivery (in progress)
 
 - [x] Sequential selected-photo JPEG export with quality, long-edge size, collision-safe naming, progress/cancel, and per-file results
-- [ ] Batch export recipes: persistent presets, output sharpening, P3, copyright/IPTC, watermark
+- [~] Batch export recipes: persistent recipes, formats (JPEG, 16-bit TIFF/PNG, 10-bit HEIC), output sharpening and copyright/IPTC are implemented on `feat/pv2-scene-pipeline` ([plan](../plans/active/export-recipes.md); UI check in the app pending). P3 (E2), watermark and HDR gain-map output (E3) are not built
 - [ ] Real 100–200-photo delivery pass and whole-app export memory profile
 
 ### Phase 5 — Smart culling

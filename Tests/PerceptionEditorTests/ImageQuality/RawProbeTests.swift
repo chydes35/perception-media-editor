@@ -1,5 +1,6 @@
 import CoreImage
 import Foundation
+import ImageIO
 import Testing
 @testable import PerceptionEditor
 
@@ -67,6 +68,48 @@ struct RawProbeTests {
             }
             print(String(format: "PROBE %@ baselineExposure=%.2f boost=%.2f | legacy median %.3f p99 %.2f >1 %.1f%% | linear median %.4f p99 %.3f >1 %.1f%%",
                          name, filter.baselineExposure, filter.boostAmount, a.median, a.p99, a.over1 * 100, b.median, b.p99, b.over1 * 100))
+        }
+    }
+
+    private func peakMegabytes() -> Double {
+        var usage = rusage()
+        getrusage(RUSAGE_SELF, &usage)
+        return Double(usage.ru_maxrss) / 1_048_576
+    }
+
+    /// `PM_EXPORT_PROBE=1 PM_RAW_PROBE_DIR=<folder>`: exports one real RAW at full resolution in every
+    /// format, with process 2, and prints size, depth, metadata and the process's peak memory.
+    @Test func exportEveryFormat() async throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["PM_EXPORT_PROBE"] != nil, let directory = environment["PM_RAW_PROBE_DIR"] else { return }
+        let name = try FileManager.default.contentsOfDirectory(atPath: directory)
+            .filter { $0.uppercased().hasSuffix(".RW2") }.sorted().first
+        let source = URL(fileURLWithPath: directory).appendingPathComponent(try #require(name))
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("export-probe-\(UUID())")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        var adjustments = PhotoAdjustments()
+        adjustments.processVersion = 2
+        print(String(format: "EXPORT-PROBE start peak %.0f MB", peakMegabytes()))
+        for format in ExportFormat.allCases {
+            var recipe = BatchExportRecipe(format: format, sharpening: format == .jpeg ? .standard : .none)
+            recipe.metadata.copyright = "© 2026 Perception Media"
+            let output = folder.appendingPathComponent("probe.\(format.fileExtension)")
+            let started = Date()
+            try await PhotoRenderer(workingCacheLimit: 0, memoryTargetMB: 128)
+                .export(url: source, adjustments: adjustments, to: output, recipe: recipe)
+            let seconds = Date().timeIntervalSince(started)
+            let properties = ExportMetadata.sourceProperties(of: output)
+            let exif = properties[kCGImagePropertyExifDictionary as String] as? [String: Any] ?? [:]
+            let size = (try? FileManager.default.attributesOfItem(atPath: output.path)[.size] as? Int) ?? 0
+            print(String(format: "EXPORT-PROBE %@ %dx%d depth %@ %.1f MB file, %.1f s, peak %.0f MB, gps %@ serial %@ exposure %@",
+                         format.rawValue,
+                         properties[kCGImagePropertyPixelWidth as String] as? Int ?? 0,
+                         properties[kCGImagePropertyPixelHeight as String] as? Int ?? 0,
+                         "\(properties[kCGImagePropertyDepth as String] ?? "?")", Double(size) / 1_048_576, seconds, peakMegabytes(),
+                         properties[kCGImagePropertyGPSDictionary as String] == nil ? "removed" : "present",
+                         exif[kCGImagePropertyExifBodySerialNumber as String] == nil ? "removed" : "present",
+                         exif[kCGImagePropertyExifExposureTime as String] == nil ? "MISSING" : "kept"))
         }
     }
 }

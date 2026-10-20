@@ -37,6 +37,14 @@ jobs:
           for f in ~/Library/Logs/DiagnosticReports/*; do
             [ -f "$f" ] && { echo "=== $f"; head -c 8000 "$f"; echo; }
           done
+          echo "== System crash reports"
+          ls -la /Library/Logs/DiagnosticReports 2>/dev/null || echo "none"
+          echo "== Unified log: kills, memory pressure, crashes and GPU faults in the last 6 minutes"
+          sudo log show --last 6m --style compact --predicate \
+            'eventMessage CONTAINS[c] "jetsam" OR eventMessage CONTAINS[c] "memorystatus" OR eventMessage CONTAINS[c] "killed" OR eventMessage CONTAINS[c] "crash" OR eventMessage CONTAINS[c] "terminated" OR eventMessage CONTAINS[c] "GPU" OR process == "ReportCrash"' \
+            2>/dev/null | tail -80 || true
+          echo "== Kernel messages"
+          sudo dmesg 2>/dev/null | tail -30 || true
           echo "== GPU"
           system_profiler SPDisplaysDataType 2>/dev/null | head -30 || true
           echo "== Memory"

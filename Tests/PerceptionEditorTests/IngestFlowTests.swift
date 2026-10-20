@@ -15,7 +15,7 @@ struct IngestFlowTests {
     }
 
     private func waitForIngest(_ store: EditorStore) async throws {
-        let deadline = Date().addingTimeInterval(30)
+        let deadline = Date().addingTimeInterval(TestDeadline.event)
         while store.ingest.isRunning || store.ingest == .idle {
             #expect(Date() < deadline, "Ingest did not finish")
             if Date() >= deadline { return }
@@ -73,7 +73,7 @@ struct IngestFlowTests {
         store.beginCullingAfterImport()
         #expect(store.workspace == .cull)
         #expect(store.selectedAssetID == photos[0].id)
-        let deadline = Date().addingTimeInterval(10)
+        let deadline = Date().addingTimeInterval(TestDeadline.event)
         while store.loupeImage == nil, Date() < deadline {
             try await Task.sleep(for: .milliseconds(20))
         }

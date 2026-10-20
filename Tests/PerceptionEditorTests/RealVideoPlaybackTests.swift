@@ -109,13 +109,13 @@ struct RealVideoPlaybackTests {
         item.add(output)
         let player = AVPlayer(playerItem: item)
         player.automaticallyWaitsToMinimizeStalling = false
-        try await waitUntil(timeout: 30) { item.status == .readyToPlay }
+        try await waitUntil(timeout: TestDeadline.event) { item.status == .readyToPlay }
         let duration = item.duration.seconds
         let frameDuration = rate.frameTime
         let timer = pullFrames(from: output, frameDuration: frameDuration, into: delivered)
         let start = CACurrentMediaTime()
         player.play()
-        try await waitUntil(timeout: duration + 30) { player.currentTime().seconds >= duration - frameDuration.seconds / 2 || item.status == .failed }
+        try await waitUntil(timeout: duration + TestDeadline.event) { player.currentTime().seconds >= duration - frameDuration.seconds / 2 || item.status == .failed }
         try await Task.sleep(for: .milliseconds(200)) // Let the output hand over the last frame.
         timer.cancel()
         player.pause()

@@ -112,7 +112,7 @@ struct IntegratedAutoTests {
         return (store, asset)
     }
     private func waitFor(_ gate: IntegratedAutoGate) async throws {
-        let deadline = Date().addingTimeInterval(30)
+        let deadline = Date().addingTimeInterval(TestDeadline.event)
         while !(await gate.started), Date() < deadline { try await Task.sleep(for: .milliseconds(10)) }
         try #require(await gate.started)
     }

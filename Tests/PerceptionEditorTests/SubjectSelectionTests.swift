@@ -115,7 +115,7 @@ struct SubjectFailureStatusTests {
         store.selectedAssetID = missing.id
         let before = store.project
         store.startSubjectSelection()
-        let deadline = Date().addingTimeInterval(5)
+        let deadline = Date().addingTimeInterval(TestDeadline.event)
         while store.isAnalyzingSubjects, Date() < deadline { try await Task.sleep(for: .milliseconds(10)) }
         #expect(!store.isAnalyzingSubjects)
         #expect(store.lastError == SubjectSelectionError.noPhoto.localizedDescription)

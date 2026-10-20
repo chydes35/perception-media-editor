@@ -33,9 +33,10 @@ struct PresetReplaceLookTests {
     }
 }
 
-/// Polls until `condition` holds, so a slow machine does not fail a timing-based test.
+/// Polls until `condition` holds and returns at once when it does. A 10 s deadline failed this correct
+/// feature under a full parallel run; see `TestDeadline`.
 @MainActor
-private func pollUntil(timeout: Duration = .seconds(10), _ condition: () async -> Bool) async -> Bool {
+private func pollUntil(timeout: Duration = TestDeadline.eventDuration, _ condition: () async -> Bool) async -> Bool {
     let deadline = ContinuousClock.now + timeout
     while ContinuousClock.now < deadline {
         if await condition() { return true }

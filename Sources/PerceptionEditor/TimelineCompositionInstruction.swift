@@ -33,12 +33,19 @@ final class TimelineCompositionInstruction: NSObject, AVVideoCompositionInstruct
     let recipe: ClipRenderRecipe?
     /// Tests give a composition a key to read its compositor's counters.
     let statisticsKey: UUID?
+    /// Where preview frames leave their scope capture. The app uses the shared tap; a test gives its
+    /// composition its own, so other tests' video cannot reach it.
+    let scopeTap: ScopeTap
 
-    init(timeRange: CMTimeRange, sourceTrackID: CMPersistentTrackID, recipe: ClipRenderRecipe?, statisticsKey: UUID? = nil) {
+    init(
+        timeRange: CMTimeRange, sourceTrackID: CMPersistentTrackID, recipe: ClipRenderRecipe?,
+        statisticsKey: UUID? = nil, scopeTap: ScopeTap = .shared
+    ) {
         self.timeRange = timeRange
         self.sourceTrackID = sourceTrackID
         self.recipe = recipe
         self.statisticsKey = statisticsKey
+        self.scopeTap = scopeTap
         requiredSourceTrackIDs = recipe == nil ? [] : [NSNumber(value: sourceTrackID)]
         super.init()
     }

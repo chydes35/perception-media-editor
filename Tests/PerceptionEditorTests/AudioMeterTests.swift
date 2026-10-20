@@ -218,7 +218,7 @@ struct AudioMeterPlumbingTests {
         player.volume = 0.001
         player.play()
         defer { player.pause() }
-        try await waitUntil(timeout: 10) { tap.processedBlockCount > 4 }
+        try await waitUntil(timeout: TestDeadline.event) { tap.processedBlockCount > 4 }
         let peaks = tap.takePeaks()
         // The source tone is 0.25; the player hands the tap that raw signal and the tap applies the +6 dB
         // clip gain itself (the mix gain comes after the tap), so the gain path is exercised: 0.5.

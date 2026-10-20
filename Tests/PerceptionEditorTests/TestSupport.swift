@@ -157,9 +157,22 @@ func pixel(of image: CGImage, x: Int, y: Int) -> (r: Int, g: Int, b: Int) {
     return (Int(data[0]), Int(data[1]), Int(data[2]))
 }
 
-/// Polls until `condition` holds, or fails the test after `timeout` seconds.
+/// How long a test waits for an asynchronous event before it calls the behavior broken.
+///
+/// A wait returns the moment its condition holds, so this deadline is only ever spent on a failure. It is
+/// sized to the test environment, not to the feature: with the whole suite running, Swift Testing queues
+/// hundreds of CPU-heavy tests behind a cooperative pool of one thread per core, and every timer wake-up
+/// waits in that queue. A heartbeat loop measured those delays at up to 30 s on the 8-core M1 on
+/// 2026-10-20, and they grow with the suite. Use these for waits on events, never for timing assertions.
+enum TestDeadline {
+    static let event: TimeInterval = 120
+    static var eventDuration: Duration { .seconds(event) }
+}
+
+/// Polls until `condition` holds, or fails the test after `timeout` seconds (`TestDeadline.event` unless
+/// the caller has a reason to wait less or more).
 @MainActor
-func waitUntil(timeout: Double = 15, _ condition: @MainActor () -> Bool) async throws {
+func waitUntil(timeout: Double = TestDeadline.event, _ condition: @MainActor () -> Bool) async throws {
     let deadline = Date().addingTimeInterval(timeout)
     while !condition() {
         if Date() >= deadline {

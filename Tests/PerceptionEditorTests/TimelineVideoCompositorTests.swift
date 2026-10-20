@@ -605,7 +605,7 @@ struct TimelineVideoCompositorTests {
         }
         await player.seek(to: CMTimeMultiply(frame, multiplier: 120), toleranceBefore: .zero, toleranceAfter: .zero)
 
-        let deadline = ContinuousClock.now + .seconds(5)
+        let deadline = ContinuousClock.now + TestDeadline.eventDuration
         var statistics = TimelineVideoCompositor.statistics(for: key)
         while ContinuousClock.now < deadline, statistics.pending > 0 || statistics.started == 0 {
             try await Task.sleep(for: .milliseconds(50))

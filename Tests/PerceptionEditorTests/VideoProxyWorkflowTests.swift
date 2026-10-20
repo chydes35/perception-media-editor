@@ -307,7 +307,7 @@ struct VideoProxyWorkflowTests {
 }
 
 @MainActor
-func waitUntil(timeout: Duration = .seconds(30), _ condition: () -> Bool) async throws {
+func waitUntil(timeout: Duration = TestDeadline.eventDuration, _ condition: () -> Bool) async throws {
     let clock = ContinuousClock()
     let deadline = clock.now + timeout
     while !condition() {

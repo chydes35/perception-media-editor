@@ -186,7 +186,7 @@ struct ProxyGeneratorTests {
         // The fault holds the job mid-flight after one frame, so the cancel is deterministic.
         let faults = ProxyGenerationFaults(stallAfterFrames: 1, watchdogInterval: nil)
         let job = Task { try await ProxyGenerator.generate(source: source, destination: destination, faults: faults) }
-        let deadline = ContinuousClock.now + .seconds(30)
+        let deadline = ContinuousClock.now + TestDeadline.eventDuration
         while !FileManager.default.fileExists(atPath: partial.path), ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(5))
         }

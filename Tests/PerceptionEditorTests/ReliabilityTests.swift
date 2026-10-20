@@ -102,7 +102,7 @@ struct IngestReliabilityTests {
             backupRoot: nil
         ))
         store.cancelIngest()
-        try await waitUntil(timeout: 30) { !store.ingest.isRunning }
+        try await waitUntil(timeout: TestDeadline.event) { !store.ingest.isRunning }
         guard case .finished(let summary) = store.ingest else {
             Issue.record("A stopped import should report cancellation, got \(store.ingest)")
             return
@@ -202,7 +202,7 @@ struct IngestReliabilityTests {
             destination: .newShoot(name: "Complete", date: .now, root: try temp.subdirectory("Shoots")),
             backupRoot: nil
         ))
-        try await waitUntil(timeout: 30) { !store.ingest.isRunning }
+        try await waitUntil(timeout: TestDeadline.event) { !store.ingest.isRunning }
         let saved = try ProjectDocument().load(from: try #require(store.projectURL))
         #expect(saved.media.count == 24)
         #expect(store.project.media.count == 24)
@@ -243,7 +243,7 @@ struct IngestReliabilityTests {
             backupRoot: nil
         ))
         // Scan completion publishes nil before awaiting the retiring worker.
-        try await waitUntil(timeout: 30) {
+        try await waitUntil(timeout: TestDeadline.event) {
             scanner.hasStarted && store.ingestScanTask == nil && store.ingestTask != nil
         }
         #expect(store.ingestWorker == nil)

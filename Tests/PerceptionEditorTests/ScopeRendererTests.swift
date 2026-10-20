@@ -202,11 +202,13 @@ struct ScopeCompositorTests {
         let movie = try await writeColorPatternMovie(to: temp.url.appendingPathComponent("p.mov"), frames: 24)
         let asset = MediaAsset(url: movie, kind: .video, durationSeconds: 1, frameRate: .ntsc23976, frameCount: 24)
         let clip = TimelineClip(assetID: asset.id, durationFrames: 24)
-        let tap = ScopeTap.shared
+        // Its own tap: the shared one is fed by every preview-quality composition in the process, so
+        // video tests running in parallel would change its counters and its latest frame mid-assertion.
+        let tap = ScopeTap()
 
         func readAll() async throws {
             let item = try #require(await TimelineCompositionService.shared.makePlayerItem(
-                clips: [clip], media: [asset], quality: .preview, renderingPath: .compositor
+                clips: [clip], media: [asset], quality: .preview, renderingPath: .compositor, scopeTap: tap
             ).playerItem)
             let tracks = try await item.asset.loadTracks(withMediaType: .video)
             let reader = try AVAssetReader(asset: item.asset)

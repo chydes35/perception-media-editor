@@ -222,11 +222,19 @@ struct PhotoWorkspace: View {
                     adjustmentGroup("WHITE BALANCE") { whiteBalanceControls }
                 }
 
+                if store.selectedAsset?.kind == .photo {
+                    adjustmentGroup("PROCESS") { processControls }
+                }
+
                 adjustmentGroup("LIGHT") {
                     adjustment("Exposure", keyPath: \.exposure, range: -3...3)
                     adjustment("Contrast", keyPath: \.contrast, range: -1...1)
                     adjustment("Highlights", keyPath: \.highlights, range: -1...1)
                     adjustment("Shadows", keyPath: \.shadows, range: -1...1)
+                    if store.selectedAdjustments.processVersion >= 2 {
+                        adjustment("Whites", keyPath: \.whites, range: -1...1)
+                        adjustment("Blacks", keyPath: \.blacks, range: -1...1)
+                    }
                 }
 
                 adjustmentGroup("COLOR") {
@@ -372,6 +380,26 @@ struct PhotoWorkspace: View {
     }
 
     // MARK: - RAW controls
+
+    private var processControls: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Picker("Process", selection: Binding(
+                get: { store.selectedAdjustments.processVersion >= 2 ? 2 : 1 },
+                set: { store.setProcessVersion($0) }
+            )) {
+                Text("2026").tag(2)
+                Text("Legacy").tag(1)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .accessibilityIdentifier("photo-process-version")
+            Text(store.selectedAdjustments.processVersion >= 2
+                 ? "Scene-referred rendering: Whites and Blacks, smoother highlight roll-off."
+                 : "The original rendering. Existing edits keep this look.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
 
     private var whiteBalanceControls: some View {
         let raw = store.selectedAdjustments.raw

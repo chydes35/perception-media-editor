@@ -21,6 +21,8 @@ extension PhotoAdjustments {
         result.contrast = mix(contrast, full.contrast)
         result.highlights = mix(highlights, full.highlights)
         result.shadows = mix(shadows, full.shadows)
+        result.whites = mix(whites, full.whites)
+        result.blacks = mix(blacks, full.blacks)
         result.temperature = mix(temperature, full.temperature)
         result.tint = mix(tint, full.tint)
         result.vibrance = mix(vibrance, full.vibrance)

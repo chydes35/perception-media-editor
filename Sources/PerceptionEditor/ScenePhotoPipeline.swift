@@ -43,7 +43,8 @@ extension MediaColorRenderer {
 
         image = sceneTone(
             image, exposure: adjustments.exposure, contrast: adjustments.contrast,
-            shadows: adjustments.shadows, highlights: adjustments.highlights)
+            shadows: adjustments.shadows, highlights: adjustments.highlights,
+            whites: adjustments.whites, blacks: adjustments.blacks)
 
         for mask in adjustments.masks where mask.isActive {
             let adjusted = sceneLocalAdjust(image, mask.adjustments)
@@ -150,9 +151,10 @@ extension MediaColorRenderer {
     }
 
     private static func sceneTone(
-        _ image: CIImage, exposure: Double, contrast: Double, shadows: Double, highlights: Double
+        _ image: CIImage, exposure: Double, contrast: Double, shadows: Double, highlights: Double,
+        whites: Double = 0, blacks: Double = 0
     ) -> CIImage {
-        let bands = toneBands(shadows: shadows, highlights: highlights)
+        let bands = toneBands(shadows: shadows, highlights: highlights, blacks: blacks, whites: whites)
         let gain = pow(2, exposure)
         let contrastExponent = 1 + 0.5 * contrast
         guard exposure != 0 || contrast != 0 || bands.contains(where: { $0 != 0 }) else { return image }

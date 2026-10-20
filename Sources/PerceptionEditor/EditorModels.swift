@@ -368,6 +368,9 @@ struct PhotoAdjustments: Codable, Equatable, Sendable {
     var contrast = 0.0
     var highlights = 0.0
     var shadows = 0.0
+    /// Process version 2 only: the brightest and darkest tones of the tone equalizer.
+    var whites = 0.0
+    var blacks = 0.0
     var temperature = 0.0
     var tint = 0.0
     var vibrance = 0.0
@@ -435,7 +438,7 @@ struct PhotoAdjustments: Codable, Equatable, Sendable {
 extension PhotoAdjustments {
     enum CodingKeys: String, CodingKey {
         case processVersion
-        case exposure, contrast, highlights, shadows, temperature, tint, vibrance, saturation
+        case exposure, contrast, highlights, shadows, whites, blacks, temperature, tint, vibrance, saturation
         case sharpness, vignette, rotationQuarterTurns, cropAspect, cropRect, straightenDegrees, raw, curves, hsl, grading, grain, masks, retouches, lut
     }
 
@@ -448,6 +451,8 @@ extension PhotoAdjustments {
         contrast = try container.decodeIfPresent(Double.self, forKey: .contrast) ?? 0
         highlights = try container.decodeIfPresent(Double.self, forKey: .highlights) ?? 0
         shadows = try container.decodeIfPresent(Double.self, forKey: .shadows) ?? 0
+        whites = try container.decodeIfPresent(Double.self, forKey: .whites) ?? 0
+        blacks = try container.decodeIfPresent(Double.self, forKey: .blacks) ?? 0
         temperature = try container.decodeIfPresent(Double.self, forKey: .temperature) ?? 0
         tint = try container.decodeIfPresent(Double.self, forKey: .tint) ?? 0
         vibrance = try container.decodeIfPresent(Double.self, forKey: .vibrance) ?? 0

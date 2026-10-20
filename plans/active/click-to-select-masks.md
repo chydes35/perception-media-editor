@@ -1,6 +1,6 @@
 # Click-to-select masks (SAM 2.1) and better selection edges
 
-Status: active (steps 1 and 2 done: model bundled; engine behind `PromptableSegmenter` written and tested; memory, UI and edges not started)
+Status: active (steps 1–4 done and checked in the built app; edge refinement and the October 8 validation not done)
 
 Roadmap: [Phase 3 masks and healing](../../docs/ROADMAP.md), image-quality program Q3 ([research](../../docs/research/PHOTO_PIPELINE_SOTA.md))
 
@@ -59,6 +59,13 @@ Out of scope for this plan: box and text prompts (the reference app only uses po
 - Memory: three float16 models (about 94 MB of weights) plus embeddings (about 8 MB per photo at 1024 px) are small beside the 2,560 px working copies, but the 8 GB M1 is the constraint, so models load lazily, the embedding cache is capped to the photo being edited and one neighbor, and everything is released under memory pressure.
 - Responsiveness: all inference runs off the main actor with cancellation, like `SubjectAnalysisService`; a stale result (the user moved to another photo, or clicked again) is discarded by request id, the same guard the Vision path already uses.
 - App size: about 94 MB larger.
+
+## Results so far (2026-10-20, ivy P1107269, M1, built app)
+
+- Probe (`ClickSelectionProbe`, real model, 1536 px working copy): peak process memory 284 MB with all three models loaded; encode 2.9–4.1 s the first time in a test process.
+- In the app: first "Click to Select" took roughly 15–40 s to become ready (cold model load and GPU compile, not timed precisely); then each click showed its mask within about 1.5 s. A click's model passes take about 0.1 s; the rest was upsampling and PNG work, which is slow in debug builds and not yet profiled in release. NOT VERIFIED against the 1 s goal.
+- Quality on this photo: baby face / whole baby (bow and torso, clean silhouette) / pumpkin whole / yellow flower cluster whole; undo, size picker and Accept (one `Subject` mask, one history step) all worked. The default mask now prefers the most confident one under a third of the frame. One-click "whole" on the lawn-side flower returns a blob of lawn as the largest candidate, which is why the default avoids large masks.
+- Not yet done: edge refinement, the October 8 cases (group of children, branch sky, fur), click markers on the photo, idle unload observed in the app.
 
 ## Verification
 

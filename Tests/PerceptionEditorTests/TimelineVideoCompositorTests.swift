@@ -20,13 +20,44 @@ struct TimelineVideoCompositorTests {
 
     private struct Unchecked<Value>: @unchecked Sendable { let value: Value }
 
+    /// A blocking operation that did not finish in time. Naming it makes a stall a clear test failure
+    /// instead of a frozen run: on CI's virtual machine a stuck frame read or decode otherwise keeps the
+    /// whole job waiting and hides every result after it.
+    private struct Stalled: Error, CustomStringConvertible {
+        let operation: String
+        let seconds: Double
+        var description: String { "\(operation) did not finish within \(Int(seconds)) s" }
+    }
+
+    /// Lets exactly one of two racing callers through.
+    private final class OnceGate: @unchecked Sendable {
+        private let lock = NSLock()
+        private var claimed = false
+        func claim() -> Bool { lock.withLock { if claimed { return false }; claimed = true; return true } }
+    }
+
     /// Runs blocking work on a background queue so it never occupies the main actor or the cooperative pool.
-    private func offMain<Result>(_ work: @escaping @Sendable () async throws -> Result) async throws -> Result {
+    /// The work itself cannot be interrupted, so if it stalls the test fails with `Stalled` and the blocked
+    /// thread is left behind. Normal operations here take seconds; 45 s keeps a run in which several stall
+    /// inside CI's 20-minute job limit.
+    private func offMain<Result>(
+        _ operation: String = "blocking work", timeout: Double = 45,
+        _ work: @escaping @Sendable () async throws -> Result
+    ) async throws -> Result {
         let boxed: Unchecked<Result> = try await withCheckedThrowingContinuation { continuation in
+            let gate = OnceGate()
             DispatchQueue.global(qos: .userInitiated).async {
                 Task.detached {
-                    do { continuation.resume(returning: Unchecked(value: try await work())) } catch { continuation.resume(throwing: error) }
+                    do {
+                        let value = Unchecked(value: try await work())
+                        if gate.claim() { continuation.resume(returning: value) }
+                    } catch {
+                        if gate.claim() { continuation.resume(throwing: error) }
+                    }
                 }
+            }
+            DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
+                if gate.claim() { continuation.resume(throwing: Stalled(operation: operation, seconds: timeout)) }
             }
         }
         return boxed.value
@@ -53,7 +84,7 @@ struct TimelineVideoCompositorTests {
     private func allSamples(_ item: AVPlayerItem, pixelFormat: OSType) async throws -> [(buffer: CVPixelBuffer, start: CMTime)] {
         let tracks = Unchecked(value: try await item.asset.loadTracks(withMediaType: .video))
         let job = Unchecked(value: (asset: item.asset, composition: item.videoComposition))
-        return try await offMain {
+        return try await offMain("reading frames through the compositor") {
             let reader = try AVAssetReader(asset: job.value.asset)
             let output = AVAssetReaderVideoCompositionOutput(
                 videoTracks: tracks.value, videoSettings: [kCVPixelBufferPixelFormatTypeKey as String: pixelFormat]
@@ -84,7 +115,7 @@ struct TimelineVideoCompositorTests {
 
     /// The source's own first frame, decoded without any composition (`xf22`, what the compositor receives).
     private func sourceFirstFrame(_ url: URL) async throws -> CVPixelBuffer {
-        try await offMain {
+        try await offMain("decoding the source's first frame") {
             let asset = AVURLAsset(url: url)
             let track = try #require(try await asset.loadTracks(withMediaType: .video).first)
             let reader = try AVAssetReader(asset: asset)
@@ -102,7 +133,7 @@ struct TimelineVideoCompositorTests {
     /// The first row of a frame decoded by the color kernel alone. Synchronous because it waits on the GPU.
     private func referenceRow(decoding source: CVPixelBuffer) async throws -> [SIMD3<Float>] {
         let source = Unchecked(value: source)
-        return try await offMain { try Self.decodeRow(source.value) }
+        return try await offMain("decoding a reference row on the GPU") { try Self.decodeRow(source.value) }
     }
 
     private nonisolated static func decodeRow(_ source: CVPixelBuffer) throws -> [SIMD3<Float>] {

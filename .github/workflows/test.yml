@@ -22,6 +22,10 @@ jobs:
       - name: Test and build
         # Under a pseudo-terminal the output is flushed line by line; piped to the log it is block-buffered
         # and a process that dies loses its last buffer (see the script's header).
+        # Under a terminal, git opens a pager for `git diff --check` and waits for a keypress forever.
+        env:
+          GIT_PAGER: cat
+          PAGER: cat
         run: python3 scripts/run-in-pty.py ./scripts/qa.sh
       # The test process can die without a message (a crash or a kill shows only as exit code 1), so on a
       # failure print what macOS recorded: crash reports, the GPU the runner exposes, and memory.

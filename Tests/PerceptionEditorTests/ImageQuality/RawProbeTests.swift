@@ -112,4 +112,52 @@ struct RawProbeTests {
                          exif[kCGImagePropertyExifExposureTime as String] == nil ? "MISSING" : "kept"))
         }
     }
+
+    /// `PM_BATCH_PROJECT=<.pmedit> PM_BATCH_OUT=<folder> [PM_BATCH_PV2=1]`: runs the app's own batch export
+    /// over every photo in a project with the "Web, 2048 px" recipe and reports time, peak memory and a
+    /// check of every output file. The project is only read.
+    @MainActor
+    @Test func batchExportProject() async throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard let projectPath = environment["PM_BATCH_PROJECT"], let outPath = environment["PM_BATCH_OUT"] else { return }
+        var project = try ProjectDocument().load(from: URL(fileURLWithPath: projectPath))
+        let photoIDs = project.media.filter { $0.kind == .photo }.map(\.id)
+        if environment["PM_BATCH_PV2"] != nil {
+            for id in photoIDs { project.adjustmentsByAssetID[id, default: .neutral].processVersion = 2 }
+        }
+        let out = URL(fileURLWithPath: outPath)
+        try? FileManager.default.removeItem(at: out)
+        try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+
+        let store = EditorStore()
+        store.project = project
+        store.selectedAssetIDs = Set(photoIDs)
+        let recipe = ExportRecipeLibrary.builtIns[1].recipe
+        print(String(format: "BATCH-PROBE %d photos, process %@, start peak %.0f MB", photoIDs.count,
+                     environment["PM_BATCH_PV2"] != nil ? "2" : "as edited", peakMegabytes()))
+        let started = Date()
+        let task = try store.startBatchExport(to: out, recipe: recipe)
+        await task.value
+        let seconds = Date().timeIntervalSince(started)
+
+        let results = store.batchExportState.results
+        let failures = results.filter { !$0.succeeded }
+        var badFiles = 0, totalBytes = 0
+        for result in results {
+            guard let url = result.output else { continue }
+            let p = ExportMetadata.sourceProperties(of: url)
+            let width = p[kCGImagePropertyPixelWidth as String] as? Int ?? 0
+            let height = p[kCGImagePropertyPixelHeight as String] as? Int ?? 0
+            let exif = p[kCGImagePropertyExifDictionary as String] as? [String: Any] ?? [:]
+            let sound = max(width, height) == 2048 && p[kCGImagePropertyGPSDictionary as String] == nil
+                && exif[kCGImagePropertyExifBodySerialNumber as String] == nil
+                && exif[kCGImagePropertyExifExposureTime as String] != nil
+            if !sound { badFiles += 1 }
+            totalBytes += (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
+        }
+        print(String(format: "BATCH-PROBE done: %d saved, %d failed, %d files failed the check, %.1f s total (%.2f s per photo), %.1f MB written, peak %.0f MB",
+                     results.count - failures.count, failures.count, badFiles, seconds, seconds / Double(max(1, results.count)),
+                     Double(totalBytes) / 1_048_576, peakMegabytes()))
+        for failure in failures { print("BATCH-PROBE failure: \(failure.sourceName): \(failure.error ?? "?")") }
+    }
 }

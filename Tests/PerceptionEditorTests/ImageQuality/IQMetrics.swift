@@ -107,14 +107,23 @@ enum IQMetrics {
                        maxCodeDifference: maxCode)
     }
 
+    /// Rec. 709 luma of every pixel of an RGBA16 buffer, on the buffer's own (encoded) values. Written as a
+    /// loop with typed locals: the one-expression form was too much for CI's older type-checker.
+    static func lumas(_ buffer: [UInt16]) -> [Double] {
+        var result: [Double] = []
+        result.reserveCapacity(buffer.count / 4)
+        for index in stride(from: 0, to: buffer.count, by: 4) {
+            let r: Double = Double(buffer[index]) / 65535
+            let g: Double = Double(buffer[index + 1]) / 65535
+            let b: Double = Double(buffer[index + 2]) / 65535
+            result.append(0.2126 * r + 0.7152 * g + 0.0722 * b)
+        }
+        return result
+    }
+
     /// Global SSIM on luma (single window), good enough to catch structure loss in regression tests.
     static func ssimLuma(_ a: [UInt16], _ b: [UInt16]) -> Double {
-        func luma(_ buffer: [UInt16]) -> [Double] {
-            stride(from: 0, to: buffer.count, by: 4).map {
-                0.2126 * Double(buffer[$0]) / 65535 + 0.7152 * Double(buffer[$0 + 1]) / 65535 + 0.0722 * Double(buffer[$0 + 2]) / 65535
-            }
-        }
-        let x = luma(a), y = luma(b)
+        let x = lumas(a), y = lumas(b)
         let n = Double(x.count)
         let mx = x.reduce(0, +) / n, my = y.reduce(0, +) / n
         var vx = 0.0, vy = 0.0, cov = 0.0

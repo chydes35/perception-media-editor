@@ -160,8 +160,9 @@ struct SourceColorTests {
 
     /// Apple Log 2 (or any log key the pipeline does not know) is flagged, not rendered as Apple Log.
     @Test func anUnknownLogKeyIsFlaggedNotGuessed() throws {
-        let key: CFString
-        if #available(macOS 26, *) { key = kCVImageBufferLogTransferFunction_AppleLog2 } else { key = "com.example.other-log" as CFString }
+        // The value of kCVImageBufferLogTransferFunction_AppleLog2 (macOS 26), written out because CI's older
+        // SDK does not declare the constant.
+        let key = "com.apple.apple-wide-gamut.apple-log" as CFString
         let descriptor = SourceColorDetector.descriptor(format: try appleLogFormat(log: key), panasonicXML: nil)
         #expect(descriptor.transfer == .unknown && descriptor.gamut == .unknown)
         #expect(descriptor.isUnsupportedLog && !descriptor.isLog)

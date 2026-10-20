@@ -28,9 +28,7 @@ struct AutoProcess2Tests {
     private func shown(_ image: CIImage, _ adjustments: PhotoAdjustments, raw: Bool) -> (median: Double, range: Double, white: Double) {
         let output = MediaColorRenderer.renderForAnalysis(image, adjustments: adjustments, isRAW: raw)
         let buffer = IQRender.pixels(of: output)
-        let lumas = stride(from: 0, to: buffer.count, by: 4).map {
-            0.2126 * Double(buffer[$0]) / 65535 + 0.7152 * Double(buffer[$0 + 1]) / 65535 + 0.0722 * Double(buffer[$0 + 2]) / 65535
-        }.sorted()
+        let lumas = IQMetrics.lumas(buffer).sorted()
         return (lumas[lumas.count / 2], lumas[lumas.count * 9 / 10] - lumas[lumas.count / 10], lumas[lumas.count * 99 / 100])
     }
 
@@ -91,9 +89,7 @@ struct AutoProcess2Tests {
         neutral.processVersion = 2
         func clippedShare(_ adjustments: PhotoAdjustments) -> Double {
             let buffer = IQRender.pixels(of: MediaColorRenderer.renderForAnalysis(frame, adjustments: adjustments, isRAW: true))
-            let lumas = stride(from: 0, to: buffer.count, by: 4).map {
-                0.2126 * Double(buffer[$0]) / 65535 + 0.7152 * Double(buffer[$0 + 1]) / 65535 + 0.0722 * Double(buffer[$0 + 2]) / 65535
-            }
+            let lumas = IQMetrics.lumas(buffer)
             return Double(lumas.filter { $0 > 0.985 }.count) / Double(lumas.count)
         }
         let edit = try AutoAdjustmentAnalyzer().suggest(for: frame, process: 2, isRAW: true)

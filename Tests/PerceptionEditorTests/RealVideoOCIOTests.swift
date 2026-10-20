@@ -53,8 +53,12 @@ struct RealVideoOCIOTests {
             try decoder.decode(buffer, matrix: matrix, into: decoded, commandBuffer: commandBuffer)
             try kernels.toSceneLinear(decoded, from: camera, into: toLinear, commandBuffer: commandBuffer)
             try kernels.toDisplay(decoded, from: camera, into: toDisplay, commandBuffer: commandBuffer)
-            commandBuffer.commit()
-            await commandBuffer.completed()
+            // A completion handler works in every SDK: `completed()` is newer than CI's, and
+            // `waitUntilCompleted()` is unavailable from async code in the newest. It goes on before the commit.
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                commandBuffer.addCompletedHandler { _ in continuation.resume() }
+                commandBuffer.commit()
+            }
             // A 64 × 36 grid of positions per frame: 2 304 pixels, 6 912 over three frames.
             for row in 0 ..< 36 {
                 for column in 0 ..< 64 {

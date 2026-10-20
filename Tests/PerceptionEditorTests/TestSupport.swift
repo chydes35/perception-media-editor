@@ -196,3 +196,18 @@ enum RawSample {
 
     static var isAvailable: Bool { url != nil }
 }
+
+extension Trait where Self == ConditionTrait {
+    /// Tests that decode 10-bit 4:2:2 HEVC through VideoToolbox and the Metal compositor.
+    ///
+    /// On GitHub's macOS runner (a 3-core virtual machine with no video hardware) the test process ends within
+    /// seconds of the first of these starting: no crash report, no signal, no out-of-memory kill, only the
+    /// process's own video encoder and decoder services being cleaned up (CI runs of 2026-10-20, five in a
+    /// row, always the same test). They run on every Mac that has the hardware, which is where this app runs.
+    static var needsTenBitVideoHardware: Self {
+        .enabled(
+            if: ProcessInfo.processInfo.environment["CI"] == nil,
+            "decodes 10-bit 4:2:2 HEVC, which CI's virtual machine cannot do"
+        )
+    }
+}

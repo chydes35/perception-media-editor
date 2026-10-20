@@ -257,7 +257,7 @@ struct TimelineVideoCompositorTests {
 
     // MARK: 10-bit precision
 
-    @Test func neutralTenBitFootageKeepsEveryLevelThroughThePreviewPath() async throws {
+    @Test(.needsTenBitVideoHardware) func neutralTenBitFootageKeepsEveryLevelThroughThePreviewPath() async throws {
         let temp = try TempDirectory()
         guard let asset = try await fullRangeAsset(temp) else { Issue.record("No full-range 10-bit HEVC encoder"); return }
         let clip = TimelineClip(assetID: asset.id, durationFrames: 6)
@@ -276,7 +276,7 @@ struct TimelineVideoCompositorTests {
         #expect(levels >= 900, "Only \(levels) distinct levels survived")
     }
 
-    @Test func exportOutputIsTenBitVideoRangeOfTheSameValues() async throws {
+    @Test(.needsTenBitVideoHardware) func exportOutputIsTenBitVideoRangeOfTheSameValues() async throws {
         let temp = try TempDirectory()
         guard let asset = try await fullRangeAsset(temp) else { Issue.record("No full-range 10-bit HEVC encoder"); return }
         let clip = TimelineClip(assetID: asset.id, durationFrames: 6)
@@ -302,7 +302,7 @@ struct TimelineVideoCompositorTests {
 
     /// 65³ is Apple's Apple Log LUT size: in the compositor's half-float Core Image context its
     /// lookups lost precision (gate G11 found up to 14 of 1023 on a real frame).
-    @Test(arguments: [33, 65])
+    @Test(.needsTenBitVideoHardware, arguments: [33, 65])
     func aSourceColorLUTMapsTheDecodedCodeValues(size: Int) async throws {
         let temp = try TempDirectory()
         guard let asset = try await fullRangeAsset(temp) else { Issue.record("No full-range 10-bit HEVC encoder"); return }
@@ -325,7 +325,7 @@ struct TimelineVideoCompositorTests {
 
     /// OCIO source color through the compositor equals the OCIO kernel run on the decoded frame:
     /// the compositor feeds it code values (not Core Image's linearized ones) and nothing else.
-    @Test func ocioSourceColorRunsTheACESTransformsOnTheCodeValues() async throws {
+    @Test(.needsTenBitVideoHardware) func ocioSourceColorRunsTheACESTransformsOnTheCodeValues() async throws {
         let temp = try TempDirectory()
         guard let asset = try await fullRangeAsset(temp) else { Issue.record("No full-range 10-bit HEVC encoder"); return }
         let clip = TimelineClip(assetID: asset.id, durationFrames: 6)
@@ -347,7 +347,7 @@ struct TimelineVideoCompositorTests {
 
     /// The grade runs in scene-linear light between OCIO's transforms: +1 EV doubles the linear
     /// values before the ACES view, exactly what Core Image's exposure filter does in linear.
-    @Test func ocioClipsAreGradedInSceneLinear() async throws {
+    @Test(.needsTenBitVideoHardware) func ocioClipsAreGradedInSceneLinear() async throws {
         let temp = try TempDirectory()
         guard let asset = try await fullRangeAsset(temp) else { Issue.record("No full-range 10-bit HEVC encoder"); return }
         let clip = TimelineClip(assetID: asset.id, durationFrames: 6)
@@ -511,7 +511,7 @@ struct TimelineVideoCompositorTests {
         #expect(worst < 0.07, "Rotated pattern differs from the expected upright pattern by \(worst)")
     }
 
-    @Test func mixedSizesFormatsAndProxiesRenderAtOneSizeWithExactCuts() async throws {
+    @Test(.needsTenBitVideoHardware) func mixedSizesFormatsAndProxiesRenderAtOneSizeWithExactCuts() async throws {
         let temp = try TempDirectory()
         let numbersA = try await numberedAsset(temp, name: "A")
         let numbersD = try await numberedAsset(temp, name: "D")

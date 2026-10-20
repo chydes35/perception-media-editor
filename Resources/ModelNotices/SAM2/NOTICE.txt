@@ -1,0 +1,9 @@
+Click-to-select masks use the Segment Anything Model 2.1 (SAM 2.1) Small, in the Core ML conversion
+published by Apple. The original model is Meta's SAM 2.1 (arXiv:2408.00714).
+
+Model source: https://huggingface.co/apple/coreml-sam2.1-small
+Pinned revision: 883f5787eb0be35ce6965907a8bc1f5320a5a02e
+Variant: SAM2_1Small image encoder, prompt encoder and mask decoder, FLOAT16
+License: Apache License, Version 2.0 (included as LICENSE.txt).
+
+The model runs on this computer only. Photos are never sent anywhere.

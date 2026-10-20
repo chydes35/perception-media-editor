@@ -158,7 +158,7 @@ final class VideoCompositingEngine: @unchecked Sendable {
                     current = fitted
                 }
                 if let ocio, let transform = recipe.ocioInput {
-                    if recipe.adjustments == .neutral {
+                    if recipe.adjustments.isUntouched {
                         try ocio.toDisplay(current, from: transform, into: final, commandBuffer: commandBuffer)
                     } else {
                         // Grade in scene-linear Rec. 709, between OCIO's input and output transforms.

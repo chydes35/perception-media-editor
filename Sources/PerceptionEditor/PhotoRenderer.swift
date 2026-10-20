@@ -101,6 +101,8 @@ enum PhotoSourceLoader {
     static func makeRawFilter(_ url: URL, settings: RawSettings, maxDimension: CGFloat?) -> CIRAWFilter? {
         guard let filter = CIRAWFilter(imageURL: url) else { return nil }
         filter.extendedDynamicRangeAmount = 2
+        // Process version 2 does its own tone mapping, so the engine's boost curve must not run first.
+        if settings.sceneLinear { filter.boostAmount = 0 }
 
         if let maxDimension {
             let native = filter.nativeSize
@@ -284,7 +286,7 @@ actor PhotoRenderer {
 
     func preview(url: URL, adjustments: PhotoAdjustments, overlayMaskID: UUID? = nil) -> PhotoPreviewResult? {
         return autoreleasepool {
-            guard let source = workingSource(for: url, raw: adjustments.raw) else {
+            guard let source = workingSource(for: url, raw: adjustments.decodeSettings) else {
                 PhotoPreviewDiagnostics.record("renderer preview source unavailable")
                 return nil
             }
@@ -322,7 +324,7 @@ actor PhotoRenderer {
     }
 
     func subjectSelectionOverlay(url: URL, png: Data, adjustments: PhotoAdjustments) -> RenderedImage? {
-        guard let source = workingSource(for: url, raw: adjustments.raw) else { return nil }
+        guard let source = workingSource(for: url, raw: adjustments.decodeSettings) else { return nil }
         let mask = LocalMask(shape: .subject(SubjectMask(png: png)))
         return maskOverlay(for: mask, source: source, adjustments: adjustments)
     }
@@ -360,7 +362,7 @@ actor PhotoRenderer {
             guard let (source, hasHeadroom) = PhotoSourceLoader.loadThumbnailSource(
                 url,
                 maxDimension: Self.thumbnailDimension,
-                raw: adjustments.raw
+                raw: adjustments.decodeSettings
             ) else {
                 return nil
             }
@@ -385,7 +387,7 @@ actor PhotoRenderer {
             let exportContext = fullResolutionContext(for: adjustments)
             let originals = protectedOriginals + [url]
             try ExportFileSafety.validate(destination, protecting: originals)
-            guard let source = PhotoSourceLoader.load(url, maxDimension: nil, raw: adjustments.raw) else {
+            guard let source = PhotoSourceLoader.load(url, maxDimension: nil, raw: adjustments.decodeSettings) else {
                 throw PhotoRenderError.unreadableSource(url.lastPathComponent)
             }
             var image = MediaColorRenderer.render(source, adjustments: adjustments, includesGeometry: true,
@@ -432,7 +434,7 @@ actor PhotoRenderer {
     ) -> FocusRender? {
         return autoreleasepool {
             guard viewportPixels.width >= 1, viewportPixels.height >= 1,
-                  let source = fullResolutionSource(for: url, raw: adjustments.raw)
+                  let source = fullResolutionSource(for: url, raw: adjustments.decodeSettings)
             else { return nil }
 
             let finished = MediaColorRenderer.render(source, adjustments: adjustments, includesGeometry: true,

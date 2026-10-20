@@ -62,7 +62,7 @@ struct PhotoComparisonView: View {
             if !isCropping, mode == .edited, store.isPickingWhiteBalance, let edited {
                 WhiteBalancePickingLayer(imageSize: edited.size)
             }
-            if !isCropping, mode == .edited, store.isPickingSubject, let edited {
+            if !isCropping, mode == .edited, store.isPickingSubject || store.isClickSelecting, let edited {
                 if let overlay = store.subjectSelectionOverlay {
                     fitted(overlay)
                         .opacity(0.5)
@@ -97,7 +97,7 @@ struct PhotoComparisonView: View {
             }
             .allowsHitTesting(!isCropping && mode == .edited && onZoomRequest != nil
                 && !store.isMaskEditing && !store.isRetouchEditing && !store.isPickingWhiteBalance
-                && !store.isPickingSubject && !store.isAnalyzingSubjects && !store.isAnalyzingSky)
+                && !store.isPickingSubject && !store.isClickSelecting && !store.isAnalyzingSubjects && !store.isAnalyzingSky)
         }
         .accessibilityHint("Click the photo to view it at 100 percent.")
         .onAppear { traceCanvas() }

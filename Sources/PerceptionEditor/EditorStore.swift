@@ -72,6 +72,16 @@ final class EditorStore: ObservableObject {
     var subjectOverlayCache: [(id: Int, image: NSImage)] = []
     var subjectOverlayAdjustments: PhotoAdjustments?
     let subjectAnalyzer = SubjectAnalysisService()
+    /// Click to select (SAM 2.1): the clicks so far, the masks proposed for them (part, object, whole) and which is shown.
+    @Published var isClickSelecting = false
+    @Published var isPreparingClickSelection = false
+    @Published var isDecodingClickSelection = false
+    @Published var clickPoints: [SegmentationPoint] = []
+    @Published var clickMaskPNGs: [Data] = []
+    @Published var clickGranularity = 1
+    var clickRequestID = UUID()
+    var clickOverlayTask: Task<Void, Never>?
+    var clickSelectionService = ClickSelectionService()
     @Published var isAnalyzingSky = false
     var skyRequestID = UUID()
     let skyAnalyzer = SkyAnalysisService()
@@ -1189,6 +1199,9 @@ final class EditorStore: ObservableObject {
         SubjectMaskRenderer.clearCaches()
         VideoCompositingEngine.releaseMemoryUnderPressure()
         cancelSubjectSelection()
+        cancelClickSelection()
+        let clickService = clickSelectionService
+        Task { await clickService.unload() }
         let renderer = photoRenderer
         let thumbnails = thumbnailRenderer
         let focus = focusRenderer

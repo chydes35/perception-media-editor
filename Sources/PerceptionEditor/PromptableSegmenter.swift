@@ -1,4 +1,5 @@
 import CoreGraphics
+import ImageIO
 import Foundation
 
 /// A click on the photo, in the oriented photo's normalized coordinates (0…1, origin top-left).
@@ -121,5 +122,21 @@ struct RecentlyUsedCache<Key: Hashable, Value> {
     mutating func removeAll() {
         order = []
         values = [:]
+    }
+}
+
+extension SegmentationPostprocessing {
+    /// An 8-bit grayscale PNG of row-major mask pixels, the format `SubjectMask` stores.
+    static func png(pixels: [UInt8], width: Int, height: Int) -> Data? {
+        guard width > 0, height > 0, pixels.count == width * height,
+              let provider = CGDataProvider(data: Data(pixels) as CFData),
+              let image = CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 8, bytesPerRow: width,
+                                  space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGBitmapInfo(rawValue: 0),
+                                  provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent)
+        else { return nil }
+        let output = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(output, "public.png" as CFString, 1, nil) else { return nil }
+        CGImageDestinationAddImage(destination, image, nil)
+        return CGImageDestinationFinalize(destination) ? output as Data : nil
     }
 }

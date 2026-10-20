@@ -15,7 +15,7 @@ extension EditorStore {
         isClickSelecting = true
         isPreparingClickSelection = true
         clickPoints = []
-        clickMaskPNGs = []
+        clickMasks = []
         clickGranularity = 1
         subjectSelectionOverlay = nil
         statusMessage = "Getting the photo ready for selection…"
@@ -45,7 +45,7 @@ extension EditorStore {
         isPreparingClickSelection = false
         isDecodingClickSelection = false
         clickPoints = []
-        clickMaskPNGs = []
+        clickMasks = []
         subjectSelectionOverlay = nil
     }
 
@@ -62,7 +62,7 @@ extension EditorStore {
         clickPoints.removeLast()
         if clickPoints.isEmpty {
             clickRequestID = UUID()
-            clickMaskPNGs = []
+            clickMasks = []
             subjectSelectionOverlay = nil
             isDecodingClickSelection = false
         } else {
@@ -71,14 +71,14 @@ extension EditorStore {
     }
 
     func setClickGranularity(_ index: Int) {
-        guard !clickMaskPNGs.isEmpty else { return }
-        clickGranularity = min(max(index, 0), clickMaskPNGs.count - 1)
+        guard !clickMasks.isEmpty else { return }
+        clickGranularity = min(max(index, 0), clickMasks.count - 1)
         showClickOverlay()
     }
 
     func acceptClickSelection() {
-        guard isClickSelecting, clickMaskPNGs.indices.contains(clickGranularity) else { return }
-        let png = clickMaskPNGs[clickGranularity]
+        guard isClickSelecting, clickMasks.indices.contains(clickGranularity) else { return }
+        let png = clickMasks[clickGranularity].png
         cancelClickSelection()
         nextHistoryLabel = "Click to Select"
         _ = addMask(.subject(SubjectMask(png: png)))
@@ -96,11 +96,13 @@ extension EditorStore {
         let service = clickSelectionService
         Task { [weak self] in
             do {
-                let pngs = try await service.maskPNGs(photoID: asset.id, points: points)
+                let masks = try await service.masks(photoID: asset.id, points: points)
                 guard let self, clickRequestID == requestID, isClickSelecting, selectedAssetID == asset.id else { return }
                 isDecodingClickSelection = false
-                clickMaskPNGs = pngs
-                clickGranularity = min(clickGranularity, pngs.count - 1)
+                // The first click picks the model's most confident sensible mask; later clicks keep the size chosen.
+                if clickMasks.isEmpty || points.count == 1 { clickGranularity = ClickMask.defaultIndex(in: masks) }
+                clickMasks = masks
+                clickGranularity = min(clickGranularity, masks.count - 1)
                 showClickOverlay()
             } catch {
                 guard let self, clickRequestID == requestID else { return }
@@ -114,9 +116,9 @@ extension EditorStore {
     }
 
     private func showClickOverlay() {
-        guard clickMaskPNGs.indices.contains(clickGranularity), let asset = selectedAsset else { return }
+        guard clickMasks.indices.contains(clickGranularity), let asset = selectedAsset else { return }
         clickOverlayTask?.cancel()
-        let png = clickMaskPNGs[clickGranularity]
+        let png = clickMasks[clickGranularity].png
         let adjustments = selectedAdjustments
         let renderer = photoRenderer
         let requestID = clickRequestID

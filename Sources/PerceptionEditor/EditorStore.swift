@@ -77,7 +77,7 @@ final class EditorStore: ObservableObject {
     @Published var isPreparingClickSelection = false
     @Published var isDecodingClickSelection = false
     @Published var clickPoints: [SegmentationPoint] = []
-    @Published var clickMaskPNGs: [Data] = []
+    @Published var clickMasks: [ClickMask] = []
     @Published var clickGranularity = 1
     var clickRequestID = UUID()
     var clickOverlayTask: Task<Void, Never>?

@@ -1,6 +1,21 @@
 import CoreImage
 import Foundation
 
+/// One proposed selection: the mask PNG, the model's own score, and the share of the photo it covers.
+struct ClickMask: Equatable, Sendable {
+    var png: Data
+    var score: Float
+    var coverage: Double
+
+    /// The mask to show first. Among masks that stay under a third of the frame (a click that selects the
+    /// lawn is rarely wanted) the model's most confident one; if every mask is larger, the smallest.
+    static func defaultIndex(in masks: [ClickMask]) -> Int {
+        let modest = masks.indices.filter { masks[$0].coverage <= 1.0 / 3 }
+        if let best = modest.max(by: { masks[$0].score < masks[$1].score }) { return best }
+        return masks.indices.min { masks[$0].coverage < masks[$1].coverage } ?? 0
+    }
+}
+
 /// Runs click-to-select off the main actor: analyzes a photo once, answers click sets with mask PNGs, and
 /// lets the models go after a quiet period (the 8 GB target Mac cannot keep them resident for long).
 actor ClickSelectionService {
@@ -41,20 +56,21 @@ actor ClickSelectionService {
         maskHeight = cgImage.height
     }
 
-    /// Mask PNGs for the clicks, smallest region first (part, object, whole).
-    func maskPNGs(photoID: UUID, points: [SegmentationPoint]) async throws -> [Data] {
+    /// Masks for the clicks, smallest region first (part, object, whole).
+    func masks(photoID: UUID, points: [SegmentationPoint]) async throws -> [ClickMask] {
         idleTask?.cancel()
         defer { scheduleUnload() }
         guard preparedPhotoID == photoID else { throw SegmentationError.notPrepared }
         let candidates = try await segmenter.candidates(photoID: photoID, points: points)
         let (width, height) = (maskWidth, maskHeight)
-        let pngs = candidates.compactMap { candidate in
-            SegmentationPostprocessing.png(
-                pixels: SegmentationPostprocessing.maskPixels(candidate, width: width, height: height),
-                width: width, height: height)
+        let masks = candidates.compactMap { candidate -> ClickMask? in
+            let pixels = SegmentationPostprocessing.maskPixels(candidate, width: width, height: height)
+            guard let png = SegmentationPostprocessing.png(pixels: pixels, width: width, height: height) else { return nil }
+            return ClickMask(png: png, score: candidate.score,
+                             coverage: Double(candidate.insideCount) / Double(candidate.logits.count))
         }
-        guard !pngs.isEmpty else { throw SegmentationError.invalidOutput }
-        return pngs
+        guard !masks.isEmpty else { throw SegmentationError.invalidOutput }
+        return masks
     }
 
     func unload() async {

@@ -331,11 +331,11 @@ struct MaskPanel: View {
                  ? "Getting the photo ready. The first selection can take a few seconds."
                  : "Click what you want. Click more to add, ⌥-click to remove a part.")
                 .font(.caption2).foregroundStyle(.secondary)
-            if store.clickMaskPNGs.count > 1 {
+            if store.clickMasks.count > 1 {
                 Picker("Size", selection: Binding(get: { store.clickGranularity }, set: { store.setClickGranularity($0) })) {
                     Text("Part").tag(0)
                     Text("Object").tag(1)
-                    if store.clickMaskPNGs.count > 2 { Text("Whole").tag(2) }
+                    if store.clickMasks.count > 2 { Text("Whole").tag(2) }
                 }
                 .pickerStyle(.segmented)
                 .help("The same click can mean a part, the object, or everything it belongs to")
@@ -343,7 +343,7 @@ struct MaskPanel: View {
             HStack {
                 Button("Accept") { store.acceptClickSelection() }
                     .buttonStyle(.borderedProminent)
-                    .disabled(store.clickMaskPNGs.isEmpty)
+                    .disabled(store.clickMasks.isEmpty)
                 Button("Undo click") { store.undoClickPoint() }
                     .disabled(store.clickPoints.isEmpty)
                 Button("Cancel") { store.cancelClickSelection() }

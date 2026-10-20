@@ -76,17 +76,30 @@ enum SegmentationPostprocessing {
     static func maskPixels(_ candidate: SegmentationCandidate, width: Int, height: Int) -> [UInt8] {
         guard width > 0, height > 0, candidate.width > 0, candidate.height > 0,
               candidate.logits.count == candidate.width * candidate.height else { return [] }
-        var pixels = [UInt8](repeating: 0, count: width * height)
         let sourceWidth = candidate.width, sourceHeight = candidate.height
-        for y in 0 ..< height {
-            let sy = min(max((Double(y) + 0.5) * Double(sourceHeight) / Double(height) - 0.5, 0), Double(sourceHeight - 1))
-            let y0 = Int(sy), y1 = min(y0 + 1, sourceHeight - 1), fy = Float(sy - Double(y0))
-            for x in 0 ..< width {
-                let sx = min(max((Double(x) + 0.5) * Double(sourceWidth) / Double(width) - 0.5, 0), Double(sourceWidth - 1))
-                let x0 = Int(sx), x1 = min(x0 + 1, sourceWidth - 1), fx = Float(sx - Double(x0))
-                let top = candidate.logits[y0 * sourceWidth + x0] * (1 - fx) + candidate.logits[y0 * sourceWidth + x1] * fx
-                let bottom = candidate.logits[y1 * sourceWidth + x0] * (1 - fx) + candidate.logits[y1 * sourceWidth + x1] * fx
-                if top * (1 - fy) + bottom * fy > 0 { pixels[y * width + x] = 255 }
+        // Column sample positions are the same for every row, so they are computed once.
+        var columnIndex0 = [Int](repeating: 0, count: width), columnIndex1 = columnIndex0
+        var columnFraction = [Float](repeating: 0, count: width)
+        for x in 0 ..< width {
+            let sx = min(max((Double(x) + 0.5) * Double(sourceWidth) / Double(width) - 0.5, 0), Double(sourceWidth - 1))
+            columnIndex0[x] = Int(sx)
+            columnIndex1[x] = min(Int(sx) + 1, sourceWidth - 1)
+            columnFraction[x] = Float(sx - Double(Int(sx)))
+        }
+        var pixels = [UInt8](repeating: 0, count: width * height)
+        candidate.logits.withUnsafeBufferPointer { logits in
+            pixels.withUnsafeMutableBufferPointer { output in
+                for y in 0 ..< height {
+                    let sy = min(max((Double(y) + 0.5) * Double(sourceHeight) / Double(height) - 0.5, 0), Double(sourceHeight - 1))
+                    let y0 = Int(sy), y1 = min(y0 + 1, sourceHeight - 1), fy = Float(sy - Double(y0))
+                    let top = y0 * sourceWidth, bottom = y1 * sourceWidth
+                    for x in 0 ..< width {
+                        let (x0, x1, fx) = (columnIndex0[x], columnIndex1[x], columnFraction[x])
+                        let upper = logits[top + x0] * (1 - fx) + logits[top + x1] * fx
+                        let lower = logits[bottom + x0] * (1 - fx) + logits[bottom + x1] * fx
+                        if upper * (1 - fy) + lower * fy > 0 { output[y * width + x] = 255 }
+                    }
+                }
             }
         }
         return pixels

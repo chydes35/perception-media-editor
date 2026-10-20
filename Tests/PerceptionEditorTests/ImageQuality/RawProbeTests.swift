@@ -54,6 +54,17 @@ struct RawProbeTests {
             let d1 = outputStats(out1), d2 = outputStats(out2)
             print(String(format: "PROBE-OUT %@ v1 median %.3f clip %.1f%% black %.1f%% | v2 median %.3f clip %.1f%% black %.1f%%",
                          name, d1.median, d1.clipped * 100, d1.dark * 100, d2.median, d2.clipped * 100, d2.dark * 100))
+            for process in [1, 2] {
+                var current = PhotoAdjustments(); current.processVersion = process
+                guard let suggestion = try? AutoAdjustmentAnalyzer().analyze(url: url, current: current) else { continue }
+                let applied = suggestion.applying(to: current)
+                guard let source = PhotoSourceLoader.load(url, maxDimension: 1024, raw: applied.decodeSettings) else { continue }
+                let before = outputStats(IQRender.photo(process == 1 ? legacy : linear, current, raw: true))
+                let after = outputStats(IQRender.photo(source, applied, raw: true))
+                print(String(format: "PROBE-AUTO %@ P%d exp %+.2f con %+.2f hi %+.2f sh %+.2f | median %.3f → %.3f clip %.1f%% → %.1f%%",
+                             name, process, applied.exposure, applied.contrast, applied.highlights, applied.shadows,
+                             before.median, after.median, before.clipped * 100, after.clipped * 100))
+            }
             print(String(format: "PROBE %@ baselineExposure=%.2f boost=%.2f | legacy median %.3f p99 %.2f >1 %.1f%% | linear median %.4f p99 %.3f >1 %.1f%%",
                          name, filter.baselineExposure, filter.boostAmount, a.median, a.p99, a.over1 * 100, b.median, b.p99, b.over1 * 100))
         }

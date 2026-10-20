@@ -41,7 +41,8 @@ final class AutoAdjustmentAnalyzer {
     func analyze(url: URL, current: PhotoAdjustments) throws -> AutoAdjustmentSuggestion {
         try Task.checkCancellation()
         defer { context.clearCaches() }
-        let raw = current.raw.withoutWhiteBalance
+        let process = current.processVersion
+        let raw = current.decodeSettings.withoutWhiteBalance
         guard let loaded = PhotoSourceLoader.load(url, maxDimension: 512, raw: raw) else {
             throw AutoAdjustmentError.unreadable
         }
@@ -80,11 +81,14 @@ final class AutoAdjustmentAnalyzer {
             let wb = fitWhiteBalance(neutral)
             suggestion.basic.temperature = wb.0
             suggestion.basic.tint = wb.1
-            source = MediaColorRenderer.render(source, adjustments: suggestion.basic, includesGeometry: false)
+            // Process 2 tone-maps once, at the end, so white balance is baked in linear light only.
+            source = process >= 2
+                ? MediaColorRenderer.whiteBalanced(source, temperature: wb.0, tint: wb.1)
+                : MediaColorRenderer.render(source, adjustments: suggestion.basic, includesGeometry: false)
         }
         // Tone follows the visible crop, without compounding existing global/local edits.
         let visible = MediaColorRenderer.finishedGeometry(source, current)
-        let tone = try fitTone(visible, highlightRolloff: PhotoSourceLoader.hasHeadroom(url))
+        let tone = try fitTone(visible, highlightRolloff: PhotoSourceLoader.hasHeadroom(url), process: process)
         suggestion.basic.exposure = tone.exposure
         suggestion.basic.contrast = tone.contrast
         suggestion.basic.highlights = tone.highlights
@@ -93,16 +97,18 @@ final class AutoAdjustmentAnalyzer {
     }
 
     /// Decoded-image entry point for reproducible image-quality tests.
-    func suggest(for source: CIImage) throws -> AutoAdjustmentSuggestion {
+    func suggest(for source: CIImage, process: Int = 1, isRAW: Bool = false) throws -> AutoAdjustmentSuggestion {
         var suggestion = AutoAdjustmentSuggestion()
         var image = source
         if let neutral = neutralReference(pixels(image)), colorCast(neutral) > 0.0025 {
             let wb = fitWhiteBalance(neutral)
             suggestion.basic.temperature = wb.0
             suggestion.basic.tint = wb.1
-            image = MediaColorRenderer.render(image, adjustments: suggestion.basic, includesGeometry: false)
+            image = process >= 2
+                ? MediaColorRenderer.whiteBalanced(image, temperature: wb.0, tint: wb.1)
+                : MediaColorRenderer.render(image, adjustments: suggestion.basic, includesGeometry: false)
         }
-        let tone = try fitTone(image)
+        let tone = try fitTone(image, highlightRolloff: isRAW, process: process)
         suggestion.basic.exposure = tone.exposure
         suggestion.basic.contrast = tone.contrast
         suggestion.basic.highlights = tone.highlights
@@ -127,8 +133,22 @@ final class AutoAdjustmentAnalyzer {
     private func colorCast(_ reference: Pixel) -> Double { ImageStatistics.colorCast(reference) }
 
     /// `highlightRolloff` is true for RAW sources, so candidates are judged as they will be shown.
-    private func fitTone(_ source: CIImage, highlightRolloff: Bool = false) throws -> PhotoAdjustments {
-        let shown = highlightRolloff ? HighlightRolloff.apply(source, white: HighlightRolloff.baseWhite) : source
+    private func fitTone(_ source: CIImage, highlightRolloff: Bool = false, process: Int = 1) throws -> PhotoAdjustments {
+        // Candidates are judged by the photo's own process. Process 1 keeps its original path exactly.
+        func show(_ image: CIImage, _ adjustments: PhotoAdjustments) -> CIImage {
+            if process >= 2 {
+                var adjusted = adjustments
+                adjusted.processVersion = process
+                return MediaColorRenderer.renderForAnalysis(image, adjustments: adjusted, isRAW: highlightRolloff)
+            }
+            return MediaColorRenderer.render(image, adjustments: adjustments, includesGeometry: false,
+                                             highlightRolloff: highlightRolloff)
+        }
+        func baselineDisplay(_ image: CIImage) -> CIImage {
+            if process >= 2 { return MediaColorRenderer.neutralDisplay(image, process: process, isRAW: highlightRolloff) }
+            return highlightRolloff ? HighlightRolloff.apply(image, white: HighlightRolloff.baseWhite) : image
+        }
+        let shown = baselineDisplay(source)
         let input = pixels(shown).map(\.luma).sorted()
         guard input.count >= 16 else { throw AutoAdjustmentError.unreadable }
         let original = quantiles(input)
@@ -144,14 +164,12 @@ final class AutoAdjustmentAnalyzer {
         ]
         let scale = 64 / max(source.extent.width, source.extent.height)
         let small = source.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
-        let baseline = pixels(highlightRolloff ? HighlightRolloff.apply(small, white: HighlightRolloff.baseWhite) : small)
+        let baseline = pixels(baselineDisplay(small))
         let exposureRange: ClosedRange<Double> = original[1] < 0.35 ? 0.04 ... 1.4
             : original[1] > 0.65 ? -1.4 ... -0.04 : -1.4 ... 1.4
         func recentered(_ adjustments: PhotoAdjustments) -> PhotoAdjustments {
             var result = adjustments
-            let output = pixels(MediaColorRenderer.render(small, adjustments: result, includesGeometry: false,
-                                                          highlightRolloff: highlightRolloff))
-                .map(\.luma).sorted()
+            let output = pixels(show(small, result)).map(\.luma).sorted()
             guard !output.isEmpty else { return result }
             let current = output[output.count / 2]
             let ev = log2(max(0.0001, linear(mid)) / max(0.0001, linear(current)))
@@ -159,14 +177,21 @@ final class AutoAdjustmentAnalyzer {
             return result
         }
         func loss(_ adjustments: PhotoAdjustments) -> Double {
-            let samples = pixels(MediaColorRenderer.render(small, adjustments: adjustments, includesGeometry: false,
-                                                           highlightRolloff: highlightRolloff))
+            let samples = pixels(show(small, adjustments))
             let values = samples.map(\.luma).sorted()
             guard !values.isEmpty else { return .infinity }
             let q = quantiles(values)
             let weights = [1.0, 2.0, 1.0, 0.6]
             var result = zip(zip(q, targets), weights).reduce(0.0) { $0 + pow($1.0.0 - $1.0.1, 2) * $1.1 }
             result += 0.001 * (pow(adjustments.contrast, 2) + pow(adjustments.shadows, 2) + pow(adjustments.highlights, 2))
+            // Process 1's Highlights slider moves the roll-off white point, so recovering blown areas
+            // came with the quantile fit. Process 2 recovers them through the tone equalizer, which the
+            // quantiles alone do not ask for: charge for how far pixels sit above 0.96. The charge is
+            // smooth, so the search feels a pull before a pixel is fully recovered.
+            if process >= 2 {
+                let excess = values.reduce(0.0) { $0 + max(0, $1 - 0.96) } / Double(values.count)
+                result += 40 * excess
+            }
             // Tonal filters can also increase saturation. Penalize changes in linear RGB
             // chromaticity so a good luminance fit does not turn skin or scene colors vivid.
             var colorError = 0.0, count = 0.0
@@ -178,7 +203,9 @@ final class AutoAdjustmentAnalyzer {
             result += 20 * colorError / max(1, count)
             return result
         }
-        var best = recentered(.neutral)
+        var start = PhotoAdjustments.neutral
+        start.processVersion = process
+        var best = recentered(start)
         var score = loss(best)
         let controls: [(WritableKeyPath<PhotoAdjustments, Double>, Double, Double, Double)] = [
             (\.contrast, 0, 0.35, 1),

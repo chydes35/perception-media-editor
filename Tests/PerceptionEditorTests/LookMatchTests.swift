@@ -331,6 +331,31 @@ struct LookMatchAnalyzerTests {
         #expect(proposal.confidence < LookMatchThresholds.default.minimumConfidence)
     }
 
+    @Test func aFrameOneStopDarkerSolvesToOneStopMoreExposureInProcess2() async throws {
+        let folder = try TempDirectory()
+        let scene = LookMatchFixture.scene()
+        let heroURL = try LookMatchFixture.write(scene, to: folder.url.appendingPathComponent("hero.png"))
+        let targetURL = try LookMatchFixture.write(LookMatchFixture.darkened(scene, ev: -1),
+                                                   to: folder.url.appendingPathComponent("target.png"))
+        var heroLook = LookMatchFixture.heroLook
+        heroLook.processVersion = 2
+        var neutral = PhotoAdjustments.neutral
+        neutral.processVersion = 2
+        let hero = LookMatchPhoto(id: UUID(), url: heroURL, adjustments: heroLook)
+        let target = LookMatchPhoto(id: UUID(), url: targetURL, adjustments: neutral)
+
+        let result = try await LookMatchService().analyze(LookMatchRequest(
+            photos: [hero, target], selectedID: nil, thresholds: LookMatchFixture.oneScene))
+
+        let proposal = try #require(result.scenes.first?.proposals.first)
+        #expect(proposal.adjustments.processVersion == 2, "the target keeps its own process")
+        #expect(abs(proposal.adjustments.exposure - (heroLook.exposure + 1)) <= 0.1)
+        #expect(proposal.adjustments.contrast == heroLook.contrast)
+        #expect(abs(proposal.adjustments.temperature) < 0.05 && abs(proposal.adjustments.tint) < 0.05)
+        #expect(proposal.confidence >= 0.8)
+        #expect(!proposal.isFlagged)
+    }
+
     @Test func editedTargetsAreSkippedAndLocalWorkStaysWithItsPhoto() async throws {
         let folder = try TempDirectory()
         let scene = LookMatchFixture.scene()

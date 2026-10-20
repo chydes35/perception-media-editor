@@ -23,18 +23,21 @@ extension MediaColorRenderer {
         b: CIVector(x: 0.016391, y: 0.088013, z: 0.895595, w: 0)
     )
 
+    /// `includesGeometry: false` skips retouching, rotation, local masks, crop and grain, as it does in
+    /// process 1; analysis (Auto) judges the global look only.
     static func renderScene(
         _ source: CIImage,
         adjustments: PhotoAdjustments,
-        isRAW: Bool
+        isRAW: Bool,
+        includesGeometry: Bool = true
     ) -> CIImage {
         guard ScenePhotoKernels.isAvailable else {
             // A Mac that cannot compile the kernels still shows the photo, as version 1.
-            return render(source, adjustments: legacy(adjustments), includesGeometry: true, highlightRolloff: isRAW)
+            return render(source, adjustments: legacy(adjustments), includesGeometry: includesGeometry, highlightRolloff: isRAW)
         }
         let sourceExtent = source.extent
-        let repaired = RetouchRenderer.apply(source, strokes: adjustments.retouches)
-        var image = orient(repaired, adjustments)
+        let repaired = includesGeometry ? RetouchRenderer.apply(source, strokes: adjustments.retouches) : source
+        var image = includesGeometry ? orient(repaired, adjustments) : repaired
 
         if adjustments.temperature != 0 || adjustments.tint != 0 {
             image = whiteBalanced(image, temperature: adjustments.temperature, tint: adjustments.tint)
@@ -47,7 +50,7 @@ extension MediaColorRenderer {
             shadows: adjustments.shadows, highlights: adjustments.highlights,
             whites: adjustments.whites, blacks: adjustments.blacks)
 
-        for mask in adjustments.masks where mask.isActive {
+        for mask in adjustments.masks where includesGeometry && mask.isActive {
             let adjusted = sceneLocalAdjust(image, mask.adjustments)
             let maskImage = orient(MaskRenderer.image(for: mask, extent: sourceExtent), adjustments)
             let blend = CIFilter.blendWithMask()
@@ -88,7 +91,7 @@ extension MediaColorRenderer {
             image = sharpen.outputImage ?? image
         }
 
-        image = crop(image, to: adjustments.cropAspect, rect: adjustments.cropRect)
+        if includesGeometry { image = crop(image, to: adjustments.cropAspect, rect: adjustments.cropRect) }
 
         if adjustments.vignette > 0 {
             let vignette = CIFilter.vignette()
@@ -97,8 +100,23 @@ extension MediaColorRenderer {
             vignette.radius = Float(min(image.extent.width, image.extent.height) * 0.55)
             image = vignette.outputImage ?? image
         }
-        if let grain = adjustments.grain, !grain.isNeutral { image = applyGrain(grain, to: image) }
+        if includesGeometry, let grain = adjustments.grain, !grain.isNeutral { image = applyGrain(grain, to: image) }
         return image
+    }
+
+    /// The render Auto judges its candidates by: the photo's own process, global look only.
+    static func renderForAnalysis(_ source: CIImage, adjustments: PhotoAdjustments, isRAW: Bool) -> CIImage {
+        if adjustments.processVersion >= 2 {
+            return renderScene(source, adjustments: adjustments, isRAW: isRAW, includesGeometry: false)
+        }
+        return render(source, adjustments: adjustments, includesGeometry: false, highlightRolloff: isRAW)
+    }
+
+    /// An image as the photo's process shows it with nothing adjusted: the baseline Auto measures from.
+    static func neutralDisplay(_ source: CIImage, process: Int, isRAW: Bool) -> CIImage {
+        var neutral = PhotoAdjustments.neutral
+        neutral.processVersion = process
+        return renderForAnalysis(source, adjustments: neutral, isRAW: isRAW)
     }
 
     // MARK: - Stages
@@ -109,7 +127,7 @@ extension MediaColorRenderer {
         return copy
     }
 
-    private static func whiteBalanced(_ image: CIImage, temperature: Double, tint: Double) -> CIImage {
+    static func whiteBalanced(_ image: CIImage, temperature: Double, tint: Double) -> CIImage {
         let filter = CIFilter.temperatureAndTint()
         filter.inputImage = image
         filter.neutral = CIVector(x: 6500, y: 0)

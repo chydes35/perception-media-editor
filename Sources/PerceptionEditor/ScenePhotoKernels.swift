@@ -190,6 +190,12 @@ struct SceneDisplayCurve: Equatable, Sendable {
         return scale * yn / (yn + knee)
     }
 
+    /// Exposure, in EV, applied to every RAW decode before the Exposure slider. With the engine's own
+    /// boost curve off, S5 frames decode about one stop darker than the same frames did with it (median
+    /// luminance 0.08–0.14 against 0.14–0.29 on six real frames), so this puts them back where
+    /// middle grey sits. The slider stays at 0 for an untouched photo.
+    static let rawExposureOffset = 1.0
+
     /// RAW decodes carry two stops of headroom above 1.0; display-referred files end at 1.0 and
     /// already have their own tone curve, so theirs is nearly straight.
     static let raw = SceneDisplayCurve(contrast: 1.45, whitePoint: 4.0)

@@ -42,7 +42,8 @@ extension MediaColorRenderer {
         image = toRec2020(image)
 
         image = sceneTone(
-            image, exposure: adjustments.exposure, contrast: adjustments.contrast,
+            image, exposure: adjustments.exposure + (isRAW ? SceneDisplayCurve.rawExposureOffset : 0),
+            contrast: adjustments.contrast,
             shadows: adjustments.shadows, highlights: adjustments.highlights,
             whites: adjustments.whites, blacks: adjustments.blacks)
 

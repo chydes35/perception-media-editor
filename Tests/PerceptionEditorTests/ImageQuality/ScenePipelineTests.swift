@@ -41,10 +41,11 @@ struct ScenePipelineTests {
     @Test func rawHighlightsRollOffInsteadOfClippingAtWhite() {
         let ramp = IQFixtures.highlightRamp()
         let output = IQRender.photo(ramp, IQRender.version2(), raw: true)
-        // Scene value 1.0 sits at x = 51 and 4.0 at x = 153; 0.5 · 32^(x/255).
+        // Scene value 1.0 sits at x = 51 and 4.0 at x = 153; 0.5 · 32^(x/255). RAW gets its default offset.
+        let gain = pow(2, SceneDisplayCurve.rawExposureOffset)
         let atWhite = IQRender.luma(IQRender.linear(output, width: 256, x: 51, y: 16))
         let atTwoStopsOver = IQRender.luma(IQRender.linear(output, width: 256, x: 153, y: 16))
-        #expect(abs(atWhite - SceneDisplayCurve.raw.map(1)) < 0.01)
+        #expect(abs(atWhite - SceneDisplayCurve.raw.map(1 * gain)) < 0.01)
         #expect(atWhite < 0.95, "a raw white is not pinned to display white")
         #expect(atTwoStopsOver > 0.98)
     }
@@ -78,8 +79,9 @@ struct ScenePipelineTests {
         let flat = IQFixtures.image(width: 8, height: 8) { _, _ in (0.05, 0.05, 0.05) }
         let base = IQRender.luma(IQRender.linear(IQRender.photo(flat, IQRender.version2(), raw: true), width: 8, x: 4, y: 4))
         let plusOne = IQRender.luma(IQRender.linear(IQRender.photo(flat, IQRender.version2 { $0.exposure = 1 }, raw: true), width: 8, x: 4, y: 4))
-        let expected = SceneDisplayCurve.raw.map(0.1)
-        #expect(abs(base - SceneDisplayCurve.raw.map(0.05)) < 0.003)
+        let gain = pow(2, SceneDisplayCurve.rawExposureOffset)
+        let expected = SceneDisplayCurve.raw.map(0.1 * gain)
+        #expect(abs(base - SceneDisplayCurve.raw.map(0.05 * gain)) < 0.003)
         #expect(abs(plusOne - expected) < 0.004, "+1 EV doubles the scene value: \(plusOne) vs \(expected)")
     }
 

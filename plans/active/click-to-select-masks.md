@@ -1,6 +1,6 @@
 # Click-to-select masks (SAM 2.1) and better selection edges
 
-Status: active (step 1 done: model downloaded, verified, scripted and bundled in the build; engine and UI not started)
+Status: active (steps 1–6 done except the October 8 branch-sky case and click markers; checked in the built app and on real RW2 files)
 
 Roadmap: [Phase 3 masks and healing](../../docs/ROADMAP.md), image-quality program Q3 ([research](../../docs/research/PHOTO_PIPELINE_SOTA.md))
 
@@ -45,7 +45,7 @@ Out of scope for this plan: box and text prompts (the reference app only uses po
 ## Implementation steps
 
 1. **Model delivery. DONE 2026-10-20** (the user approved the download). `scripts/prepare-sam-model.sh` (pinned revision, per-file SHA-256, skips files already verified) and `scripts/compile-coreml-package.swift` compile the three packages to `.mlmodelc`; `scripts/build-app.sh` copies them into the app's `Resources/Models`; notice and Apache-2.0 license in `Resources/ModelNotices/SAM2`. Real input/output names and shapes recorded above. Run against the verified files it downloads nothing and compiles all three in 13 s. A fresh checkout downloads about 94 MB once on its first `build-app.sh`.
-2. **Engine behind a protocol.** `PromptableSegmenter` (encode a photo once, then decode masks for a list of labelled points) with a Core ML implementation and a deterministic fake for tests. Pure, testable pieces: mapping a displayed click to 1024-space through crop/rotation, upsample-then-threshold post-processing, orientation of the returned mask, an embedding cache keyed by photo with a memory cap.
+2. **Engine behind a protocol. DONE 2026-10-20** (`PromptableSegmenter.swift`, `SAM2Segmenter.swift`, `PromptableSegmenterTests`; the opt-in real-model test, `PM_SAM_MODELS=.build/models`, selected a synthetic disc: 3 candidates ordered part to whole, first encode in that run 4.1 s). Photo orientation and click-through-crop mapping stay in the UI step; the engine takes clicks in the oriented photo's 0…1 coordinates. `PromptableSegmenter` (encode a photo once, then decode masks for a list of labelled points) with a Core ML implementation and a deterministic fake for tests. Pure, testable pieces: mapping a displayed click to 1024-space through crop/rotation, upsample-then-threshold post-processing, orientation of the returned mask, an embedding cache keyed by photo with a memory cap.
 3. **Memory.** Load the models lazily off the main actor on `.cpuAndGPU` (the Neural Engine is ruled out above), run a visible warm-up on first use, measure peak footprint beside a 2,560 px working copy on the target Mac, unload after idle and on memory pressure (the store already has a pressure handler).
 4. **UI: a "Click to select" tool in the Masks panel** next to the existing subject/sky tools: include click, ⌥-click exclude, a granularity choice among the three candidates (part, object, whole), live preview after each click (a decode is about 20 ms), undo last click, accept to add a `SubjectMask`; reuse `SubjectPickingLayer`'s coordinate mapping and overlay rendering.
 5. **Edges.** Run the existing guided matte (`SubjectEdgeMatting`) on the SAM mask with the full-resolution photo as the guide; keep the existing shift/feather/contrast controls.
@@ -59,6 +59,18 @@ Out of scope for this plan: box and text prompts (the reference app only uses po
 - Memory: three float16 models (about 94 MB of weights) plus embeddings (about 8 MB per photo at 1024 px) are small beside the 2,560 px working copies, but the 8 GB M1 is the constraint, so models load lazily, the embedding cache is capped to the photo being edited and one neighbor, and everything is released under memory pressure.
 - Responsiveness: all inference runs off the main actor with cancellation, like `SubjectAnalysisService`; a stale result (the user moved to another photo, or clicked again) is discarded by request id, the same guard the Vision path already uses.
 - App size: about 94 MB larger.
+
+## Results so far (2026-10-20, ivy P1107269, M1, built app)
+
+- Probe (`ClickSelectionProbe`, real model, 1536 px working copy): peak process memory 284 MB with all three models loaded; encode 2.9–4.1 s the first time in a test process.
+- In the app: first "Click to Select" took roughly 15–40 s to become ready (cold model load and GPU compile, not timed precisely); then each click showed its mask within about 1.5 s. A click's model passes take about 0.1 s; the rest was upsampling and PNG work, which is slow in debug builds and not yet profiled in release. NOT VERIFIED against the 1 s goal.
+- Quality on this photo: baby face / whole baby (bow and torso, clean silhouette) / pumpkin whole / yellow flower cluster whole; undo, size picker and Accept (one `Subject` mask, one history step) all worked. The default mask now prefers the most confident one under a third of the frame. One-click "whole" on the lawn-side flower returns a blob of lawn as the largest candidate, which is why the default avoids large masks.
+- **Latency, release build (probe):** a click takes 0.08 s (0.2 s for the first click of a photo), and fitting the edge on Accept takes 0.2-0.3 s; first-photo preparation 3-4 s after the models are warm. The earlier 0.8-0.9 s figures were from debug builds. The in-app click-to-overlay time is not measured separately (the overlay render is extra).
+- **Edges:** Accept now fits the mask edge with the existing guided matte (`SubjectEdgeMatting`) at 1536 px. On the dog and hair crops the refined mask follows the fur and hair silhouette closely; no metric is claimed.
+- **Group of children (P1107371, three clicks):** each child is selectable with one click using the Whole size (girl with legs, baby, boy with legs); the default size can pick the garment instead of the person, so the size picker matters. Hair: a click on hair selected the hair (and headband) as the smallest mask.
+- **Dog and girl (P1107251):** Object gives the dog with a clean silhouette; Whole merges dog and girl into one speckled mask. Plant with fine branches (coleus): Whole selects the whole plant including its branches, but the default (smallest, highest-scoring) mask is a few leaves, so the photographer widens it.
+- The default mask is the most confident one under a third of the frame, or the smaller one when within 0.05 of it.
+- Not yet done: the October 8 branch-sky case (the original five RAWs were not found; similar frames were used instead), click markers drawn on the photo, idle unload observed in the app.
 
 ## Verification
 

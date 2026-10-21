@@ -200,6 +200,11 @@ extension EditorStore {
             statusMessage = "Sky selection canceled"
             return true
         }
+        if characters == "\u{1B}", isClickSelecting {
+            cancelClickSelection()
+            statusMessage = "Click selection canceled"
+            return true
+        }
         if characters == "\u{1B}", isPickingSubject || isAnalyzingSubjects {
             cancelSubjectSelection()
             statusMessage = "Subject selection canceled"

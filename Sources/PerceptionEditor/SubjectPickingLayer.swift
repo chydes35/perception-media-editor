@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// The picker operates in the displayed photo's coordinates; the store maps through crop and
@@ -24,7 +25,11 @@ struct SubjectPickingLayer: View {
                         guard let point = PhotoComparisonView.normalizedPoint(
                             location, in: view.size, image: imageSize
                         ) else { return }
-                        store.pickSubject(at: NormalizedPoint(point))
+                        if store.isClickSelecting {
+                            store.clickSelect(at: NormalizedPoint(point), include: !NSEvent.modifierFlags.contains(.option))
+                        } else {
+                            store.pickSubject(at: NormalizedPoint(point))
+                        }
                     }
                     .onContinuousHover { phase in
                         switch phase {
@@ -33,15 +38,17 @@ struct SubjectPickingLayer: View {
                             let point = PhotoComparisonView.normalizedPoint(
                                 location, in: view.size, image: imageSize
                             )
-                            store.previewSubject(at: point.map { NormalizedPoint($0) })
+                            if !store.isClickSelecting { store.previewSubject(at: point.map { NormalizedPoint($0) }) }
                         case .ended:
                             hover = nil
-                            store.previewSubject(at: nil)
+                            if !store.isClickSelecting { store.previewSubject(at: nil) }
                         }
                     }
             }
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Subject picker. Hover to preview a subject, then click to select it.")
+        .accessibilityLabel(store.isClickSelecting
+            ? "Click to select. Click what to select; option-click removes a part."
+            : "Subject picker. Hover to preview a subject, then click to select it.")
     }
 }

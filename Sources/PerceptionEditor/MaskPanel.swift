@@ -54,6 +54,19 @@ struct MaskPanel: View {
                 }
             }
             HStack(spacing: 6) {
+                Button {
+                    store.startClickSelection()
+                } label: {
+                    Label("Click to Select", systemImage: "cursorarrow.click.2")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .disabled(store.isClickSelecting || store.isAnalyzingSubjects || store.isAnalyzingSky || store.isEditingCrop)
+                .help("Click any object in the photo to select it. Option-click removes a part.")
+                if store.isPreparingClickSelection { ProgressView().controlSize(.small) }
+            }
+            if store.isClickSelecting { clickSelectionControls }
+            HStack(spacing: 6) {
                 Button { store.startSkySelection() } label: {
                     Label("Select Sky", systemImage: "cloud.sun")
                         .frame(maxWidth: .infinity)
@@ -310,6 +323,34 @@ struct MaskPanel: View {
         _ label: String, _ mask: LocalMask, _ range: ClosedRange<Double>, _ keyPath: WritableKeyPath<MaskAdjustments, Double>
     ) -> some View {
         maskSlider(label, mask, range: range, format: "%.2f") { $0.adjustments[keyPath: keyPath] } set: { $0.adjustments[keyPath: keyPath] = $1 }
+    }
+
+    private var clickSelectionControls: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(store.isPreparingClickSelection
+                 ? "Getting the photo ready. The first selection can take a few seconds."
+                 : "Click what you want. Click more to add, ⌥-click to remove a part.")
+                .font(.caption2).foregroundStyle(.secondary)
+            if store.clickMasks.count > 1 {
+                Picker("Size", selection: Binding(get: { store.clickGranularity }, set: { store.setClickGranularity($0) })) {
+                    Text("Part").tag(0)
+                    Text("Object").tag(1)
+                    if store.clickMasks.count > 2 { Text("Whole").tag(2) }
+                }
+                .pickerStyle(.segmented)
+                .help("The same click can mean a part, the object, or everything it belongs to")
+            }
+            HStack {
+                Button("Accept") { store.acceptClickSelection() }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(store.clickMasks.isEmpty)
+                Button("Undo click") { store.undoClickPoint() }
+                    .disabled(store.clickPoints.isEmpty)
+                Button("Cancel") { store.cancelClickSelection() }
+                if store.isDecodingClickSelection { ProgressView().controlSize(.small) }
+            }
+            .buttonStyle(.bordered)
+        }
     }
 
     private func subjectEdgeSlider(

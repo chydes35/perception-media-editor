@@ -13,3 +13,4 @@ Dated QA, validation, review, and milestone reports. Each records evidence for t
 | Auto adjustments | [QA](QA_AUTO_ADJUSTMENTS.md) |
 | Early video milestones | [Design review V0.3.1](DESIGN_REVIEW_V0.3.1.md), [QA V0.3.2](QA_V0.3.2.md), [Milestone V0.3.3](MILESTONE_V0.3.3.md), [Milestone V0.3.4](MILESTONE_V0.3.4.md) |
 | Research | [Local generative remove trial](LOCAL_GENERATIVE_REMOVE_TRIAL.md) |
+| Video stabilization research | [M0/M1 prototype, 2026-10-20](VIDEO_STABILIZATION_PROTOTYPE_2026-10-20.md) |

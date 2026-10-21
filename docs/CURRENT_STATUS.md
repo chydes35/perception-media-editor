@@ -1,6 +1,6 @@
 # Current status
 
-Updated: 2026-10-14. Everything below is on `main` (PR #7 merged at `d9ccdb5`). Schema version **10**. Candidate build **16**; not yet signed or notarized for distribution. Long-form evidence from earlier passes is in [archive/](archive/README.md). The last full status snapshot is [archive/CURRENT_STATUS_2026-10-10.md](archive/CURRENT_STATUS_2026-10-10.md).
+Updated: 2026-10-20. Application status below describes `main`; the isolated stabilization research section names its separate branch. Schema version **10**. Candidate build **16**; not yet signed or notarized for distribution. Long-form evidence from earlier passes is in [archive/](archive/README.md). The last full status snapshot is [archive/CURRENT_STATUS_2026-10-10.md](archive/CURRENT_STATUS_2026-10-10.md).
 
 ## What works
 
@@ -24,6 +24,25 @@ White-balance drag latency ([plan](../plans/active/metal-canvas.md)): the render
 Per-scene Look Matching ([plan](../plans/active/look-match-agent.md)), branch `look-match-lm1`, 2026-10-18: implemented with unit/integration tests (scene grouping, hero choice, 1 EV exposure solve, RAW WB mired offset including a real RW2 pair, selected-only apply as one undo step, stale and canceled runs, old report decoding, originals unchanged). Analysis was run on the real 2026-10-18 family shoot (221 RW2): 4 scenes, 215 proposals, 1 correctly flagged, about 1–3 s per photo in the test process; confidence scoring was corrected from that run. On 2026-10-19 it ran in the app on that shoot (about 11 minutes, 586 MB peak footprint); Apply Selected and one undo worked. That run found that a photo with only a white-balance edit lost it, which is now fixed. Not yet verified: the photographer's kept/touched count, an agreed time/memory limit, and a shoot with mixed window/shade/flash light.
 
 RAW highlight roll-off ([plan](../plans/active/raw-highlight-rolloff.md)), 2026-10-19. The photographer reported washed-out RAW edits. Cause: highlights decoded above white were clipped at every 8-bit output, and Core Image's highlight filter amplified them. RAW renders now use a luminance highlight shoulder that Highlights drives. On 12 frames of the 2026-10-18 family shoot, untouched clipping fell from 25–36% to 1–11% on 9 frames and to 15–26% on 3 backlit frames whose sky is blown in the file (camera JPEGs 5–32%), with midtones unchanged, no loss of saturation, and no dark band at the edge of blown areas. RAW load time is unchanged. Not yet verified: the photographer's visual check in the app of the final look on this branch. Unchanged: Apple's base RAW rendering stays lighter and flatter than the camera JPEG.
+
+## Isolated video stabilization research
+
+Branch `codex/video-stabilization-poc`, 2026-10-20: the owner authorized only baseline
+audit and proof of concept (M0/M1), with the full future scope in the
+[ExecPlan](../plans/active/video-stabilization.md). A standalone AVFoundation/Vision/Core Image
+harness outside the app compares translation, constrained homography and an external
+vid.stab library adapter on synthetic and original S5/iPhone footage. The app, UI,
+project schema and production dependencies are unchanged. Corrected native diagnostic
+output preserves exact source PTS; original-quality log/10-bit/HDR delivery is not
+implemented. Baseline tests/build pass with SDK 26.5 and SwiftPM's native build system
+(382 reported tests, 351 passed / 31 skipped declarations).
+
+**NO-GO for M2 production-engine selection:** homography misses a known cut, confidence
+does not establish reliable tracking on uniform images, translation increases measured
+jitter on the tested iPhone excerpts, neutral diagnostic color drifts, and labeled interview/walking/
+pan scenarios and human quality acceptance remain open. The owner will review those
+scenarios later. See [measurements and limitations](archive/VIDEO_STABILIZATION_PROTOTYPE_2026-10-20.md).
+M2–M6 remain unstarted; existing photo-first priorities below still apply.
 
 ## Open problems
 

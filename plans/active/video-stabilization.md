@@ -66,6 +66,25 @@ pure math checks, fixture/benchmark driver), this plan, evidence report and stat
 No modifications to application `Sources/`, `Tests/`, `Package.swift` or schema are required.
 Original camera fixtures and generated media stay local, outside tracked files.
 
+Future proposed file boundaries from the source plan (not created in M0/M1):
+
+| File | Future responsibility |
+| --- | --- |
+| `Package.swift` | Review native framework/build requirements; no current dependency additions |
+| `VideoMediaService.swift` | Full format/timing/color metadata inspection |
+| `TimelineCompositionService.swift` | Shared per-clip geometry, orientation and color rendering |
+| `VideoWorkspace.swift` | Stabilization inspector and Before/After |
+| `EditorModels.swift`, `ProjectDocument.swift` | Separate clip settings and tested schema migration |
+| `EditorStore.swift`, `EditorStore+VideoStabilization.swift` | Clip lifecycle, bounded state and operation ownership |
+| `VideoStabilizationService.swift` | Motion estimation, segments and smoothing |
+| `StabilizationMotionModels.swift` | Pure timestamped motion/correction/crop values |
+| `StabilizationCache.swift` | Source-keyed disposable motion cache |
+| `StabilizationRenderer.swift` | Per-frame geometry and cropping shared by preview/export |
+| `VideoExportService.swift` | Validated delivery, progress/cancel and atomic publication |
+| `VideoStabilizationTests.swift` | Algorithms, invalid motion, timing, crop and scene controls |
+| `StabilizationIntegrationTests.swift` | Clip/project/cache/preview/export boundaries |
+| `StabilizationPerformanceTests.swift` | Repeatable target-hardware diagnostics |
+
 ## Implementation steps
 
 ### Milestone 0 — Baseline and feasibility audit
@@ -85,31 +104,40 @@ Original camera fixtures and generated media stay local, outside tracked files.
   independently of stream color tags. S5 V-Log metadata contradicts generic BT.709 tags.
 - [x] Define the proof-of-concept test protocol below and synthetic ground truth.
 - [x] Record isolated video decode/conversion baseline with the same harness/workload
-  as the candidate (S5 event: 2.7996 s / 72 frames). Existing app playback/frame-drop
+  as the candidate (corrected S5 event: 3.5777 s first decode/reduction pass / 72 frames,
+  plus 0.982 s baseline render). Existing app playback/frame-drop
   performance remains NOT VERIFIED; this is not an AVPlayer or whole-app measurement.
 
 ### Milestone 1 — Stabilization proof of concept
 
-- [ ] Add an isolated command-line harness compiled separately from the SwiftUI app.
-- [ ] Write/run deterministic math tests before implementing smoothing/crop/time helpers.
-- [ ] Decode actual `CMSampleBuffer` presentation timestamps, normalize track orientation,
+- [x] Add an isolated command-line harness compiled separately from the SwiftUI app.
+- [x] Write/run deterministic math tests before implementing smoothing/crop/time helpers.
+- [x] Decode actual `CMSampleBuffer` presentation timestamps, normalize track orientation,
   retain only adjacent reduced-resolution analysis frames (long edge ≤960).
-- [ ] Analyze translation with Vision; separately evaluate homography projected to a
+- [x] Analyze translation with Vision; separately evaluate homography projected to a
   constrained rigid transform and reject unreliable/nonfinite/extreme observations.
-- [ ] Build separate path segments across failures/discontinuities; smooth using time,
+- [x] Build path segments across rejected observations; smooth using time,
   preserving linear pans; derive correction independently from motion estimation.
-- [ ] Render baseline and corrected diagnostic movies with identical decode/color/encode
-  settings, at source timestamps, into a newly created output directory.
-- [ ] Generate synthetic static, pan, jitter, rotation and irregular-timing cases with
+  Reliable discontinuity detection remains open: homography misses the known cut.
+- [x] Render baseline and corrected diagnostic movies with a shared diagnostic pipeline,
+  at exact encoded source PTS, into new output directories. Neutral RGB drift was
+  measured; original-quality color preservation is not established.
+- [x] Generate synthetic static, pan, jitter, rotation and irregular-timing cases with
   known transforms. Quantify motion error separately from path smoothness.
-- [ ] Run local S5 and iPhone clips. Label scene contents from actual inspection; do not
+- [x] Run local S5 and iPhone clips. Label scene contents from sampled frames; do not
   infer interview/walking/pan coverage from names or camera metadata.
-- [ ] Run external reference on identical diagnostic pixels/frames; log exact FFmpeg
+- [x] Run external reference on the same diagnostic baseline; log exact FFmpeg
   version/filter settings. `deshake` is not an equivalent substitute for vid.stab.
-- [ ] Measure crop, actual decoded-output residual jitter, rejects, analysis/render
+  Used pinned vid.stab library APIs via a C adapter because installed FFmpeg lacks
+  its filter wrappers. Reference raw remux is 24 fps, not a VFR timing validation.
+- [x] Measure crop, actual decoded-output translation jitter, rejects, analysis/render
   time, physical footprint/RSS and color differences against the unstabilized baseline.
-- [ ] Inspect generated comparisons and document remaining human visual gates.
-- [ ] Independently check findings and record go/no-go before M2.
+- [x] Inspect the generated four-pane S5 comparison still (1.5 s), record crop/tone
+  differences and provide the local comparison movie. Full temporal/human visual
+  acceptance remains NOT VERIFIED; the owner will review scenarios later.
+- [x] Independently check findings and record **NO-GO** before M2. Translation regresses
+  on all three tested iPhone excerpts; homography misses a cut; neutral diagnostic
+  round trips change RGB values. Human/labeled scenario and production color gates remain open.
 
 ### Milestone 2 — Core engine (NOT STARTED; separate change)
 
@@ -227,12 +255,12 @@ missing/unsupported sources; identical-PTS preview/export correspondence and aud
 
 | Gate | Required check | Result and evidence |
 | --- | --- | --- |
-| Static/build | `git diff --check`; repository QA/build; standalone harness compile | PENDING; initial sandbox and SDK 27 failures recorded |
-| Unit/integration | Full serial Swift Testing; independent harness algorithm checks | PENDING |
+| Static/build | `git diff --check`; deterministic source reviewer; SDK 26.5 native app build; standalone harness compile | PASS; final diff/link check recorded in evidence report; original environment failures retained |
+| Unit/integration | Full serial Swift Testing; independent harness algorithm checks | PASS: final app 382 reported / 351 passed / 31 skipped declarations, 47.458 s; five focused Python checks and standalone math pass |
 | Runtime/UI | No product UI changes; future integrated playback/control checks | NOT VERIFIED; outside M0/M1 |
-| Media quality | Synthetic ground truth, S5/iPhone outputs and human video review | PENDING |
-| Performance | Same-input native/reference analysis/render timings and memory | PENDING; whole-app gates remain future work |
-| Original safety | Selected source SHA-256 before/after; no originals as destinations | PENDING |
+| Media quality | Synthetic ground truth, S5/iPhone outputs and human video review | FAIL: iPhone translation regressions, homography cut miss and neutral RGB drift; human scenario/temporal acceptance NOT VERIFIED |
+| Performance | Native/reference diagnostics and original-source 15/30/60/90 s jobs | PASS measurements: native 4.996/10.131/20.862/28.823 s, peak 49–52 MiB; target-app limits NOT VERIFIED |
+| Original safety | Selected source SHA-256 before/after; no originals as destinations | PASS: seven synthetic and six original inputs unchanged, including the long source |
 
 ## Decisions, discoveries, and remaining work
 
@@ -246,7 +274,15 @@ missing/unsupported sources; identical-PTS preview/export correspondence and aud
   unspecified transfer). Metadata alone does not identify scene content or certify Dolby Vision.
 - Independent baseline reviewers confirmed repository/filters/selected media and healthy
   external storage (219 GiB available); disk exhaustion does not explain the build EPERM.
-- Recommendation: PENDING measurements. M2–M6 must remain unstarted until the M1 decision.
+- Final source preservation, exact output PTS, common-triplet metrics and memory/timing
+  tables were independently checked. Three harness fixes (memory label, real unequal-PTS
+  generation, encoder timebase) each have independent causal red→green/revert verification.
+- **Recommendation: NO-GO for M2 production-engine selection.** Native translation
+  remains a provisional research baseline, but tested iPhone regressions, neutral
+  color drift, homography cut failure and missing human/scenario gates block selection.
+  See [the full evidence report](../../docs/archive/VIDEO_STABILIZATION_PROTOTYPE_2026-10-20.md).
+  M2–M6 remain unstarted. M0 is complete; the M1 prototype is built/measured, while
+  its quality acceptance remains active rather than being declared complete.
 
 Release boundaries remain distinct: research protocol, measured real-camera prototype,
 reusable tested engine, editor preview/save integration, validated delivery, and full

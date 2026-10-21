@@ -104,16 +104,27 @@ extension EditorStore {
         isDecodingClickSelection = true
         let points = clickPoints
         let service = clickSelectionService
+        let started = ContinuousClock.now
         Task { [weak self] in
             do {
-                let masks = try await service.masks(photoID: asset.id, points: points)
+                let masks: [ClickMask]
+                do {
+                    masks = try await service.masks(photoID: asset.id, points: points)
+                } catch SegmentationError.notPrepared {
+                    // The models were released (idle or memory pressure) while the tool stayed open.
+                    await MainActor.run { [weak self] in
+                        if self?.clickRequestID == requestID { self?.statusMessage = "Reloading the selection model…" }
+                    }
+                    try await service.prepare(url: asset.url, photoID: asset.id)
+                    masks = try await service.masks(photoID: asset.id, points: points)
+                }
                 guard let self, clickRequestID == requestID, isClickSelecting, selectedAssetID == asset.id else { return }
                 isDecodingClickSelection = false
                 // The first click picks the model's most confident sensible mask; later clicks keep the size chosen.
                 if clickMasks.isEmpty || points.count == 1 { clickGranularity = ClickMask.defaultIndex(in: masks) }
                 clickMasks = masks
                 clickGranularity = min(clickGranularity, masks.count - 1)
-                showClickOverlay()
+                showClickOverlay(startedAt: started)
             } catch {
                 guard let self, clickRequestID == requestID else { return }
                 isDecodingClickSelection = false
@@ -125,7 +136,7 @@ extension EditorStore {
         }
     }
 
-    private func showClickOverlay() {
+    private func showClickOverlay(startedAt started: ContinuousClock.Instant? = nil) {
         guard clickMasks.indices.contains(clickGranularity), let asset = selectedAsset else { return }
         clickOverlayTask?.cancel()
         let png = clickMasks[clickGranularity].png
@@ -133,11 +144,22 @@ extension EditorStore {
         let renderer = photoRenderer
         let requestID = clickRequestID
         clickOverlayTask = Task { [weak self] in
-            let overlay = await renderer.subjectSelectionOverlay(url: asset.url, png: png, adjustments: adjustments)
+            let overlay: RenderedImage?
+            if let width = asset.pixelWidth, let height = asset.pixelHeight {
+                overlay = await renderer.subjectSelectionOverlay(
+                    png: png, adjustments: adjustments, sourceSize: CGSize(width: width, height: height))
+            } else {
+                overlay = await renderer.subjectSelectionOverlay(url: asset.url, png: png, adjustments: adjustments)
+            }
             guard let self, !Task.isCancelled, clickRequestID == requestID, isClickSelecting,
                   selectedAssetID == asset.id, let overlay else { return }
             subjectSelectionOverlay = NSImage(
                 cgImage: overlay.cgImage, size: NSSize(width: overlay.cgImage.width, height: overlay.cgImage.height))
+            if let started {
+                let elapsed = ContinuousClock.now - started
+                let milliseconds = Int(elapsed.components.seconds * 1000 + elapsed.components.attoseconds / 1_000_000_000_000_000)
+                statusMessage = "Selection shown in \(milliseconds) ms. Click more to add, ⌥-click to remove a part."
+            }
         }
     }
 }

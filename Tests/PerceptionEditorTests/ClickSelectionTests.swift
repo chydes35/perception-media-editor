@@ -77,6 +77,41 @@ struct ClickSelectionTests {
         #expect(!store.isClickSelecting)
     }
 
+    @Test func memoryPressureKeepsTheToolOpenAndTheNextClickReloadsTheModel() async throws {
+        let temp = try TempDirectory()
+        let (store, _) = try photoStore(temp)
+        store.startClickSelection()
+        try await waitUntil { !store.isPreparingClickSelection }
+        store.releaseMemoryUnderPressure()
+        #expect(store.isClickSelecting)
+        try await Task.sleep(for: .milliseconds(200))
+        store.clickSelect(at: NormalizedPoint(x: 0.5, y: 0.5), include: true)
+        try await waitUntil { store.clickMasks.count == 3 }
+        #expect(store.isClickSelecting)
+        store.cancelClickSelection()
+    }
+
+    @Test func theOverlayWithoutDecodingMatchesTheOneFromThePhoto() async throws {
+        let temp = try TempDirectory()
+        let url = try writeTestJPEG(to: temp.url.appendingPathComponent("o.jpg"), width: 400, height: 300)
+        let service = ClickSelectionService(segmenter: FakeSegmenter())
+        let id = UUID()
+        try await service.prepare(url: url, photoID: id)
+        let png = try await service.masks(photoID: id, points: [SegmentationPoint(x: 0.3, y: 0.4, include: true)])[1].png
+        var adjustments = PhotoAdjustments.neutral
+        adjustments.rotationQuarterTurns = 1
+        adjustments.cropRect = CropRect(x: 0.1, y: 0.2, width: 0.6, height: 0.7)
+        let renderer = PhotoRenderer()
+        let viaPhoto = try #require(await renderer.subjectSelectionOverlay(url: url, png: png, adjustments: adjustments))
+        let direct = try #require(await renderer.subjectSelectionOverlay(
+            png: png, adjustments: adjustments, sourceSize: CGSize(width: 400, height: 300)))
+        #expect(viaPhoto.cgImage.width == direct.cgImage.width)
+        #expect(viaPhoto.cgImage.height == direct.cgImage.height)
+        let lhs = try #require(viaPhoto.cgImage.dataProvider?.data as Data?)
+        let rhs = try #require(direct.cgImage.dataProvider?.data as Data?)
+        #expect(lhs == rhs)
+    }
+
     @Test func undoRemovesTheLastClickAndClearsTheSelectionWhenNoneRemain() async throws {
         let temp = try TempDirectory()
         let (store, _) = try photoStore(temp)

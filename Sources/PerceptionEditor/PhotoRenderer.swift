@@ -329,6 +329,15 @@ actor PhotoRenderer {
         return maskOverlay(for: mask, source: source, adjustments: adjustments)
     }
 
+    /// The same overlay without decoding the photo: only the oriented photo's size is needed to place the mask.
+    func subjectSelectionOverlay(png: Data, adjustments: PhotoAdjustments, sourceSize: CGSize) -> RenderedImage? {
+        guard sourceSize.width > 0, sourceSize.height > 0 else { return nil }
+        let extent = CGRect(origin: .zero, size: sourceSize)
+        let placeholder = CIImage(color: .black).cropped(to: extent)
+        let mask = LocalMask(shape: .subject(SubjectMask(png: png)))
+        return maskOverlay(for: mask, source: placeholder, adjustments: adjustments)
+    }
+
     /// The photo as the RAW engine renders it with no edits, for before/after.
     func original(url: URL) -> RenderedImage? {
         return autoreleasepool {

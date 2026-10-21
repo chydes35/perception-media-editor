@@ -1199,9 +1199,10 @@ final class EditorStore: ObservableObject {
         SubjectMaskRenderer.clearCaches()
         VideoCompositingEngine.releaseMemoryUnderPressure()
         cancelSubjectSelection()
-        cancelClickSelection()
+        // Free the selection models but keep the photographer's clicks; the next click reloads them.
         let clickService = clickSelectionService
         Task { await clickService.unload() }
+        if isClickSelecting { statusMessage = "Memory was low, so the selection model was unloaded. It reloads on your next click." }
         let renderer = photoRenderer
         let thumbnails = thumbnailRenderer
         let focus = focusRenderer

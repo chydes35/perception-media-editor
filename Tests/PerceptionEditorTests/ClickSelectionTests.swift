@@ -68,6 +68,7 @@ struct ClickSelectionTests {
         #expect(store.clickGranularity == 2)
         let before = store.project.adjustmentsByAssetID[asset.id]?.masks.count ?? 0
         store.acceptClickSelection()
+        try await waitUntil { !store.isClickSelecting }
         let masks = try #require(store.project.adjustmentsByAssetID[asset.id]?.masks)
         #expect(masks.count == before + 1)
         #expect(masks.last?.shape.rasterSelection != nil)

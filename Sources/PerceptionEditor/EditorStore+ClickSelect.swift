@@ -77,14 +77,24 @@ extension EditorStore {
     }
 
     func acceptClickSelection() {
-        guard isClickSelecting, clickMasks.indices.contains(clickGranularity) else { return }
+        guard isClickSelecting, !isDecodingClickSelection, clickMasks.indices.contains(clickGranularity),
+              let asset = selectedAsset else { return }
         let png = clickMasks[clickGranularity].png
-        cancelClickSelection()
-        nextHistoryLabel = "Click to Select"
-        _ = addMask(.subject(SubjectMask(png: png)))
-        showMaskOverlay = true
-        refreshPreview()
-        statusMessage = "Selected. Use Brush to refine its edge and the sliders to adjust it."
+        let requestID = UUID()
+        clickRequestID = requestID
+        isDecodingClickSelection = true
+        statusMessage = "Fitting the edge to the photo…"
+        let service = clickSelectionService
+        Task { [weak self] in
+            let refined = await service.refinedPNG(photoID: asset.id, png: png)
+            guard let self, clickRequestID == requestID, isClickSelecting, selectedAssetID == asset.id else { return }
+            cancelClickSelection()
+            nextHistoryLabel = "Click to Select"
+            _ = addMask(.subject(SubjectMask(png: refined)))
+            showMaskOverlay = true
+            refreshPreview()
+            statusMessage = "Selected. Use Brush to refine its edge and the sliders to adjust it."
+        }
     }
 
     private func decodeClickSelection() {

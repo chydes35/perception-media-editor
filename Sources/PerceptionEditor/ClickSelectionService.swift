@@ -28,6 +28,7 @@ actor ClickSelectionService {
     private var preparedPhotoID: UUID?
     private var maskWidth = 0
     private var maskHeight = 0
+    private var edgeSource: SubjectEdgeMatting.Source?
     private var idleTask: Task<Void, Never>?
 
     init(segmenter: any PromptableSegmenter = SAM2Segmenter(), idleSeconds: Double = ClickSelectionService.idleSeconds) {
@@ -51,6 +52,7 @@ actor ClickSelectionService {
         else { throw SegmentationError.noPhoto }
         try Task.checkCancellation()
         try await segmenter.prepare(photoID: photoID, image: cgImage)
+        edgeSource = SubjectEdgeMatting.Source(image: image, context: CIContext(options: [.workingColorSpace: NSNull(), .outputColorSpace: NSNull()]))
         preparedPhotoID = photoID
         maskWidth = cgImage.width
         maskHeight = cgImage.height
@@ -73,9 +75,19 @@ actor ClickSelectionService {
         return masks
     }
 
+    /// The accepted mask with its edge fitted to the photo (fine hair, spill), or unchanged if that is not possible.
+    func refinedPNG(photoID: UUID, png: Data) -> Data {
+        idleTask?.cancel()
+        defer { scheduleUnload() }
+        guard preparedPhotoID == photoID, let edgeSource else { return png }
+        let context = CIContext(options: [.workingColorSpace: NSNull(), .outputColorSpace: NSNull(), .cacheIntermediates: false])
+        return SubjectEdgeMatting.refinePNG(png, source: edgeSource, context: context)
+    }
+
     func unload() async {
         idleTask?.cancel()
         preparedPhotoID = nil
+        edgeSource = nil
         await segmenter.unload()
     }
 

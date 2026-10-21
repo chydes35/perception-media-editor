@@ -1,0 +1,142 @@
+{
+  "recorded_date": "2026-10-21",
+  "source_commit": "0d3283aa9063bb081ac39554a66221c5e87db53f",
+  "logs_private_outside_checkout": true,
+  "log_records": [
+    {
+      "log_basename": "ci-main.log",
+      "sha256": "2d51657b5a81da869b27f3b416153c6dff38e095fc6866f2a377568d631e06ae",
+      "passed_test_declarations": 341,
+      "skipped_test_declarations": 41,
+      "summary": [
+        "\u2714 Test run with 382 tests passed after 60.846 seconds."
+      ]
+    },
+    {
+      "log_basename": "qa-baseline.log",
+      "sha256": "d81a8fe375e7d5eddadc3bb8054f998a17f311b0e208bf8acd00be4efd882e74",
+      "passed_test_declarations": 0,
+      "skipped_test_declarations": 0,
+      "summary": []
+    },
+    {
+      "log_basename": "qa-unsandboxed.log",
+      "sha256": "50b38365d7567e351666eba4439dc26c64e03fe40f691fafde8f54772931fd76",
+      "passed_test_declarations": 0,
+      "skipped_test_declarations": 0,
+      "summary": []
+    },
+    {
+      "log_basename": "tests-native.log",
+      "sha256": "f6efd30ba575afa13a12e62a80b606ffb6ddc1aa2d508eaeefc829a5b189b4b6",
+      "passed_test_declarations": 341,
+      "skipped_test_declarations": 41,
+      "summary": [
+        "\u2714 Test run with 382 tests in 82 suites passed after 37.744 seconds."
+      ]
+    },
+    {
+      "log_basename": "tests-real-copies.log",
+      "sha256": "f07455da052561e81d8d7e3b4458ce550797e753314fbd04f797b016fe51a6e0",
+      "passed_test_declarations": 74,
+      "skipped_test_declarations": 4,
+      "summary": [
+        "\u2718 Test run with 79 tests in 17 suites failed after 103.111 seconds with 1 issue."
+      ]
+    },
+    {
+      "log_basename": "memory-nine-copies.log",
+      "sha256": "c8898b5144dcdac8236f0b3e04647d3d99904c29a43cec8287c5784a13bb0c2b",
+      "passed_test_declarations": 1,
+      "skipped_test_declarations": 0,
+      "summary": [
+        "\u2714 Test run with 1 test in 1 suite passed after 13.082 seconds."
+      ]
+    },
+    {
+      "log_basename": "fixture-green.log",
+      "sha256": "036db115b62f7ef9bdc3d3931d5f09fe4fcf12f96cfae68bdbd8917bf118571e",
+      "passed_test_declarations": 0,
+      "skipped_test_declarations": 0,
+      "summary": []
+    },
+    {
+      "log_basename": "tests-candidate-full.log",
+      "sha256": "ccb4e7990037b191da445afd883e61a15951481abe62bacd4c455c1119d08be1",
+      "passed_test_declarations": 357,
+      "skipped_test_declarations": 25,
+      "summary": [
+        "\u2714 Test run with 382 tests in 82 suites passed after 104.238 seconds."
+      ]
+    },
+    {
+      "log_basename": "focus-baseline.log",
+      "sha256": "2351bbfdb89cf2689b7c3374606e89895db80d74c9b21ee839dc5352fac7a594",
+      "passed_test_declarations": 0,
+      "skipped_test_declarations": 0,
+      "summary": [
+        "\u2718 Test run with 1 test in 1 suite failed after 1.663 seconds with 1 issue."
+      ]
+    },
+    {
+      "log_basename": "focus-fixed.log",
+      "sha256": "c7209d88ebd7b534e7dffc7fd2657422dae8e99bfeffb9c908a67a86a6aa4236",
+      "passed_test_declarations": 1,
+      "skipped_test_declarations": 0,
+      "summary": [
+        "\u2714 Test run with 1 test in 1 suite passed after 1.689 seconds."
+      ]
+    },
+    {
+      "log_basename": "focus-reverted.log",
+      "sha256": "0e2fcccce770b3c6bde9c28e368e93be3dc6ddd506fc2497b7d151a979998cd7",
+      "passed_test_declarations": 0,
+      "skipped_test_declarations": 0,
+      "summary": [
+        "\u2718 Test run with 1 test in 1 suite failed after 1.665 seconds with 1 issue."
+      ]
+    },
+    {
+      "log_basename": "focus-reapplied.log",
+      "sha256": "29541e03c7ed562c4ea5a3e7947cb33e50723157d1382b9ad5c620599d3d6b1d",
+      "passed_test_declarations": 1,
+      "skipped_test_declarations": 0,
+      "summary": [
+        "\u2714 Test run with 1 test in 1 suite passed after 1.799 seconds."
+      ]
+    },
+    {
+      "log_basename": "fixture-final.log",
+      "sha256": "80e552c5a83cb245a62573129a875e8658210cb34e8346c9a965e105fcb99318",
+      "passed_test_declarations": 0,
+      "skipped_test_declarations": 0,
+      "summary": []
+    },
+    {
+      "log_basename": "candidate-source-review.log",
+      "sha256": "c872dd5ba1dc15e682961ba9aef8760b5412a634147dc9f94891684789af69b0",
+      "passed_test_declarations": 0,
+      "skipped_test_declarations": 0,
+      "summary": []
+    },
+    {
+      "log_basename": "private-fixtures-before.log",
+      "sha256": "c8aa2773bff0e377d3453b2273587478c658ab724c8e0406c08d8529873e1bc5",
+      "passed_test_declarations": 0,
+      "skipped_test_declarations": 0,
+      "summary": []
+    },
+    {
+      "log_basename": "private-fixtures-after.log",
+      "sha256": "c8aa2773bff0e377d3453b2273587478c658ab724c8e0406c08d8529873e1bc5",
+      "passed_test_declarations": 0,
+      "skipped_test_declarations": 0,
+      "summary": []
+    },
+    {
+      "log_basename": "independent-original-integrity.json",
+      "sha256": "08ef52a61ab321746918cac90c3f4a2a4e96921aad707702ad9d1e5d8428efb5",
+      "scope": "independent aggregate original/copy and neighboring-checkout preservation; private source paths/hashes excluded"
+    }
+  ]
+}

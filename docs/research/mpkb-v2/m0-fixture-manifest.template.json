@@ -1,0 +1,82 @@
+{
+  "schema_id": "PME-MPKB-M0-FIXTURES-2",
+  "schema_version": 2,
+  "status": "TEMPLATE_ONLY_NOT_POPULATED",
+  "privacy": {
+    "private_manifest": true,
+    "copied_media_only": true,
+    "no_gps_faces_personal_names_in_reports": true,
+    "never_commit_media_or_populated_manifest": true
+  },
+  "baseline": {
+    "repository": "chydes35/perception-media-editor",
+    "audit_commit_sha": "0d3283aa9063bb081ac39554a66221c5e87db53f",
+    "measurement_commit_sha": null,
+    "macos_version": null,
+    "hardware_model": null,
+    "installed_memory_bytes": null,
+    "swift_version": null,
+    "raw_support_version": null
+  },
+  "required_scenarios": [
+    "daylight_skin",
+    "high_contrast_specular",
+    "mixed_light",
+    "low_ISO_shadow_lift",
+    "high_ISO_noise",
+    "fine_fabric_aliasing",
+    "foliage_hair_edges",
+    "backlit_sky",
+    "highlight_bracket",
+    "flash",
+    "artificial_LED",
+    "high_res_mode_output",
+    "challenging_lens_vignetting",
+    "S5_RAW_JPEG_pair",
+    "100_to_200_distinct_RW2_single_shoot"
+  ],
+  "example_not_measured": {
+    "fixture_id": "S5-0001",
+    "format": "RW2",
+    "scenario": "daylight_skin",
+    "shoot_id": null,
+    "capture_pair_id": null,
+    "camera": {
+      "model": null,
+      "model_verified": false,
+      "firmware": null,
+      "firmware_verified": false,
+      "verification_method": "not_verified"
+    },
+    "exposure": {
+      "iso": null,
+      "shutter_seconds": null,
+      "aperture_f_number": null,
+      "exposure_mode": null,
+      "white_balance_mode": null,
+      "verification_method": "not_verified"
+    },
+    "capture_mode": {
+      "value": null,
+      "verification_method": "not_verified",
+      "uncertainty": "Standard vs high-resolution mode not established"
+    },
+    "sha256": null,
+    "original_sha256": null,
+    "byte_count": null,
+    "permissions": {
+      "copied_from_original": false,
+      "provenance_recorded_locally": false,
+      "read_copy": false,
+      "hash_copy": false,
+      "inspect_safe_metadata": false,
+      "render_copy": false,
+      "export_derivatives": false,
+      "generate_masks": false,
+      "publish_media": false,
+      "publish_metadata_or_hashes": false
+    }
+  },
+  "fixtures": [],
+  "measurements": []
+}

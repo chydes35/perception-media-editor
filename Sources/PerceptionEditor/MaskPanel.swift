@@ -328,7 +328,7 @@ struct MaskPanel: View {
     private var clickSelectionControls: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(store.isPreparingClickSelection
-                 ? "Getting the photo ready. The first selection can take a few seconds."
+                 ? "Getting the photo ready. After the app has just started this can take up to a minute while the selection model loads; later photos take a few seconds."
                  : "Click what you want. Click more to add, ⌥-click to remove a part.")
                 .font(.caption2).foregroundStyle(.secondary)
             if store.clickMasks.count > 1 {

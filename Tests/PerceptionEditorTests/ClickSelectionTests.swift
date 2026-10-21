@@ -37,6 +37,8 @@ struct ClickSelectionTests {
         #expect(ClickMask.defaultIndex(in: [mask(0.4, 0.02), mask(0.9, 0.10), mask(0.95, 0.60)]) == 1)
         #expect(ClickMask.defaultIndex(in: [mask(0.5, 0.5), mask(0.9, 0.4), mask(0.3, 0.9)]) == 1)
         #expect(ClickMask.defaultIndex(in: [mask(0.5, 0.05)]) == 0)
+        // The dog case: object 0.731 and whole 0.754 are nearly tied, so the smaller wins.
+        #expect(ClickMask.defaultIndex(in: [mask(0.36, 0.04), mask(0.731, 0.11), mask(0.754, 0.14)]) == 1)
     }
 
     @Test func masksForAPhotoThatWasNotPreparedAreRefused() async throws {
@@ -143,6 +145,11 @@ struct ClickSelectionProbe {
             start = clock.now
             let masks = try await service.masks(photoID: id, points: points)
             print("PROBE \(parts[0]) \(clock.now - start), peak \(Self.peakMegabytes()) MB")
+            let chosen = ClickMask.defaultIndex(in: masks)
+            start = clock.now
+            let refined = await service.refinedPNG(photoID: id, png: masks[chosen].png)
+            print("PROBE \(parts[0]) default mask \(chosen), refine \(clock.now - start)")
+            try out.map { try refined.write(to: $0.appendingPathComponent("\(parts[0])-refined.png")) }
             for (index, mask) in masks.enumerated() {
                 print("PROBE   \(parts[0])-\(index) score \(mask.score) covers \(Int(mask.coverage * 100))%")
                 try out.map { try mask.png.write(to: $0.appendingPathComponent("\(parts[0])-\(index).png")) }

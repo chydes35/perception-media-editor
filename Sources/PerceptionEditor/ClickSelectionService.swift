@@ -8,11 +8,21 @@ struct ClickMask: Equatable, Sendable {
     var coverage: Double
 
     /// The mask to show first. Among masks that stay under a third of the frame (a click that selects the
-    /// lawn is rarely wanted) the model's most confident one; if every mask is larger, the smallest.
+    /// lawn is rarely wanted) the model's most confident one; when a smaller mask is almost as confident
+    /// (within 0.05) the smaller one, since a missed part is easier to widen than a too-large mask is to trim.
+    /// If every mask is larger than a third of the frame, the smallest.
     static func defaultIndex(in masks: [ClickMask]) -> Int {
         let modest = masks.indices.filter { masks[$0].coverage <= 1.0 / 3 }
-        if let best = modest.max(by: { masks[$0].score < masks[$1].score }) { return best }
-        return masks.indices.min { masks[$0].coverage < masks[$1].coverage } ?? 0
+        guard var best = modest.max(by: { masks[$0].score < masks[$1].score }) else {
+            return masks.indices.min { masks[$0].coverage < masks[$1].coverage } ?? 0
+        }
+        let floor = masks[best].score - 0.05
+        for index in modest.sorted(by: { masks[$0].coverage < masks[$1].coverage })
+        where masks[index].coverage < masks[best].coverage && masks[index].score >= floor {
+            best = index
+            break
+        }
+        return best
     }
 }
 

@@ -1,6 +1,6 @@
 # Click-to-select masks (SAM 2.1) and better selection edges
 
-Status: active (steps 1–4 done and checked in the built app; edge refinement and the October 8 validation not done)
+Status: active (steps 1–6 done except the October 8 branch-sky case and click markers; checked in the built app and on real RW2 files)
 
 Roadmap: [Phase 3 masks and healing](../../docs/ROADMAP.md), image-quality program Q3 ([research](../../docs/research/PHOTO_PIPELINE_SOTA.md))
 
@@ -65,7 +65,12 @@ Out of scope for this plan: box and text prompts (the reference app only uses po
 - Probe (`ClickSelectionProbe`, real model, 1536 px working copy): peak process memory 284 MB with all three models loaded; encode 2.9–4.1 s the first time in a test process.
 - In the app: first "Click to Select" took roughly 15–40 s to become ready (cold model load and GPU compile, not timed precisely); then each click showed its mask within about 1.5 s. A click's model passes take about 0.1 s; the rest was upsampling and PNG work, which is slow in debug builds and not yet profiled in release. NOT VERIFIED against the 1 s goal.
 - Quality on this photo: baby face / whole baby (bow and torso, clean silhouette) / pumpkin whole / yellow flower cluster whole; undo, size picker and Accept (one `Subject` mask, one history step) all worked. The default mask now prefers the most confident one under a third of the frame. One-click "whole" on the lawn-side flower returns a blob of lawn as the largest candidate, which is why the default avoids large masks.
-- Not yet done: edge refinement, the October 8 cases (group of children, branch sky, fur), click markers on the photo, idle unload observed in the app.
+- **Latency, release build (probe):** a click takes 0.08 s (0.2 s for the first click of a photo), and fitting the edge on Accept takes 0.2-0.3 s; first-photo preparation 3-4 s after the models are warm. The earlier 0.8-0.9 s figures were from debug builds. The in-app click-to-overlay time is not measured separately (the overlay render is extra).
+- **Edges:** Accept now fits the mask edge with the existing guided matte (`SubjectEdgeMatting`) at 1536 px. On the dog and hair crops the refined mask follows the fur and hair silhouette closely; no metric is claimed.
+- **Group of children (P1107371, three clicks):** each child is selectable with one click using the Whole size (girl with legs, baby, boy with legs); the default size can pick the garment instead of the person, so the size picker matters. Hair: a click on hair selected the hair (and headband) as the smallest mask.
+- **Dog and girl (P1107251):** Object gives the dog with a clean silhouette; Whole merges dog and girl into one speckled mask. Plant with fine branches (coleus): Whole selects the whole plant including its branches, but the default (smallest, highest-scoring) mask is a few leaves, so the photographer widens it.
+- The default mask is the most confident one under a third of the frame, or the smaller one when within 0.05 of it.
+- Not yet done: the October 8 branch-sky case (the original five RAWs were not found; similar frames were used instead), click markers drawn on the photo, idle unload observed in the app.
 
 ## Verification
 

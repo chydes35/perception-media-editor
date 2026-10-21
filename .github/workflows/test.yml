@@ -11,7 +11,9 @@ concurrency:
 
 jobs:
   test:
-    runs-on: macos-15
+    # Experiment (2026-10-19): the redesign is built against the macOS 26 SDK and fails to compile on
+    # macos-15 / Xcode 16.4 (audio tap pointer type, a type-checker timeout, an async API). See PR description.
+    runs-on: macos-26
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4

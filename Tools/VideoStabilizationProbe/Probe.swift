@@ -142,6 +142,7 @@ struct ProbeReport: Codable {
     var requiredZoom: Double
     var appliedZoom: Double
     var appliedStrength: Double
+    var requestedStrength: Double
     var removedDimensionFraction: Double
     var rejected: Int
     var registrationErrors: Int
@@ -149,7 +150,8 @@ struct ProbeReport: Codable {
     var corrections: [Pose]
 }
 
-func analyze(url: URL, mode: String, start: Double, duration: Double, edge: Int) async throws -> ProbeReport {
+func analyze(url: URL, mode: String, start: Double, duration: Double, edge: Int,
+             requestedStrength: Double) async throws -> ProbeReport {
     let initialMemory = MemoryReading.read()
     var peak = initialMemory
     let began = Date()
@@ -187,7 +189,7 @@ func analyze(url: URL, mode: String, start: Double, duration: Double, edge: Int)
         peak.compressedMiB = max(peak.compressedMiB, memory.compressedMiB)
     }
     try require(samples.count >= 3, "Fewer than three decoded frames")
-    let full = MotionMath.corrections(samples, radius: 0.5, strength: 1)
+    let full = MotionMath.corrections(samples, radius: 0.5, strength: requestedStrength)
     let w = Double(reader.width), h = Double(reader.height)
     let required = MotionMath.requiredZoom(full, width: w, height: h)
     var strength = 1.0
@@ -206,7 +208,8 @@ func analyze(url: URL, mode: String, start: Double, duration: Double, edge: Int)
     return ProbeReport(input: url.path, model: mode, width: reader.width, height: reader.height,
                        analysisSeconds: Date().timeIntervalSince(began), renderSeconds: 0,
                        initialMemory: initialMemory, peakSampledMemory: peak,
-                       requiredZoom: required, appliedZoom: zoom, appliedStrength: strength,
+                       requiredZoom: required, appliedZoom: zoom, appliedStrength: requestedStrength * strength,
+                       requestedStrength: requestedStrength,
                        removedDimensionFraction: 1 - 1 / zoom, rejected: rejected,
                        registrationErrors: errors, samples: samples, corrections: corrections)
 }
@@ -280,11 +283,15 @@ func render(url: URL, destination: URL, report: ProbeReport, start: Double, dura
                         && ["render", "analyze"].contains(args[7]), "Unsupported probe configuration")
             let url = URL(fileURLWithPath: args[1]).standardizedFileURL.resolvingSymlinksInPath()
             let directory = URL(fileURLWithPath: args[2]).standardizedFileURL
+            let requestedStrength = ProcessInfo.processInfo.environment["PME_STABILIZATION_STRENGTH"].flatMap(Double.init) ?? 1
+            try require(requestedStrength.isFinite && requestedStrength >= 0 && requestedStrength <= 1,
+                        "PME_STABILIZATION_STRENGTH must be in [0,1]")
             // mkdir is exclusive, including against symlinks; never open an existing output tree.
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
             let mode = args[3], shouldRender = args[7] == "render"
             let result = try await Task.detached(priority: .utility) {
-                var report = try await analyze(url: url, mode: mode, start: start, duration: duration, edge: edge)
+                var report = try await analyze(url: url, mode: mode, start: start, duration: duration, edge: edge,
+                                               requestedStrength: requestedStrength)
                 if shouldRender {
                     report.renderSeconds = try await render(url: url, destination: directory.appendingPathComponent("diagnostic.mov"),
                                                             report: report, start: start, duration: duration, edge: edge)

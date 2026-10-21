@@ -39,6 +39,9 @@ deployment target; this does not claim a run on macOS 15 or Swift 6.1.
 
 Arguments: source, new output directory, `none|translation|homography`, start seconds,
 duration seconds, long edge, `render|analyze`. `none` measures decode/conversion alone.
+Translation strength defaults to 1. For a controlled diagnostic sweep, set
+`PME_STABILIZATION_STRENGTH` to a finite value from 0 through 1. The report records
+requested strength separately from any additional reduction required by the crop limit.
 The JSON contains source CMTime values/timescales, segments, confidence, validity,
 camera path, corrections, crop and timings. `motion.json` is written after successful
 rendering. Failed/killed experiments can leave incomplete diagnostic files in their

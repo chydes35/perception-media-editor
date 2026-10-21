@@ -135,9 +135,14 @@ Future proposed file boundaries from the source plan (not created in M0/M1):
 - [x] Inspect the generated four-pane S5 comparison still (1.5 s), record crop/tone
   differences and provide the local comparison movie. Full temporal/human visual
   acceptance remains NOT VERIFIED; the owner will review scenarios later.
+- [x] Recheck iPhone translation regression at strengths 0.25/0.5/0.75/1 using actual
+  encoded output remeasurement; retain exact PTS and crop per case. Path-only predictions
+  are not used as substitute evidence.
 - [x] Independently check findings and record **NO-GO** before M2. Translation regresses
-  on all three tested iPhone excerpts; homography misses a cut; neutral diagnostic
-  round trips change RGB values. Human/labeled scenario and production color gates remain open.
+  at full strength on all three tested iPhone excerpts; reduced-strength tests improve
+  only the SDR excerpt at strengths 0.25 and 0.5. Homography misses a cut; neutral
+  diagnostic RGB round trips change pixel values. Human/labeled scenario and production
+  color gates remain open.
 
 ### Milestone 2 — Core engine (NOT STARTED; separate change)
 

@@ -117,6 +117,42 @@ S5 sports has 235 common triplets; baseline and other individual series have 238
 Reference results use 24-fps remux timing; they are approximate on fractional/VFR inputs.
 Scene names describe sampled contents, not confirmed interview/walking/pan categories.
 
+#### Follow-up: reduced translation strength on iPhone excerpts
+
+The measured full-strength iPhone regressions prompted a bounded re-render sweep
+using the development harness at strengths 0.25, 0.5, 0.75 and 1.0. Each candidate
+was rendered from the same reduced diagnostic baseline, then decoded and remeasured
+with Vision. All rows use the same 118 valid frame triplets and exact source PTS.
+This measures encoded diagnostic output, not original-quality HDR/ProRes delivery.
+
+| Excerpt | Strength | Output RMS px/s² | Change vs baseline | Dimension removed |
+| --- | ---: | ---: | ---: | ---: |
+| iPhone landscape | 0.25 | 205.365 | −46.39% | 0.21% |
+| iPhone landscape | 0.50 | 212.100 | −51.19% | 0.41% |
+| iPhone landscape | 0.75 | 237.135 | −69.03% | 0.62% |
+| iPhone landscape | 1.00 | 224.966 | −60.36% | 0.83% |
+| iPhone HLG | 0.25 | 355.703 | −13.39% | 0.29% |
+| iPhone HLG | 0.50 | 414.139 | −32.02% | 0.57% |
+| iPhone HLG | 0.75 | 410.731 | −30.93% | 0.86% |
+| iPhone HLG | 1.00 | 386.029 | −23.06% | 1.15% |
+| iPhone SDR | 0.25 | 304.606 | **+10.29%** | 0.35% |
+| iPhone SDR | 0.50 | 322.539 | **+5.00%** | 0.70% |
+| iPhone SDR | 0.75 | 378.675 | −11.53% | 1.04% |
+| iPhone SDR | 1.00 | 374.944 | −10.43% | 1.39% |
+
+Only the SDR excerpt improved at reduced strength, by 10.29% at 0.25 and 5.00%
+at 0.50; those results are below the provisional 30% target. Landscape and HLG
+regressed at every tested strength. Strength 1.00 reproduces the earlier result.
+All values and per-run reports are in ignored local scratch at
+`.build/video-stabilization-final/strength-sweep-retry/results.json`.
+
+An independent path-space sweep predicts improvement at every positive strength
+for all three iPhone excerpts, while encoded remeasurement does not. Source and
+output samples have identical rational timestamps and frame counts, ruling out
+index/PTS misalignment in this comparison. The model/output discrepancy is real;
+its cause is unproven. These in-sample path predictions cannot override encoded
+measurements or justify a correction-strength policy.
+
 | Fixture | Translation crop | Homography crop | vid.stab zoom-induced crop |
 | --- | ---: | ---: | ---: |
 | s5-event | 13.52% | 11.06% | 24.76% |
@@ -304,10 +340,10 @@ Rejected: diagnostic results establish HDR/10-bit or visual acceptance — neith
 | --- | --- | --- |
 | Baseline app tests/build | PASS with environment workaround | Native SwiftPM / SDK 26.5; counts above |
 | Current diff/source review/app checks | PASS | Diff/link checks; deterministic source reviewer; final serial app tests/build with SDK 26.5/native workaround |
-| Standalone math/focused regression | PASS | Standalone math; five current Python tests; independent causal fix verification |
+| Standalone math/focused regression | PASS | Standalone math; five current Python tests; independent causal fix verification; four-point rendered iPhone strength sweep |
 | Native synthetic translation feasibility | PASS | Corrected CFR/unequal-PTS residual reduction exceeds provisional 30% target; not perceptual acceptance |
 | Robust cut/reliability policy | FAIL | Homography misses known cut; ambiguous confidence |
-| Measured iPhone motion improvement | FAIL | Translation residual increases in all three tested excerpts |
+| Measured iPhone motion improvement | FAIL | Full-strength translation increases residual in all three; only low-strength SDR improves, by 10.29%, while landscape/HLG regress across all four strengths |
 | Neutral diagnostic color | FAIL | Identity-geometry first-frame RGB difference about 9–10/255; cause unproven |
 | CLI performance measurements | PASS | 15/30/60/90 s original-source runs and native/reference phase/memory tables above |
 | Real camera diagnostic decode/render | PASS | Two S5 / three iPhone excerpts; exact native encoded PTS; explicit SDR diagnostic downgrade |

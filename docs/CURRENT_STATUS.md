@@ -43,8 +43,8 @@ baseline. Neither is a fresh pass of this combined candidate.
 | Published-main GitHub QA | PASS at `0d3283a`, [run 39315828017](https://github.com/chydes35/perception-media-editor/actions/runs/39315828017); M0 audit counted 341 executed / 41 skipped |
 | Click polish PR #21 QA | PASS at `5d80625`, [run 39597113519](https://github.com/chydes35/perception-media-editor/actions/runs/39597113519); not combined-candidate evidence |
 | M0 PR #22 QA | PASS at `593549a`, [run 39634715213](https://github.com/chydes35/perception-media-editor/actions/runs/39634715213); not combined-candidate evidence |
-| Combined-candidate checks/build | PENDING; recorded in [consolidation plan](../plans/active/project-consolidation.md) |
-| Standard local QA | Last M0 attempt failed before tests (permissions/default SDK macro discovery); SDK 26.5/native substitute passed at that revision. Cleanup step 2 remains open |
+| Combined-candidate checks/build | PASS SDK 26.5/native substitute: 784 reported, 719 passed / 65 skipped / 0 failed; app build PASS. Validator 12/12 PASS. See [consolidation plan](../plans/active/project-consolidation.md) |
+| Standard local QA | FAIL before tests on 2026-10-22: sandbox build-service manifest EPERM. Historical M0 also recorded a default-SDK macro failure. Fresh substitute above passed; cleanup step 2 remains open |
 | Genuine 100–200-photo whole-app shoot and agreed performance limits | NOT VERIFIED |
 | Signing/notarization | NOT VERIFIED |
 
@@ -70,7 +70,8 @@ baseline. Neither is a fresh pass of this combined candidate.
 
 ## Next
 
-Review the consolidated candidate and its migration/PR disposition before advancing
-main. Then make local QA repeatable (cleanup step 2), followed by the complete
+Local candidate preparation is complete; publication awaits user authorization after
+automatic approval review rejected the external push. Review the candidate and its
+migration/PR disposition before advancing main. Then make local QA repeatable (cleanup step 2), followed by the complete
 photo-shoot acceptance run (cleanup step 3). Studio OS transfer and stabilization
 remain preserved outside this candidate; no worktrees or remote PRs are removed.

@@ -1,5 +1,14 @@
 # Perception Media Editor Roadmap
 
+## Current baseline (2026-10-22)
+
+The [consolidation candidate](decisions/2026-10-22-project-consolidation.md) contains
+the redesign, process-version infrastructure, export recipes and click-selection
+polish, plus M0 audit/tooling. It saves schema 13; published main remains schema 10.
+Historical phase entries below describe delivery at their stated date, not current
+branch integration or a fresh acceptance pass. Photo quality/full-shoot acceptance
+is the next product gate; consolidation preserves existing video work.
+
 ## Direction (decided 2026-09-26)
 
 The goal is a full Lightroom replacement for a single photographer's workflow. Photo comes first and must be complete before video work resumes. Typical job: 100–200 Lumix S5 RW2 files per session, edited on an 8 GB M1 MacBook Air, so every feature has a memory budget. Existing Lightroom edits are not migrated; new shoots start fresh. Masks, healing, and presets are used on nearly every shoot.
@@ -42,7 +51,7 @@ See [Memory Optimization](archive/MEMORY_OPTIMIZATION_2026-09-28.md) for measure
 
 #### Local integration — 2026-10-07
 
-The [integration plan](../plans/completed/photo-workflow-integration.md) combines GitHub main, the advanced local photo tools, and the preserved reliability/memory/batch-delivery work on `codex/photo-workflow-integration`. The candidate retains project schema 10. Automated integration checks do not close the open UI, image-quality, or 100–200-photo performance gates. The [target-Mac validation](archive/WORKFLOW_VALIDATION_2026-10-07.md) adds displayed evidence from 100 distinct S5 photos across dated library folders and records the healing allocation defect/correction; genuine single-shoot, broad visual, and threshold-based acceptance remain open.
+The [integration plan](../plans/completed/photo-workflow-integration.md) combines GitHub main, the advanced local photo tools, and the preserved reliability/memory/batch-delivery work on `codex/photo-workflow-integration`. That October 7 candidate retained project schema 10; the current candidate uses 13. Automated integration checks do not close the open UI, image-quality, or 100–200-photo performance gates. The [target-Mac validation](archive/WORKFLOW_VALIDATION_2026-10-07.md) adds displayed evidence from 100 distinct S5 photos across dated library folders and records the healing allocation defect/correction; genuine single-shoot, broad visual, and threshold-based acceptance remain open.
 
 ### Phase 1 — Library and culling (complete, PR #2)
 
@@ -94,7 +103,7 @@ The [October 8 real-RAW selection pass](archive/SELECTION_QUALITY_2026-10-08.md)
 ### Phase 4 — Delivery (in progress)
 
 - [x] Sequential selected-photo JPEG export with quality, long-edge size, collision-safe naming, progress/cancel, and per-file results
-- [~] Batch export recipes: persistent recipes, formats (JPEG, 16-bit TIFF/PNG, 10-bit HEIC), output sharpening and copyright/IPTC are implemented on `feat/pv2-scene-pipeline` ([plan](../plans/active/export-recipes.md); UI check in the app pending). P3 (E2), watermark and HDR gain-map output (E3) are not built
+- [~] Batch export recipes: persistent recipes, formats (JPEG, 16-bit TIFF/PNG, 10-bit HEIC), output sharpening and copyright/IPTC are included from `feat/pv2-scene-pipeline` ([plan](../plans/active/export-recipes.md); historical UI check recorded, full-shoot acceptance pending). P3 (E2), watermark and HDR gain-map output (E3) are not built
 - [ ] Real 100–200-photo delivery pass and whole-app export memory profile
 
 ### Phase 5 — Smart culling

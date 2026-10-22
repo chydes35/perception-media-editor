@@ -2,7 +2,16 @@
 
 A native, non-destructive macOS photo and video editor built specifically for Perception Media's documentary, interview, business, social, and photography workflows.
 
-This repository contains a photo-first integration candidate. RAW develop, masks/healing, and delivery remain in progress until their written quality and full-shoot acceptance gates pass; video development is deferred.
+This branch contains the consolidation candidate: the redesigned editor, photo
+process-version work, Click to Select polish and M0 audit/tooling. Published main
+is a separate, older baseline. See [current status](docs/CURRENT_STATUS.md) and the
+[branch disposition](docs/decisions/2026-10-22-project-consolidation.md).
+Photo quality and full-shoot acceptance remain open; existing video implementation
+is preserved without starting additional video features.
+
+**Project files:** this candidate saves schema 13; published main saves schema 10
+and cannot reopen candidate saves. Work on duplicate `.pmedit` files and retain the
+original for rollback. New photos still default to process version 1.
 
 ## What works now
 
@@ -17,7 +26,7 @@ This repository contains a photo-first integration candidate. RAW develop, masks
 - Continuous mouse-wheel zoom over the photo while editing masks or crops; press the wheel or hold Command and drag to pan, or click Fit to reset
 - Save presets by settings group, organize them in categories, apply them to a whole selection, copy and paste settings between photos, and step back through an edit history
 - Rotate and apply common social/photo aspect ratios
-- Video proxies are generated automatically for smooth playback in the timeline and source viewer; toggle with "Proxies" in the timeline toolbar. Proxies are used only for playback (sound always comes from the original), and the originals are kept for export once video export exists
+- Video proxies are generated automatically for smooth playback in the timeline and source viewer; toggle with "Proxies" in the timeline toolbar. Proxies are used only for playback (sound always comes from the original), and timeline export reads the originals
 - Apply four built-in Perception presets
 - Save and delete reusable user presets
 - Inspect a live RGB histogram
@@ -25,8 +34,8 @@ This repository contains a photo-first integration candidate. RAW develop, masks
 - Compare original and edited photos in original, edited, split, and side-by-side modes
 - Cache thumbnails on disk and relink missing originals
 - Save and reopen non-destructive `.pmedit` project files
-- Export edited full-resolution JPEG or PNG files in sRGB
-- Batch export selected photos as sRGB JPEGs with quality, long-edge size, safe naming, progress, cancellation, and per-file results
+- Export photos through reusable JPEG, TIFF, PNG and HEIC recipes with size, sharpening and metadata controls
+- Batch export selected photos with recipe controls, safe naming, progress, cancellation and per-file results
 - Import MOV/MP4 video with duration, frame-size metadata, and poster thumbnails
 - Preview source video through AVFoundation
 - Build a persistent V1/A1 sequence with trim, split, reorder, mute, play, and ripple-delete controls
@@ -53,7 +62,7 @@ chmod +x scripts/test.sh
 ./scripts/qa.sh
 ```
 
-QA checks diff hygiene and source patterns, runs the Swift Testing suite serially, and builds the app. It works with full Xcode or with only Command Line Tools; with Command Line Tools the test script adds the flags SwiftPM needs to find the Swift Testing framework. `./scripts/test.sh` also supports focused tests.
+QA checks diff hygiene and source patterns, runs the Swift Testing suite serially, and builds the app. The CI path passes on macOS 15. On this Mac, standard QA has documented Command Line Tools/SDK compatibility failures; see the [M0 command matrix](docs/research/mpkb-v2/m0-test-gates.md). With Command Line Tools the test script adds Swift Testing framework flags, but that alone does not establish toolchain compatibility. `./scripts/test.sh` also supports focused tests.
 
 To run focused regressions, pass Swift Testing filters, for example `./scripts/test.sh --filter ReliabilityTests`. Brush timing benchmarks run separately with `./scripts/benchmark-masks.sh`; normal tests verify cache reuse and rendering correctness without wall-clock thresholds. Run `./scripts/profile-memory.sh` separately to measure real RAW memory, editing latency, and output equivalence; set `PME_RAW_SAMPLE_DIR` if your RW2 samples are elsewhere.
 
@@ -71,7 +80,7 @@ The first build downloads and verifies Apple's Apache-licensed DETR semantic seg
 
 ## Project status
 
-See [docs/CURRENT_STATUS.md](docs/CURRENT_STATUS.md), [docs/ROADMAP.md](docs/ROADMAP.md), and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The integration uses project schema 10; older applications cannot open newly saved schema-10 projects.
+See [docs/CURRENT_STATUS.md](docs/CURRENT_STATUS.md), [docs/ROADMAP.md](docs/ROADMAP.md), and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The candidate uses project schema 13; older applications cannot open newly saved schema-13 projects.
 
 ## Agentic development workflow
 

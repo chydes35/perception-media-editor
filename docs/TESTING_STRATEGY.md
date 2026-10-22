@@ -1,5 +1,16 @@
 # Testing strategy and gates
 
+## Consolidation baseline (2026-10-22)
+
+Candidate schema is 13 with process version 1 still the default. Run
+`ProjectMigration11Tests`, `ProjectMigration12Tests`, `ProjectMigration13Tests`,
+`ProjectDocumentTests` and `ClickSelectionTests` when validating this integration.
+Run `python3 scripts/test-m0-fixtures.py` for M0's synthetic validator checks.
+M0 research documents remain pinned-main evidence, not results for this candidate.
+The [consolidation plan](../plans/active/project-consolidation.md) records current
+checks. The [M0 matrix](research/mpkb-v2/m0-test-gates.md) documents local standard-QA
+failures and the SDK/native substitute; neither substitutes for in-app acceptance.
+
 ## Automated gate
 
 Run `./scripts/qa.sh` from the repository root. It checks diff hygiene, runs the deterministic developer source reviewer, then runs the Swift Testing suite without test parallelism and builds the executable through `scripts/test.sh`. Use `./scripts/test.sh --filter <name>` for a focused regression before the full gate. The GitHub Actions workflow runs the same QA entry point on macOS 15. The serial full-suite mode avoids the ingest timeouts observed when resource-heavy render and import tests ran together.

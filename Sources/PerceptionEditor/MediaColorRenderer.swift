@@ -10,6 +10,11 @@ enum MediaColorRenderer {
         includesGeometry: Bool,
         highlightRolloff: Bool = false
     ) -> CIImage {
+        // Photos on process version 2 take the scene-referred pipeline. Video and process version 1
+        // keep this one unchanged, so existing edits render exactly as they always have.
+        if includesGeometry, adjustments.processVersion >= 2 {
+            return renderScene(source, adjustments: adjustments, isRAW: highlightRolloff)
+        }
         let sourceExtent = source.extent
         let repaired = includesGeometry ? RetouchRenderer.apply(source, strokes: adjustments.retouches) : source
         var image = includesGeometry ? orient(repaired, adjustments) : repaired
@@ -69,13 +74,16 @@ enum MediaColorRenderer {
         }
 
         if let hsl = adjustments.hsl, !hsl.isNeutral {
-            let cube = CIFilter.colorCubeWithColorSpace()
-            cube.inputImage = image
-            cube.cubeDimension = Float(ColorGrading.cubeDimension)
-            cube.cubeData = ColorGrading.hslCube(hsl)
-            cube.colorSpace = Self.encodingSpace
-            cube.extrapolate = true
-            image = cube.outputImage ?? image
+            image = applyHSL(hsl, to: image)
+        }
+
+        if let grading = adjustments.grading, !grading.isNeutral {
+            image = applyColorGrade(grading, to: image)
+        }
+
+        // A creative LUT comes after the global adjustments and before local ones.
+        if let lut = adjustments.lut {
+            image = applyCreativeLUT(lut, to: image)
         }
 
         // Local adjustments come after the global ones, as in Lightroom. Video clips have no masks.
@@ -96,6 +104,11 @@ enum MediaColorRenderer {
             vignette.intensity = Float(adjustments.vignette * 2)
             vignette.radius = Float(min(image.extent.width, image.extent.height) * 0.55)
             image = vignette.outputImage ?? image
+        }
+
+        // Grain is for photos: a fixed noise pattern would sit still over moving video.
+        if includesGeometry, let grain = adjustments.grain, !grain.isNeutral {
+            image = applyGrain(grain, to: image)
         }
 
         return includesGeometry ? crop(image, to: adjustments.cropAspect, rect: adjustments.cropRect) : image
@@ -197,7 +210,7 @@ enum MediaColorRenderer {
         return image
     }
 
-    private static func crop(_ image: CIImage, to aspect: CropAspect, rect: CropRect?) -> CIImage {
+    static func crop(_ image: CIImage, to aspect: CropAspect, rect: CropRect?) -> CIImage {
         guard let area = ImageGeometry.cropArea(in: image.extent, aspect: aspect, rect: rect) else { return image }
         let cropped = image.cropped(to: area)
         return cropped.transformed(

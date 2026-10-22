@@ -9,6 +9,8 @@ enum AdjustmentGroup: String, CaseIterable, Codable, Identifiable, Sendable {
     case presence
     case toneCurve
     case hsl
+    case colorGrading
+    case grain
     case rawDetail
     case masks
 
@@ -22,6 +24,8 @@ enum AdjustmentGroup: String, CaseIterable, Codable, Identifiable, Sendable {
         case .presence: "Presence"
         case .toneCurve: "Tone Curve"
         case .hsl: "HSL"
+        case .colorGrading: "Color Grading"
+        case .grain: "Grain"
         case .rawDetail: "RAW Detail"
         case .masks: "Masks"
         }
@@ -30,11 +34,13 @@ enum AdjustmentGroup: String, CaseIterable, Codable, Identifiable, Sendable {
     var detail: String {
         switch self {
         case .whiteBalance: "Temperature and tint"
-        case .tone: "Exposure, contrast, highlights, shadows"
+        case .tone: "Exposure, contrast, highlights, shadows, whites, blacks"
         case .color: "Warmth, tint, vibrance, saturation"
         case .presence: "Sharpness and vignette"
         case .toneCurve: "RGB and channel curves"
         case .hsl: "Hue, saturation, luminance by color"
+        case .colorGrading: "Shadow, midtone and highlight tints"
+        case .grain: "Film grain amount, size and roughness"
         case .rawDetail: "Noise reduction, RAW sharpness, detail, lens corrections"
         case .masks: "Gradient masks and their adjustments (brush strokes stay with their photo)"
         }
@@ -64,6 +70,8 @@ extension PhotoAdjustments {
                 result.contrast = source.contrast
                 result.highlights = source.highlights
                 result.shadows = source.shadows
+                result.whites = source.whites
+                result.blacks = source.blacks
             case .color:
                 result.temperature = source.temperature
                 result.tint = source.tint
@@ -76,6 +84,10 @@ extension PhotoAdjustments {
                 result.curves = source.curves
             case .hsl:
                 result.hsl = source.hsl
+            case .colorGrading:
+                result.grading = source.grading
+            case .grain:
+                result.grain = source.grain
             case .masks:
                 // Gradients describe a look (a darker sky, a vignette) and travel between photos;
                 // a brush stroke is painted on one photo's subject, so it stays where it is.
@@ -112,6 +124,9 @@ extension PhotoAdjustments {
         note("Contrast", contrast != old.contrast)
         note("Highlights", highlights != old.highlights)
         note("Shadows", shadows != old.shadows)
+        note("Whites", whites != old.whites)
+        note("Blacks", blacks != old.blacks)
+        note("Process", processVersion != old.processVersion)
         note("White Balance", raw.temperature != old.raw.temperature || raw.tint != old.raw.tint)
         note("Warmth", temperature != old.temperature)
         note("Tint", tint != old.tint)
@@ -119,8 +134,11 @@ extension PhotoAdjustments {
         note("Saturation", saturation != old.saturation)
         note("Sharpness", sharpness != old.sharpness)
         note("Vignette", vignette != old.vignette)
+        note("LUT", lut != old.lut)
         note("Tone Curve", curves != old.curves)
         note("HSL", hsl != old.hsl)
+        note("Color Grading", grading != old.grading)
+        note("Grain", grain != old.grain)
         note("Masks", masks != old.masks)
         note("Retouch", retouches != old.retouches)
         note("Noise Reduction", raw.luminanceNoiseReduction != old.raw.luminanceNoiseReduction

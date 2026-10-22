@@ -41,8 +41,16 @@ struct PhotoComparisonView: View {
                 .foregroundStyle(.white, .white.opacity(0.62))
             }
 
-            if isCropping, mode == .edited {
-                CropOverlayView(cropRect: $cropRect, aspect: cropAspect)
+            // The stored crop is a fraction of the photo, so the editor covers the photo itself,
+            // not the letterboxed canvas around it.
+            if isCropping, mode == .edited, let edited {
+                GeometryReader { canvas in
+                    if let frame = Self.fittedFrame(in: canvas.size, image: edited.size) {
+                        CropOverlayView(cropRect: $cropRect, aspect: cropAspect)
+                            .frame(width: frame.width, height: frame.height)
+                            .position(x: frame.midX, y: frame.midY)
+                    }
+                }
             }
 
             if !isCropping, mode == .edited, store.isMaskEditing, let edited {
@@ -54,7 +62,7 @@ struct PhotoComparisonView: View {
             if !isCropping, mode == .edited, store.isPickingWhiteBalance, let edited {
                 WhiteBalancePickingLayer(imageSize: edited.size)
             }
-            if !isCropping, mode == .edited, store.isPickingSubject, let edited {
+            if !isCropping, mode == .edited, store.isPickingSubject || store.isClickSelecting, let edited {
                 if let overlay = store.subjectSelectionOverlay {
                     fitted(overlay)
                         .opacity(0.5)
@@ -89,7 +97,7 @@ struct PhotoComparisonView: View {
             }
             .allowsHitTesting(!isCropping && mode == .edited && onZoomRequest != nil
                 && !store.isMaskEditing && !store.isRetouchEditing && !store.isPickingWhiteBalance
-                && !store.isPickingSubject && !store.isAnalyzingSubjects && !store.isAnalyzingSky)
+                && !store.isPickingSubject && !store.isClickSelecting && !store.isAnalyzingSubjects && !store.isAnalyzingSky)
         }
         .accessibilityHint("Click the photo to view it at 100 percent.")
         .onAppear { traceCanvas() }
@@ -104,17 +112,27 @@ struct PhotoComparisonView: View {
 
     /// Where a click landed on the fitted photo, as 0–1 from its top-left; nil outside the photo.
     nonisolated static func normalizedPoint(_ location: CGPoint, in viewSize: CGSize, image imageSize: CGSize) -> CGPoint? {
+        guard let frame = fittedFrame(in: viewSize, image: imageSize) else { return nil }
+        let x = (location.x - frame.minX) / frame.width
+        let y = (location.y - frame.minY) / frame.height
+        guard (0 ... 1).contains(x), (0 ... 1).contains(y) else { return nil }
+        return CGPoint(x: x, y: y)
+    }
+
+    /// Where the photo sits in the canvas: scaled to fit inside the padding and centered.
+    nonisolated static func fittedFrame(in viewSize: CGSize, image imageSize: CGSize) -> CGRect? {
         let padding: CGFloat = 28
         let available = CGSize(width: viewSize.width - padding * 2, height: viewSize.height - padding * 2)
         guard available.width > 0, available.height > 0, imageSize.width > 0, imageSize.height > 0 else { return nil }
 
         let scale = min(available.width / imageSize.width, available.height / imageSize.height)
-        let fitted = CGSize(width: imageSize.width * scale, height: imageSize.height * scale)
-        let origin = CGPoint(x: (viewSize.width - fitted.width) / 2, y: (viewSize.height - fitted.height) / 2)
-        let x = (location.x - origin.x) / fitted.width
-        let y = (location.y - origin.y) / fitted.height
-        guard (0 ... 1).contains(x), (0 ... 1).contains(y) else { return nil }
-        return CGPoint(x: x, y: y)
+        let size = CGSize(width: imageSize.width * scale, height: imageSize.height * scale)
+        return CGRect(
+            x: (viewSize.width - size.width) / 2,
+            y: (viewSize.height - size.height) / 2,
+            width: size.width,
+            height: size.height
+        )
     }
 
     @ViewBuilder

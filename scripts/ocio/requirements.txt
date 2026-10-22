@@ -1,0 +1,8 @@
+# Pinned for scripts/ocio/generate-shaders.py. Install with --require-hashes into a throwaway venv.
+# The hashes are the macOS arm64 wheels for CPython 3.14; another interpreter needs its own hashes
+# (`pip download --no-deps` then `pip hash`), recorded here.
+opencolorio==2.5.2 \
+    --hash=sha256:142eafd6c31aa7da3c97d2af5ce0403ccd2859be1252336ef9a2aea9a5082dce
+# Texture.getValues() returns numpy arrays.
+numpy==2.5.4 \
+    --hash=sha256:956555e0603a4d38019ae6925711cb9dc43195c076a928accf7ea5d50bddfe53

@@ -4,14 +4,18 @@ import SwiftUI
 /// ⌥-click a point to remove it. The photo's histogram is drawn behind the curve.
 struct ToneCurveEditor: View {
     @EnvironmentObject private var store: EditorStore
+    @Environment(\.adjustmentEditing) private var environmentEditing
     @State private var channel: ToneCurves.Channel = .rgb
     @State private var draggingIndex: Int?
     @State private var isEditing = false
 
     private let grabRadius = 0.05
 
+    /// The environment's target, or the selected photo when it supplies none.
+    private var editing: AdjustmentEditing { environmentEditing ?? store.photoAdjustmentEditing }
+
     private var curve: ToneCurve {
-        store.selectedAdjustments.curves[channel] ?? .linear
+        editing.current.curves[channel] ?? .linear
     }
 
     private var lineColor: Color {
@@ -47,9 +51,9 @@ struct ToneCurveEditor: View {
                 .menuStyle(.borderlessButton)
                 .fixedSize()
 
-                if !store.selectedAdjustments.curves.isNeutral {
+                if !editing.current.curves.isNeutral {
                     Button {
-                        store.updateAdjustments { $0.curves = ToneCurves() }
+                        editing.resetCurves()
                     } label: {
                         Image(systemName: "arrow.counterclockwise")
                     }
@@ -76,7 +80,7 @@ struct ToneCurveEditor: View {
                         )
                 }
             }
-            .disabled(store.selectedAsset == nil)
+            .disabled(!editing.isAvailable)
             .accessibilityElement()
             .accessibilityLabel("\(channel.rawValue) tone curve")
             .accessibilityValue("\(curve.points.count) points")
@@ -141,6 +145,7 @@ struct ToneCurveEditor: View {
 
     /// The photo's histogram for the selected channel, smoothed a little for display.
     private func histogramValues() -> [Double] {
+        guard editing.showsPhotoHistogram else { return [] }
         let data = store.histogram
         guard data.hasValues else { return [] }
         let source: [Double]
@@ -159,7 +164,7 @@ struct ToneCurveEditor: View {
     // MARK: Editing
 
     private func setCurve(_ new: ToneCurve) {
-        store.updateAdjustments { $0.curves[channel] = new }
+        editing.setCurve(new, channel: channel)
     }
 
     private func drag(_ location: CGPoint, in size: CGSize) {
@@ -172,7 +177,7 @@ struct ToneCurveEditor: View {
 
         if !isEditing {
             isEditing = true
-            store.beginAdjustmentEdit()
+            editing.beginEdit()
 
             let existing = curve.nearestPoint(to: target, radius: grabRadius)
             if NSEvent.modifierFlags.contains(.option), let existing {
@@ -201,7 +206,7 @@ struct ToneCurveEditor: View {
         guard isEditing else { return }
         isEditing = false
         draggingIndex = nil
-        store.endAdjustmentEdit()
+        editing.endEdit()
     }
 
     private func update(_ change: (inout ToneCurve) -> Void) {
@@ -211,7 +216,7 @@ struct ToneCurveEditor: View {
     }
 
     private func setWithoutUndo(_ new: ToneCurve) {
-        store.updateAdjustments { $0.curves[channel] = new }
+        editing.setCurve(new, channel: channel)
     }
 }
 
@@ -220,14 +225,17 @@ struct ToneCurveEditor: View {
 /// Hue, saturation, and luminance for eight color bands.
 struct HSLPanel: View {
     @EnvironmentObject private var store: EditorStore
+    @Environment(\.adjustmentEditing) private var environmentEditing
     @State private var band: HSLBand = .red
 
     static func color(for band: HSLBand) -> Color {
         Color(hue: band.centerHue / 360, saturation: 0.85, brightness: 0.95)
     }
 
+    private var editing: AdjustmentEditing { environmentEditing ?? store.photoAdjustmentEditing }
+
     private var hsl: HSLAdjustments {
-        store.selectedAdjustments.hsl ?? HSLAdjustments()
+        editing.current.hsl ?? HSLAdjustments()
     }
 
     var body: some View {
@@ -258,7 +266,7 @@ struct HSLPanel: View {
                 Spacer()
                 if !hsl.isNeutral {
                     Button {
-                        store.updateAdjustments { $0.hsl = nil }
+                        editing.resetHSL()
                     } label: {
                         Image(systemName: "arrow.counterclockwise")
                     }
@@ -309,22 +317,17 @@ struct HSLPanel: View {
             Slider(
                 value: Binding(get: { value }, set: { set($0, keyPath) }),
                 in: -1 ... 1,
-                onEditingChanged: { editing in
-                    if editing { store.beginAdjustmentEdit() } else { store.endAdjustmentEdit() }
+                onEditingChanged: { isDragging in
+                    if isDragging { self.editing.beginEdit() } else { self.editing.endEdit() }
                 }
             )
             .tint(Self.color(for: band))
-            .disabled(store.selectedAsset == nil)
+            .disabled(!editing.isAvailable)
             .accessibilityLabel("\(band.title) \(label)")
         }
     }
 
     private func set(_ value: Double, _ keyPath: WritableKeyPath<HSLBandAdjustment, Double>) {
-        let selected = band
-        store.updateAdjustments { adjustments in
-            var updated = adjustments.hsl ?? HSLAdjustments()
-            updated[selected][keyPath: keyPath] = value
-            adjustments.hsl = updated.isNeutral ? nil : updated
-        }
+        editing.setHSL(value, band: band, keyPath: keyPath)
     }
 }

@@ -313,13 +313,16 @@ struct HSLAdjustments: Codable, Equatable, Sendable {
 // MARK: - Rendering data
 
 enum ColorGrading {
-    /// Nodes per side of the HSL color cube. 48 keeps interpolation error under 2 levels of 255
-    /// (33 reaches 4) and takes about 5 ms to build.
+    /// Nodes per side of the HSL color cube, which is only the fallback when the exact HSL kernel
+    /// (`HSLColorKernel`) cannot run. Interpolating between nodes misses the exact result most near
+    /// the hue wrap and the grey threshold. 48 measured a worst of 4.5 of 1023 levels on 150 colors
+    /// through Core Image's cube filter; 64 measured 8.8, so a larger cube is not better here.
     static let cubeDimension = 48
 
     /// Curve lookup data for Core Image's color-curves filter (three float channels per sample),
-    /// or nil when every curve is a straight line so the filter can be skipped.
-    static func curveData(_ curves: ToneCurves, samples: Int = 256) -> Data? {
+    /// or nil when every curve is a straight line so the filter can be skipped. 1024 samples keep a
+    /// strong S curve within 0.25 of 1023 levels (256 samples measured 0.43).
+    static func curveData(_ curves: ToneCurves, samples: Int = 1024) -> Data? {
         guard !curves.isNeutral else { return nil }
         let master = (curves.rgb ?? .linear).lookupTable(samples: samples)
         let channels = [curves.red, curves.green, curves.blue].map { ($0 ?? .linear).lookupTable(samples: samples) }

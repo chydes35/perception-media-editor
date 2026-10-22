@@ -24,13 +24,13 @@ struct ProjectDocumentTests {
             cropRect: CropRect(x: 0.1, y: 0.12, width: 0.72, height: 0.68),
             straightenDegrees: -2.4
         )
-        let clip = TimelineClip(assetID: assetID, durationSeconds: 12.5)
+        let clip = TimelineClip(assetID: assetID, sourceStartFrame: 48, durationFrames: 300)
         let project = EditorProject(
             name: "Documentary",
             media: [asset],
             adjustmentsByAssetID: [assetID: adjustments],
             videoAdjustmentsByClipID: [clip.id: PhotoAdjustments(exposure: 0.35, vibrance: 0.16)],
-            audioAdjustmentsByClipID: [clip.id: ClipAudioAdjustments(volume: 0.72, pan: -0.2, fadeInSeconds: 0.8, fadeOutSeconds: 1.1)],
+            audioAdjustmentsByClipID: [clip.id: ClipAudioAdjustments(gainDecibels: -2.85, pan: -0.2, fadeInSeconds: 0.8, fadeOutSeconds: 1.1)],
             timelineClips: [clip]
         )
         return (project, asset, clip)

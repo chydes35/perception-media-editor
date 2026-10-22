@@ -1,37 +1,75 @@
 # Current status
 
-Updated: 2026-10-14. Everything below is on `main` (PR #7 merged at `d9ccdb5`). Schema version **10**. Candidate build **16**; not yet signed or notarized for distribution. Long-form evidence from earlier passes is in [archive/](archive/README.md). The last full status snapshot is [archive/CURRENT_STATUS_2026-10-10.md](archive/CURRENT_STATUS_2026-10-10.md).
+Updated: 2026-10-22. This document describes the **integration candidate** on
+`codex/project-consolidation`, not published `main`. The candidate starts at
+`5d80625` (redesign plus Click to Select polish) and incorporates M0 audit/tooling
+from `593549a`. Published `main` remains `0d3283a`. See the
+[branch and PR disposition](decisions/2026-10-22-project-consolidation.md).
 
-## What works
+## Project compatibility
 
-Card import with verified copies, culling, RAW develop (white balance with eyedropper, noise reduction, tone curve, HSL, Auto tone and white balance), presets with copy/paste/sync and history, gradient/brush/subject/sky masks, heal and clone, single-photo JPEG/PNG export, and sequential batch JPEG delivery. Video is a V1/A1 timeline with color, waveform, and fades; it is deferred until the photo gates pass.
+Candidate project schema is **13** (`EditorProject.currentSchemaVersion`). Published
+main uses schema **10**. Older projects can be opened; saving writes schema 13,
+which main cannot reopen. Test with duplicate project files; rollback means opening
+the untouched original with the older app, not saving the upgraded file back down.
+New photos still default to **process version 1**; process 2 remains opt-in pending
+photographer acceptance. Consolidation changes neither constant nor application code.
+Candidate build identifier remains 16; signing/notarization is NOT VERIFIED.
+
+## Implemented in this candidate
+
+- Verified card copies, culling, RAW develop, presets/history, masks, heal/clone,
+  batch editing, Look Matching and RAW highlight roll-off from main.
+- Photo/Video category navigation and step workspaces from the redesign.
+- Process-version 2 infrastructure and photo export recipes (JPEG, TIFF, PNG,
+  HEIC with output controls); process 1 remains the default.
+- Click to Select with optional local SAM model, include/exclude points,
+  preview/accept workflow, click markers and memory-pressure handling.
+- Video proxy playback, frame-exact timeline, color transforms/scopes,
+  10-bit export and audio gain/meters already present in the redesign.
+- M0 pinned-main research, copied-fixture validation scripts and the
+  orientation-correct full-resolution RAW test assertion. M0 observations
+  remain attached to their stated source pin and inputs.
+
+Implementation is not photographic, hardware or release acceptance. The archived
+[redesign snapshot](archive/REDESIGN_STATUS_2026-10-21.md) retains detailed dated
+measurements; [M0 evidence](research/mpkb-v2/m0-test-gates.md) retains the main-based
+baseline. Neither is a fresh pass of this combined candidate.
 
 ## Verification
 
-| Gate | Result |
-|---|---|
-| GitHub CI (macOS 15, Swift 6.1.2) | PASS: 320 tests, 292 executed / 28 skipped (no private RAW inputs on CI) |
-| Local `./scripts/qa.sh` | PASS as of 2026-10-10: 302 executed / 18 skipped |
-| 100 distinct S5 RAWs on the M1/8 GB target (import, cull, edit, export) | PASS: 100/100 full-resolution JPEGs; all original hashes unchanged; whole-app peak 1.53 GiB |
-| Genuine single 100–200-photo shoot | NOT VERIFIED |
-| Agreed performance thresholds | NOT VERIFIED (observations only; see [PERFORMANCE_TARGETS](PERFORMANCE_TARGETS.md)) |
-| Distribution signing and notarization | NOT VERIFIED |
+| Gate | Result and scope |
+| --- | --- |
+| Published-main GitHub QA | PASS at `0d3283a`, [run 39315828017](https://github.com/chydes35/perception-media-editor/actions/runs/39315828017); M0 audit counted 341 executed / 41 skipped |
+| Click polish PR #21 QA | PASS at `5d80625`, [run 39597113519](https://github.com/chydes35/perception-media-editor/actions/runs/39597113519); not combined-candidate evidence |
+| M0 PR #22 QA | PASS at `593549a`, [run 39634715213](https://github.com/chydes35/perception-media-editor/actions/runs/39634715213); not combined-candidate evidence |
+| Combined-candidate checks/build | PASS SDK 26.5/native substitute: 784 reported, 719 passed / 65 skipped / 0 failed; app build PASS. Validator 12/12 PASS. See [consolidation plan](../plans/active/project-consolidation.md) |
+| Standard local QA | FAIL before tests on 2026-10-22: sandbox build-service manifest EPERM. Historical M0 also recorded a default-SDK macro failure. Fresh substitute above passed; cleanup step 2 remains open |
+| Genuine 100–200-photo whole-app shoot and agreed performance limits | NOT VERIFIED |
+| Signing/notarization | NOT VERIFIED |
 
-## In progress
+## Open acceptance and known limitations
 
-White-balance drag latency ([plan](../plans/active/metal-canvas.md)): the renderer holds one RAW filter per current photo during white balance edits, so each exact render takes about 100-120 ms on a quiet machine, including the first one after opening a photo (330-980 ms before; slower under load) with the same pixels and no measurable extra memory. A drafted preview (a 5 ms shift of the as-shot decode) was tried and removed because the snap to the exact render was noticeable by eye. Not yet checked by a person: how dragging feels at about 8 renders per second.
-
-Per-scene Look Matching ([plan](../plans/active/look-match-agent.md)), branch `look-match-lm1`, 2026-10-18: implemented with unit/integration tests (scene grouping, hero choice, 1 EV exposure solve, RAW WB mired offset including a real RW2 pair, selected-only apply as one undo step, stale and canceled runs, old report decoding, originals unchanged). Analysis was run on the real 2026-10-18 family shoot (221 RW2): 4 scenes, 215 proposals, 1 correctly flagged, about 1–3 s per photo in the test process; confidence scoring was corrected from that run. On 2026-10-19 it ran in the app on that shoot (about 11 minutes, 586 MB peak footprint); Apply Selected and one undo worked. That run found that a photo with only a white-balance edit lost it, which is now fixed. Not yet verified: the photographer's kept/touched count, an agreed time/memory limit, and a shoot with mixed window/shade/flash light.
-
-RAW highlight roll-off ([plan](../plans/active/raw-highlight-rolloff.md)), 2026-10-19. The photographer reported washed-out RAW edits. Cause: highlights decoded above white were clipped at every 8-bit output, and Core Image's highlight filter amplified them. RAW renders now use a luminance highlight shoulder that Highlights drives. On 12 frames of the 2026-10-18 family shoot, untouched clipping fell from 25–36% to 1–11% on 9 frames and to 15–26% on 3 backlit frames whose sky is blown in the file (camera JPEGs 5–32%), with midtones unchanged, no loss of saturation, and no dark band at the edge of blown areas. RAW load time is unchanged. Not yet verified: the photographer's visual check in the app of the final look on this branch. Unchanged: Apple's base RAW rendering stays lighter and flatter than the camera JPEG.
-
-## Open problems
-
-1. **Black edited canvas (open bug).** After Export → New → Open → Photo, the edited preview can stay black although the render and histogram are valid; switching Original → Edited restores it. Cause not established. Publication-during-update faults and stale-completion races were fixed separately and are covered by tests. Evidence: [workspace transition](archive/WORKSPACE_TRANSITION_2026-10-10.md), [preview trace](archive/PREVIEW_TRACE_2026-10-09.md). Plan: [preview-reopen-recovery](../plans/active/preview-reopen-recovery.md). In progress on branch `metal-canvas` ([plan](../plans/active/metal-canvas.md)): the photo is drawn by a Metal view instead of SwiftUI `Image`. The Metal view is now merged (PR #9). On 2026-10-14 the release build of `main` with tracing on did **not** reproduce the black canvas in seven attempts (fresh launch → Add Files in Place → Photo; Library → Photo; project Save → New → Open → Photo ×5; every trace shows renderer, publish and a Metal draw with `image=true`, command buffer status completed). The bug is therefore still **not reproduced and not explained** on `main`; whether Metal removes it is **NOT VERIFIED** (not enough runs to claim). The Metal view now traces skipped draws and command-buffer status under `PME_PREVIEW_DIAGNOSTICS=1`, so the next occurrence will show whether the draw was skipped, failed on the GPU, or succeeded. `PME_SystemImageCanvas=1` compares against the old canvas.
-2. **Selection quality.** Subject edge matting (hair wisps, spill) is implemented on branch `selection-quality` but not verified in the app. Fine edges and shaded sky gaps are weak, group members can be missed, and recovered masks spill at edges. See [selection quality](archive/SELECTION_QUALITY_2026-10-08.md).
-3. **Not yet built:** reflection and broader lighting controls, color and luminance range masks, RAW+JPEG pairs, undo for ratings, persistent export recipes, output sharpening, P3, IPTC/copyright, watermark.
-4. **`EditorStore` is too large** (about 1,450 lines, 100+ state properties). Splitting it is overdue.
+1. **Black edited canvas:** resolution remains unverified. Metal tracing did not
+   reproduce it in seven historical attempts; that does not establish a fix.
+   Follow [preview recovery](../plans/active/preview-reopen-recovery.md).
+2. **Photographic quality:** mask edges, group coverage, shaded sky gaps, WB drag
+   feel, final highlight appearance, Look Match kept/touched counts and mixed light
+   remain open. Process 2 final appearance needs photographer sign-off before
+   changing the default. See [photo quality plan](../plans/active/look-match-agent.md)
+   and the archived redesign evidence.
+3. **Candidate UI:** complete category/step walkthrough, old-project transitions,
+   audio/color controls and Click to Select exclude marker need current in-app
+   acceptance. Historical 36-photo recipe checks do not establish a full-shoot pass.
+4. **Video performance:** historical redesign measurements include failed playback/
+   export memory or throughput budgets. Consolidation does not close those gates.
+5. **Remaining product work:** RAW+JPEG pairing, ratings undo, range masks, P3/HDR
+   photo output and broader reflection/lighting controls remain separate roadmap work.
+6. **Architecture:** `EditorStore` remains large; decomposition is deferred until
+   the baseline and acceptance evidence are stable.
 
 ## Next
 
-Resolve the black canvas, then the selection-quality items, then run the genuine single-shoot acceptance and agree performance thresholds. Direction beyond that is in [ROADMAP](ROADMAP.md).
+The candidate is published as [draft PR #23](https://github.com/chydes35/perception-media-editor/pull/23), with explicit user authorization on 2026-10-22. Review the candidate and its migration/PR disposition before advancing main. Then make local QA repeatable (cleanup step 2), followed by the complete
+photo-shoot acceptance run (cleanup step 3). Studio OS transfer and stabilization
+remain preserved outside this candidate; no worktrees or remote PRs are removed.

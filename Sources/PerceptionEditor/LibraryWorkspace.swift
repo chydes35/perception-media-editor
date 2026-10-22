@@ -21,7 +21,39 @@ struct LibraryWorkspace: View {
         }
     }
 
+    /// The Import step's actions; they used to sit in the top bar's Import menu.
+    private var importButtons: some View {
+        HStack(spacing: 10) {
+            Button {
+                store.showImportSheet()
+            } label: {
+                Label("Import from Card or Folder…", systemImage: "sdcard")
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.orange)
+            Button {
+                store.importMedia()
+            } label: {
+                Label("Add Files in Place…", systemImage: "plus.rectangle.on.folder")
+            }
+        }
+        .controlSize(.large)
+        .disabled(store.ingest.isRunning)
+    }
+
     var body: some View {
+        content
+            .onAppear(perform: consumeEntrySection)
+            .onChange(of: store.libraryEntrySection) { consumeEntrySection() }
+    }
+
+    private func consumeEntrySection() {
+        guard let section = store.libraryEntrySection else { return }
+        selection = section
+        store.libraryEntrySection = nil
+    }
+
+    private var content: some View {
         HSplitView {
             sidebar
                 .frame(minWidth: 190, idealWidth: 220, maxWidth: 260)
@@ -128,6 +160,7 @@ struct LibraryWorkspace: View {
                 Text("\(items.count) ITEMS")
                     .font(.caption2.weight(.bold))
                     .foregroundStyle(.secondary)
+                importButtons
             }
             .padding(20)
 

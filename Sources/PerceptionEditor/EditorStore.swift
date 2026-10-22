@@ -12,9 +12,24 @@ final class EditorStore: ObservableObject {
         didSet {
             workspaceChangeTask?.cancel()
             workspaceChangeTask = nil
+            if workspace == .agents, oldValue != .agents { workspaceBeforeAgents = oldValue }
+            if !workspace.isVideo { pauseVideoPlayback() }
+            updateColorScreenScopes()
+            updateAudioScreen(enteringFrom: oldValue)
+            if workspace.isVideo, needsPlaybackRefresh {
+                needsPlaybackRefresh = false
+                refreshPlaybackSources()
+            }
+            syncCategory()
             workspaceDidChange()
         }
     }
+    @Published private(set) var category: EditorCategory = .photo
+    private var lastWorkspaceByCategory: [EditorCategory: Workspace] = [:]
+    private var pendingCategory: EditorCategory?
+    private var workspaceBeforeAgents: Workspace?
+    /// One-shot request for the Library sidebar section to show on arrival (Video's Import step sets "Video").
+    @Published var libraryEntrySection: String?
     private(set) var workspaceChangeTask: Task<Void, Never>?
     @Published var selectedAssetID: UUID? {
         didSet { if oldValue != selectedAssetID { cancelAutoAdjustment() } }
@@ -57,6 +72,16 @@ final class EditorStore: ObservableObject {
     var subjectOverlayCache: [(id: Int, image: NSImage)] = []
     var subjectOverlayAdjustments: PhotoAdjustments?
     let subjectAnalyzer = SubjectAnalysisService()
+    /// Click to select (SAM 2.1): the clicks so far, the masks proposed for them (part, object, whole) and which is shown.
+    @Published var isClickSelecting = false
+    @Published var isPreparingClickSelection = false
+    @Published var isDecodingClickSelection = false
+    @Published var clickPoints: [SegmentationPoint] = []
+    @Published var clickMasks: [ClickMask] = []
+    @Published var clickGranularity = 1
+    var clickRequestID = UUID()
+    var clickOverlayTask: Task<Void, Never>?
+    var clickSelectionService = ClickSelectionService()
     @Published var isAnalyzingSky = false
     var skyRequestID = UUID()
     let skyAnalyzer = SkyAnalysisService()
@@ -86,6 +111,20 @@ final class EditorStore: ObservableObject {
     /// Each photo's edit steps for this session, oldest first. Not saved in the project.
     @Published var history: [UUID: [HistoryEntry]] = [:]
     @Published var copiedSettings: CopiedSettings?
+    /// How strongly a preset is applied (0…1). Not saved with the project.
+    @Published var presetAmount = 1.0
+    /// When on, applying a preset first clears the photo's look, so presets replace each other
+    /// instead of leaving earlier settings behind in groups the new one does not set.
+    @Published var presetReplacesLook = UserDefaults.standard.bool(forKey: "perceptionEditor.presetReplacesLook") {
+        didSet {
+            UserDefaults.standard.set(presetReplacesLook, forKey: "perceptionEditor.presetReplacesLook")
+            if presetPreview != nil { refreshPreview() }
+        }
+    }
+    /// The preset under the pointer. The photo is drawn as if it were applied, without changing
+    /// the photo's settings or its history.
+    @Published var presetPreview: PhotoPreset?
+    var presetHoverTask: Task<Void, Never>?
     @Published var copySheetMode: CopySheetMode?
     @Published var isShowingSavePresetSheet = false
     /// A name for the next recorded edit, such as "Preset: Documentary Warm".
@@ -94,12 +133,87 @@ final class EditorStore: ObservableObject {
     @Published var focusImage: CGImage?
     @Published var isLoadingFocus = false
     @Published var selectedVideoAssetID: UUID?
-    @Published var selectedTimelineClipID: UUID?
+    @Published var selectedTimelineClipID: UUID? {
+        didSet { if oldValue != selectedTimelineClipID { updateColorScreenScopes() } }
+    }
     @Published var videoPlayer: AVPlayer?
     @Published private(set) var isTimelinePlayback = false
     @Published private(set) var isVideoPlaying = false
     @Published private(set) var timelinePlaybackPositionSeconds = 0.0
     @Published private(set) var timelinePlaybackDurationSeconds = 0.0
+    static let useProxiesKey = "perceptionEditor.useProxies"
+    let proxyStore: ProxyStore
+    let lutLibrary: LUTLibrary
+    /// Every LUT in the library, for the pickers.
+    @Published var availableLUTs: [LUTReference] = []
+    /// LUTs the project uses that could not be found (not in the library or next to the project).
+    @Published var missingLUTs: [LUTReference] = []
+    let proxyDefaults: UserDefaults
+    @Published private(set) var timelineUsedProxyCount = 0
+    @Published var usesProxiesForPlayback = true {
+        didSet {
+            proxyDefaults.set(usesProxiesForPlayback, forKey: Self.useProxiesKey)
+            refreshPlaybackSources()
+        }
+    }
+    /// The scope panel. While it is open, playback always runs through the compositor (which
+    /// feeds the scopes), and the compositor captures preview frames.
+    @Published var scopesVisible = false {
+        didSet {
+            guard scopesVisible != oldValue else { return }
+            ScopeTap.shared.source = scopeSource
+            ScopeTap.shared.isEnabled = scopesVisible
+            if scopesVisible { scopeModel.start() } else { scopeModel.stop() }
+            if !deferPlaybackRefresh { refreshPlaybackSources() }
+        }
+    }
+    @Published var scopeSource = ScopeTap.Source.output {
+        didSet {
+            ScopeTap.shared.source = scopeSource
+            // A paused frame is not rendered again on its own; rebuild so the new source is measured.
+            if scopesVisible, scopeSource != oldValue { refreshPlaybackSources() }
+        }
+    }
+    let scopeModel = ScopeModel()
+    /// What `scopesVisible` was before the Color screen took the scopes over; nil while Color is not shown.
+    private var scopesVisibleBeforeColor: Bool?
+
+    // MARK: Audio screen state (logic in EditorStore+Audio.swift)
+
+    /// Peak and clipped spots of the whole timeline after clip and master gain, in timeline seconds.
+    /// nil until analyzed, or when no clip could be measured.
+    @Published var audioLevels: AudioLevels?
+    @Published var isAnalyzingAudio = false
+    /// The last finished analysis: clips measured and clips that had no readable audio.
+    @Published var audioAnalysisCounts: (measured: Int, withoutAudio: Int)?
+    /// The Audio screen's "Show clipping" toggle: clipped spots drawn red on the waveforms.
+    @Published var showsClipping = true
+    /// Live L/R meters for the preview player.
+    let audioMeterModel = AudioMeterModel()
+    /// The level analysis, injectable so tests stub it. Runs off the main actor.
+    var audioLevelProvider: @Sendable (URL, ClosedRange<Double>?, Double) async throws -> AudioLevels = {
+        try await AudioLevelAnalyzer.analyze(url: $0, range: $1, gainDecibels: $2)
+    }
+    var audioLevelsTask: Task<Void, Never>?
+    var audioLevelsDebounceTask: Task<Void, Never>?
+    /// What the current (or running) analysis was asked for; a scheduled refresh with the same inputs is skipped.
+    var audioLevelsInputs: [AudioAnalysisInput]?
+    /// File-time results per (file, source range, gain), so moving one clip's gain re-reads only that clip.
+    var audioLevelsCache: [AudioAnalysisKey: AudioLevels] = [:]
+    var audioLevelsCacheGeneration: UUID?
+    /// While true, changing `scopesVisible` or `videoBeforeAfter` does not rebuild playback; the
+    /// caller rebuilds once after changing both.
+    private var deferPlaybackRefresh = false
+    /// The preview is stale (scopes or before/after changed off the video screens); rebuild on return.
+    var needsPlaybackRefresh = false
+    /// Color screen before/after: the preview shows every clip as recorded (neutral adjustments,
+    /// no input LUT or OCIO source transform). The grade stays in the project; export never reads this.
+    @Published var videoBeforeAfter = false {
+        didSet { if videoBeforeAfter != oldValue, !deferPlaybackRefresh { refreshPlaybackSources() } }
+    }
+    /// The Color screen's scope chips: which of the histogram and vectorscope panes are shown.
+    @Published var colorScopeShowsHistogram = true
+    @Published var colorScopeShowsVectorscope = true
     @Published private(set) var timelinePlaybackWarnings: [String] = []
     @Published private(set) var audioWaveforms: [UUID: [Float]] = [:]
     @Published var renderedPreview: NSImage?
@@ -115,9 +229,15 @@ final class EditorStore: ObservableObject {
     @Published var projectSaveError: String?
     @Published private(set) var isEditingCrop = false
     @Published var isExporting = false
+    @Published var timelineExportSettings = TimelineExportSettings()
+    @Published var timelineExport = TimelineExportState()
+    var timelineExportTask: Task<Void, Never>?
+    let timelineExporter: TimelineExporter
     @Published var batchExportState = BatchExportState()
     var batchExportTask: Task<Void, Never>?
     let batchPhotoExporter: BatchPhotoExporter?
+    /// Saved export recipes and the one the Export workspace has selected.
+    let exportRecipes: ExportRecipeLibrary
     @Published private(set) var thumbnailRevision = 0
 
     var projectURL: URL?
@@ -161,8 +281,13 @@ final class EditorStore: ObservableObject {
     private var pendingVideoThumbnails: Set<UUID> = []
     private var pendingAudioWaveforms: Set<UUID> = []
     private var compositionRebuildTask: Task<Void, Never>?
+    /// The timeline build that has not yet replaced the player. While it is pending the live player still shows
+    /// the previous timeline, so its position must not move the selection back to the old clip.
+    private var pendingTimelineBuildID: UUID?
     private var playbackMonitorTask: Task<Void, Never>?
     private var playbackRequestID = UUID()
+    /// How many preview builds (timeline or source) have started. A test seam for rebuild counts.
+    private(set) var playbackBuildCount = 0
     var photoUndoHistory = PhotoUndoHistory()
     var activeAdjustmentSnapshot: [UUID: PhotoAdjustments]?
 
@@ -171,14 +296,29 @@ final class EditorStore: ObservableObject {
         ingestScanner: @escaping @Sendable (URL) -> [SourceFile] = { IngestService.scan($0) },
         autoAdjustmentAnalyzer: (@Sendable (URL, PhotoAdjustments) async throws -> AutoAdjustmentSuggestion)? = nil,
         batchPhotoExporter: BatchPhotoExporter? = nil,
+        exportRecipes: ExportRecipeLibrary? = nil,
         lookMatchAnalyzer: (@Sendable (LookMatchRequest) async throws -> LookMatchResult)? = nil,
         previewRenderOperation: (@Sendable (URL, PhotoAdjustments, UUID?, Bool) async
-            -> (RenderedImage?, PhotoPreviewResult?))? = nil
+            -> (RenderedImage?, PhotoPreviewResult?))? = nil,
+        proxyStore: ProxyStore = ProxyStore(),
+        proxyDefaults: UserDefaults = TestIsolation.isRunningTests ? TestIsolation.defaults : .standard,
+        lutLibrary: LUTLibrary = LUTLibrary(),
+        timelineExporter: TimelineExporter = .shared
     ) {
+        self.proxyStore = proxyStore
+        self.timelineExporter = timelineExporter
+        self.lutLibrary = lutLibrary
+        availableLUTs = lutLibrary.references()
+        // Shader compilation would otherwise happen on the main actor the first time video plays.
+        Task.detached(priority: .utility) { VideoCompositingEngine.prepare() }
+        self.proxyDefaults = proxyDefaults
+        usesProxiesForPlayback = proxyDefaults.object(forKey: Self.useProxiesKey) as? Bool ?? true
         self.ingestScanner = ingestScanner
         self.autoAdjustmentAnalyzer = autoAdjustmentAnalyzer
         self.lookMatchAnalyzer = lookMatchAnalyzer
         self.batchPhotoExporter = batchPhotoExporter
+        self.exportRecipes = exportRecipes
+            ?? ExportRecipeLibrary(defaults: TestIsolation.isRunningTests ? TestIsolation.defaults : .standard)
         self.previewRenderOperation = previewRenderOperation
         userPresetRepository = presetRepository
         userPresets = presetRepository.load()
@@ -198,6 +338,15 @@ final class EditorStore: ObservableObject {
             .sink { [weak self] _ in
                 MainActor.assumeIsolated { self?.autosaveIfNeeded() }
             }
+            .store(in: &cancellables)
+
+        proxyStore.onReady = { [weak self] id in self?.proxyBecameReady(id) }
+        // Forward only status-case changes; progress ticks would re-render the whole editor.
+        proxyStore.$statuses
+            .map { $0.mapValues(Self.proxyStatusKind) }
+            .removeDuplicates()
+            .dropFirst()
+            .sink { [weak self] _ in self?.objectWillChange.send() }
             .store(in: &cancellables)
     }
 
@@ -235,7 +384,7 @@ final class EditorStore: ObservableObject {
     }
 
     var timelineDurationSeconds: Double {
-        project.timelineClips.map { $0.timelineStartSeconds + $0.durationSeconds }.max() ?? 0
+        project.sequenceFrameRate.seconds(ofFrames: project.timelineDurationFrames)
     }
 
     var selectedAdjustments: PhotoAdjustments {
@@ -252,6 +401,9 @@ final class EditorStore: ObservableObject {
 
     var canUndoPhotoEdit: Bool { !photoUndoHistory.undo.isEmpty }
     var canRedoPhotoEdit: Bool { !photoUndoHistory.redo.isEmpty }
+    /// Photo undo and redo stay out of the video screens.
+    var undoMenuEnabled: Bool { canUndoPhotoEdit && !workspace.isVideo }
+    var redoMenuEnabled: Bool { canRedoPhotoEdit && !workspace.isVideo }
 
     var selectedVideoAdjustments: PhotoAdjustments {
         guard let selectedTimelineClipID else { return .neutral }
@@ -312,14 +464,10 @@ final class EditorStore: ObservableObject {
             case .video, .audio:
                 let metadata = await videoMediaService.metadata(for: url)
                 guard projectGeneration == generation else { return }
-                let asset = MediaAsset(
-                    url: url,
-                    kind: kind,
-                    durationSeconds: metadata.durationSeconds,
-                    pixelWidth: metadata.pixelWidth,
-                    pixelHeight: metadata.pixelHeight
-                )
+                var asset = MediaAsset(url: url, kind: kind)
+                asset.apply(metadata)
                 project.media.append(asset)
+                proxyStore.enqueue([asset])
                 selectedVideoAssetID = asset.id
                 requestAudioWaveform(for: asset)
                 if kind == .video {
@@ -549,7 +697,7 @@ final class EditorStore: ObservableObject {
         guard let selectedTimelineClipID, let selectedTimelineClip else { return }
         var adjustments = selectedAudioAdjustments
         update(&adjustments)
-        adjustments.volume = min(1, max(0, adjustments.volume))
+        adjustments.gainDecibels = min(ClipAudioAdjustments.maximumGainDecibels, max(ClipAudioAdjustments.minimumGainDecibels, adjustments.gainDecibels))
         adjustments.pan = min(1, max(-1, adjustments.pan))
         let maximumFade = max(0, selectedTimelineClip.durationSeconds / 2)
         adjustments.fadeInSeconds = min(maximumFade, max(0, adjustments.fadeInSeconds))
@@ -576,15 +724,71 @@ final class EditorStore: ObservableObject {
     /// Segmented-picker bindings can be written while SwiftUI updates its native view.
     /// Publish navigation and its dependent state only after that update returns.
     func requestWorkspaceChange(to requested: Workspace) {
+        requestWorkspaceChange(to: requested, category: nil, entrySection: nil)
+    }
+
+    /// Switches category, returning to the last step used there (or its first step).
+    func requestCategoryChange(to requested: EditorCategory) {
+        let target = lastWorkspaceByCategory[requested] ?? requested.steps[0].workspace
+        requestWorkspaceChange(to: target, category: requested, entrySection: target == .library ? Self.importSection(for: requested) : nil)
+    }
+
+    func requestStepChange(_ step: RailStep) {
+        let owner = EditorCategory.allCases.first { $0.steps.contains(step) }
+        let section = step.workspace == .library ? owner.map(Self.importSection(for:)) : nil
+        requestWorkspaceChange(to: step.workspace, category: owner, entrySection: section)
+    }
+
+    func openAgents() {
+        guard workspace != .agents else { return }
+        workspace = .agents
+    }
+
+    func closeAgents() {
+        guard workspace == .agents else { return }
+        workspace = workspaceBeforeAgents ?? .library
+        workspaceBeforeAgents = nil
+    }
+
+    /// The Library sidebar section each category's Import step opens on.
+    /// The store the app launches with. See `PerceptionEditorApp.store`.
+    static func launchInstance() -> EditorStore { EditorStore() }
+
+    private static func importSection(for category: EditorCategory) -> String {
+        category == .video ? "Video" : "Photos"
+    }
+
+    private func requestWorkspaceChange(to requested: Workspace, category requestedCategory: EditorCategory?, entrySection: String?) {
         workspaceChangeTask?.cancel()
         workspaceChangeTask = nil
-        guard requested != workspace else { return }
+        pendingCategory = nil
+        guard requested != workspace || (requestedCategory != nil && requestedCategory != category) else { return }
         let generation = projectGeneration
         workspaceChangeTask = Task { [weak self] in
             guard !Task.isCancelled, let self, generation == self.projectGeneration else { return }
             self.workspaceChangeTask = nil
-            self.workspace = requested
+            self.pendingCategory = requestedCategory
+            if let entrySection { self.libraryEntrySection = entrySection }
+            if requested == self.workspace {
+                self.syncCategory()
+            } else {
+                self.workspace = requested
+            }
         }
+    }
+
+    private func syncCategory() {
+        if let own = workspace.category {
+            if own != category { pauseVideoPlayback() }
+            category = own
+            lastWorkspaceByCategory[own] = workspace
+        } else if let pending = pendingCategory {
+            if pending != category { pauseVideoPlayback() }
+            category = pending
+        }
+        // Library (Import) is shared, so it is remembered for whichever category is current.
+        if workspace != .agents { lastWorkspaceByCategory[category] = workspace }
+        pendingCategory = nil
     }
 
     /// Requests a preview of the selected photo. Rendering runs on `PhotoRenderer`; while a
@@ -625,7 +829,9 @@ final class EditorStore: ObservableObject {
         let url = asset.url
         let assetID = asset.id
         let generation = projectGeneration
-        let adjustments = isEditingCrop ? selectedAdjustments.withoutCrop : selectedAdjustments
+        var shown = selectedAdjustments
+        if let preset = presetPreview, !isEditingCrop { shown = presetResult(preset, on: shown) }
+        let adjustments = isEditingCrop ? shown.withoutCrop : shown
         let needsOriginal = originalPreviewAssetID != assetID
         let renderer = photoRenderer
         let overlayID = (showMaskOverlay || isMaskInteracting) ? selectedMaskID : nil
@@ -772,7 +978,10 @@ final class EditorStore: ObservableObject {
     func resetToEmptyProject(named name: String) {
         invalidateIngest()
         invalidateBatchExport()
+        invalidateTimelineExport()
         projectGeneration = UUID()
+        proxyStore.cancelAll()
+        proxyStore.retainOnly([])
         projectSaveError = nil
         project = EditorProject(name: name)
         lastSavedProject = project
@@ -783,6 +992,7 @@ final class EditorStore: ObservableObject {
         selectedVideoAssetID = nil
         selectedTimelineClipID = nil
         playbackRequestID = UUID()
+        pendingTimelineBuildID = nil
         compositionRebuildTask?.cancel()
         replaceVideoPlayer(nil, timelineMode: false)
         timelinePlaybackDurationSeconds = 0
@@ -840,7 +1050,10 @@ final class EditorStore: ObservableObject {
         let loaded = try document.load(from: url)
         invalidateIngest()
         invalidateBatchExport()
+        invalidateTimelineExport()
         projectGeneration = UUID()
+        proxyStore.cancelAll()
+        proxyStore.retainOnly(Set(loaded.media.map(\.id)))
         projectSaveError = nil
         project = loaded
         lastSavedProject = project
@@ -855,9 +1068,12 @@ final class EditorStore: ObservableObject {
         pendingAudioWaveforms = []
         clearAdjustmentHistory()
         backfillPhotoDimensions()
+        migrateVideoMetadataIfNeeded()
+        loadReferencedLUTs()
         for asset in project.media where asset.kind == .video || asset.kind == .audio {
             requestAudioWaveform(for: asset)
         }
+        proxyStore.enqueue(project.media, prioritized: Set(project.timelineClips.map(\.assetID)))
         if let first = allPhotos.first {
             selectedAssetID = first.id
             selectedAssetIDs = [first.id]
@@ -883,11 +1099,15 @@ final class EditorStore: ObservableObject {
             return
         }
 
+        // The selected recipe supplies size, sharpening and metadata; the file extension picks the format.
+        var recipe = exportRecipes.selected.recipe
         let panel = NSSavePanel()
         panel.title = "Export Edited Photo"
-        panel.allowedContentTypes = [.jpeg, .png]
-        panel.nameFieldStringValue = asset.url.deletingPathExtension().lastPathComponent + "_edited.jpg"
+        panel.allowedContentTypes = ExportFormat.allCases.map(\.contentType)
+        panel.nameFieldStringValue = asset.url.deletingPathExtension().lastPathComponent
+            + recipe.filenameSuffix + "." + recipe.format.fileExtension
         guard panel.runModal() == .OK, let url = panel.url else { return }
+        if let chosen = ExportFormat(fileExtension: url.pathExtension) { recipe.format = chosen }
 
         let protectedOriginals = project.media.map(\.url)
         do {
@@ -896,7 +1116,6 @@ final class EditorStore: ObservableObject {
             lastError = error.localizedDescription
             return
         }
-        let type: UTType = url.pathExtension.lowercased() == "png" ? .png : .jpeg
         let adjustments = selectedAdjustments
         // Full-resolution decodes get their own renderer so they neither block previews
         // nor stay cached after the export finishes.
@@ -907,7 +1126,7 @@ final class EditorStore: ObservableObject {
         Task {
             do {
                 try await exporter.export(
-                    url: asset.url, adjustments: adjustments, to: url, type: type,
+                    url: asset.url, adjustments: adjustments, to: url, recipe: recipe,
                     protectedOriginals: protectedOriginals
                 )
                 statusMessage = "Exported \(url.lastPathComponent)"
@@ -978,7 +1197,12 @@ final class EditorStore: ObservableObject {
         cullCache.clear()
         BrushMaskCache.shared.clear()
         SubjectMaskRenderer.clearCaches()
+        VideoCompositingEngine.releaseMemoryUnderPressure()
         cancelSubjectSelection()
+        // Free the selection models but keep the photographer's clicks; the next click reloads them.
+        let clickService = clickSelectionService
+        Task { await clickService.unload() }
+        if isClickSelecting { statusMessage = "Memory was low, so the selection model was unloaded. It reloads on your next click." }
         let renderer = photoRenderer
         let thumbnails = thumbnailRenderer
         let focus = focusRenderer
@@ -1023,6 +1247,32 @@ final class EditorStore: ObservableObject {
         Task {
             await renderer.evictAll()
             await thumbnails.clearRenderCaches()
+        }
+    }
+
+    /// Projects saved before schema 11 stored clip times in seconds, and no frame rates or source
+    /// color. This reads each available video's metadata and converts its clips to exact frames. The
+    /// saved snapshot is updated the same way, so this alone does not mark the project edited.
+    func migrateVideoMetadataIfNeeded() {
+        let legacyAssets = Set(project.timelineClips.filter { $0.legacyTiming != nil }.map(\.assetID))
+        let targets = project.media
+            .filter { $0.kind == .video && ($0.frameRate == nil || $0.sourceColor == nil || legacyAssets.contains($0.id)) }
+            .filter { FileManager.default.fileExists(atPath: $0.url.path) }
+            .map { ($0.id, $0.url) }
+        guard !targets.isEmpty else { return }
+        let projectID = project.id
+        let service = videoMediaService
+
+        Task {
+            var found: [UUID: VideoMetadata] = [:]
+            for (id, url) in targets {
+                let metadata = await service.metadata(for: url)
+                if metadata.frameRate != nil || metadata.sourceColor != nil { found[id] = metadata }
+            }
+            guard project.id == projectID, !found.isEmpty else { return }
+            let changed = project.adoptVideoMetadata(found)
+            lastSavedProject.adoptVideoMetadata(found)
+            if changed { rebuildTimelinePlayback() }
         }
     }
 
@@ -1117,14 +1367,16 @@ final class EditorStore: ObservableObject {
             selectedAssetID = target.id
             refreshPreview()
         } else {
+            // Drop the old file's proxy right away so it is never shown for the relinked clip.
+            proxyStore.invalidate(assetID: target.id)
             Task {
                 let metadata = await videoMediaService.metadata(for: url)
                 guard let currentIndex = project.media.firstIndex(where: { $0.id == target.id }) else {
                     return
                 }
-                project.media[currentIndex].durationSeconds = metadata.durationSeconds
-                project.media[currentIndex].pixelWidth = metadata.pixelWidth
-                project.media[currentIndex].pixelHeight = metadata.pixelHeight
+                project.media[currentIndex].apply(metadata)
+                project.adoptVideoMetadata([target.id: metadata]) // Converts clips left in seconds while offline.
+                proxyStore.enqueue([project.media[currentIndex]])
                 if project.timelineClips.contains(where: { $0.assetID == target.id }) {
                     rebuildTimelinePlayback()
                 }
@@ -1140,25 +1392,40 @@ final class EditorStore: ObservableObject {
             return
         }
 
-        let duration = max(0.25, asset.durationSeconds ?? 5)
-        let clip = TimelineClip(assetID: asset.id, durationSeconds: duration)
+        let rate = asset.frameRate ?? .ntsc23976
+        let frames = max(TimelineClip.minimumFrames, asset.availableFrames ?? rate.nearestFrame(toSeconds: 5))
+        let clip = TimelineClip(assetID: asset.id, frameRate: rate, durationFrames: frames)
         project.timelineClips.append(clip)
         normalizePrimaryTimeline()
         selectedTimelineClipID = clip.id
-        rebuildTimelinePlayback(seekTo: clip.timelineStartSeconds)
+        rebuildTimelinePlayback(seekTo: timelineStartSeconds(ofClip: clip.id))
     }
 
     func selectTimelineClip(_ clip: TimelineClip) {
-        selectedTimelineClipID = clip.id
+        // On Color the selection can flip the scopes (offline <-> online). That rebuild must aim at the
+        // new clip: a refresh from the selection's own didSet would capture the live player's position
+        // (still inside the old clip) and seek back to it, re-selecting the old clip.
+        let scopesBefore = scopesVisible
+        setWithoutPlaybackRefresh { selectedTimelineClipID = clip.id }
         if let asset = project.media.first(where: { $0.id == clip.assetID }) {
             selectedVideoAssetID = asset.id
         }
-        showTimelinePlayback(at: clip.timelineStartSeconds)
+        let start = project.timelineStartSeconds(of: clip)
+        if scopesVisible != scopesBefore, workspace.isVideo {
+            rebuildTimelinePlayback(autoplay: isVideoPlaying, seekTo: start)
+        } else {
+            showTimelinePlayback(at: start)
+        }
     }
 
     func playSelectedTimelineClip() {
         guard let clip = selectedTimelineClip else { return }
-        showTimelinePlayback(at: clip.timelineStartSeconds, autoplay: true)
+        showTimelinePlayback(at: project.timelineStartSeconds(of: clip), autoplay: true)
+    }
+
+    /// Where a clip starts once the timeline has been re-packed.
+    private func timelineStartSeconds(ofClip id: UUID) -> Double {
+        project.timelineClips.first(where: { $0.id == id }).map(project.timelineStartSeconds(of:)) ?? 0
     }
 
     func removeSelectedTimelineClip() {
@@ -1179,7 +1446,7 @@ final class EditorStore: ObservableObject {
         guard destination != index else { return }
         project.timelineClips.swapAt(index, destination)
         normalizePrimaryTimeline()
-        rebuildTimelinePlayback(seekTo: project.timelineClips[destination].timelineStartSeconds)
+        rebuildTimelinePlayback(seekTo: project.timelineStartSeconds(of: project.timelineClips[destination]))
     }
 
     func canMoveSelectedTimelineClip(by offset: Int) -> Bool {
@@ -1189,53 +1456,59 @@ final class EditorStore: ObservableObject {
         return project.timelineClips.indices.contains(index + offset)
     }
 
+    /// Moves the clip's in point by about `delta` seconds, in whole frames of the clip's rate.
     func trimSelectedClipStart(by delta: Double) {
         guard let selectedTimelineClipID,
               let index = project.timelineClips.firstIndex(where: { $0.id == selectedTimelineClipID }),
               let asset = project.media.first(where: { $0.id == project.timelineClips[index].assetID })
         else { return }
 
-        let originalDuration = max(0.25, asset.durationSeconds ?? 5)
         let clip = project.timelineClips[index]
-        let newStart = min(max(0, clip.sourceStartSeconds + delta), originalDuration - 0.25)
-        let end = min(originalDuration, clip.sourceStartSeconds + clip.durationSeconds)
-        project.timelineClips[index].sourceStartSeconds = newStart
-        project.timelineClips[index].durationSeconds = max(0.25, end - newStart)
+        let minimum = TimelineClip.minimumFrames
+        let available = max(minimum, asset.availableFrames ?? clip.sourceStartFrame + clip.durationFrames)
+        let end = min(available, clip.sourceStartFrame + clip.durationFrames)
+        let deltaFrames = clip.frameRate.nearestFrame(toSeconds: delta)
+        let newStart = min(max(0, clip.sourceStartFrame + deltaFrames), max(0, end - minimum))
+        project.timelineClips[index].sourceStartFrame = newStart
+        project.timelineClips[index].durationFrames = max(minimum, end - newStart)
         normalizePrimaryTimeline()
         rebuildTimelinePlayback()
     }
 
+    /// Moves the clip's out point by about `delta` seconds, in whole frames of the clip's rate.
     func trimSelectedClipEnd(by delta: Double) {
         guard let selectedTimelineClipID,
               let index = project.timelineClips.firstIndex(where: { $0.id == selectedTimelineClipID }),
               let asset = project.media.first(where: { $0.id == project.timelineClips[index].assetID })
         else { return }
 
-        let originalDuration = max(0.25, asset.durationSeconds ?? 5)
-        let maximum = max(0.25, originalDuration - project.timelineClips[index].sourceStartSeconds)
-        project.timelineClips[index].durationSeconds = min(
-            maximum,
-            max(0.25, project.timelineClips[index].durationSeconds + delta)
-        )
+        let clip = project.timelineClips[index]
+        let minimum = TimelineClip.minimumFrames
+        let available = asset.availableFrames ?? clip.sourceStartFrame + clip.durationFrames
+        let maximum = max(minimum, available - clip.sourceStartFrame)
+        let deltaFrames = clip.frameRate.nearestFrame(toSeconds: delta)
+        project.timelineClips[index].durationFrames = min(maximum, max(minimum, clip.durationFrames + deltaFrames))
         normalizePrimaryTimeline()
         rebuildTimelinePlayback()
     }
 
+    /// Splits the selected clip at its middle frame.
     func splitSelectedClip() {
         guard let selectedTimelineClipID,
               let index = project.timelineClips.firstIndex(where: { $0.id == selectedTimelineClipID })
         else { return }
         let original = project.timelineClips[index]
-        guard original.durationSeconds >= 0.5 else { return }
+        guard original.durationFrames >= 2 * TimelineClip.minimumFrames else { return }
 
-        let firstDuration = original.durationSeconds / 2
-        project.timelineClips[index].durationSeconds = firstDuration
+        let firstFrames = original.durationFrames / 2
+        project.timelineClips[index].durationFrames = firstFrames
         let second = TimelineClip(
             assetID: original.assetID,
             videoTrack: original.videoTrack,
             audioTrack: original.audioTrack,
-            sourceStartSeconds: original.sourceStartSeconds + firstDuration,
-            durationSeconds: original.durationSeconds - firstDuration,
+            frameRate: original.frameRate,
+            sourceStartFrame: original.sourceStartFrame + firstFrames,
+            durationFrames: original.durationFrames - firstFrames,
             isEnabled: original.isEnabled,
             isMuted: original.isMuted
         )
@@ -1255,7 +1528,7 @@ final class EditorStore: ObservableObject {
         }
         self.selectedTimelineClipID = second.id
         normalizePrimaryTimeline()
-        rebuildTimelinePlayback(seekTo: second.timelineStartSeconds)
+        rebuildTimelinePlayback(seekTo: timelineStartSeconds(ofClip: second.id))
     }
 
     func toggleSelectedClipMute() {
@@ -1269,6 +1542,26 @@ final class EditorStore: ObservableObject {
     func previewTimeline() {
         showTimelinePlayback(at: timelinePlaybackPositionSeconds)
     }
+
+    /// Pauses the current player, if any. Used when navigation leaves the Cut screen.
+    func pauseVideoPlayback() {
+        guard isVideoPlaying || videoPlayer != nil else { return }
+        videoPlayer?.pause()
+        isVideoPlaying = false
+    }
+
+    /// Starts playback for a freshly built player, but only while a video screen is showing;
+    /// a rebuild that finishes after the user left for Photo must not play.
+    @discardableResult
+    func beginAutoplay(_ player: AVPlayer) -> Bool {
+        guard workspace.isVideo else { return false }
+        player.play()
+        isVideoPlaying = true
+        return true
+    }
+
+    /// Test seam: marks playback as running without a real player.
+    func markVideoPlayingForTesting() { isVideoPlaying = true }
 
     func toggleVideoPlayback() {
         guard let videoPlayer else {
@@ -1291,18 +1584,18 @@ final class EditorStore: ObservableObject {
         }
     }
 
+    /// Seeks to the start of the frame nearest `seconds`, so the playhead always shows a whole frame.
     func seekTimeline(to seconds: Double) {
-        let clamped = min(max(0, seconds), timelinePlaybackDurationSeconds)
+        let rate = project.sequenceFrameRate
+        let lastFrame = max(0, rate.nearestFrame(toSeconds: timelinePlaybackDurationSeconds) - 1)
+        let frame = min(max(0, rate.nearestFrame(toSeconds: seconds)), lastFrame)
+        let clamped = min(rate.seconds(ofFrames: frame), max(0, timelinePlaybackDurationSeconds))
         guard isTimelinePlayback, let videoPlayer else {
             showTimelinePlayback(at: clamped)
             return
         }
         timelinePlaybackPositionSeconds = clamped
-        videoPlayer.seek(
-            to: CMTime(seconds: clamped, preferredTimescale: 600),
-            toleranceBefore: .zero,
-            toleranceAfter: .zero
-        )
+        videoPlayer.seek(to: rate.time(ofFrame: frame), toleranceBefore: .zero, toleranceAfter: .zero)
         synchronizeTimelineSelection(at: clamped)
     }
 
@@ -1347,13 +1640,121 @@ final class EditorStore: ObservableObject {
         return nil
     }
 
-    private func showSourceVideo(_ asset: MediaAsset) {
-        playbackRequestID = UUID()
+    /// Shows one clip in the viewer. With a proxy, the video comes from the proxy and the audio from
+    /// the original. `preservingPosition` keeps the time and play state when the same clip's player is
+    /// swapped (a proxy became ready, or proxies were toggled).
+    private func showSourceVideo(_ asset: MediaAsset, preservingPosition: Bool = false) {
+        let resume: (time: CMTime, playing: Bool)? = preservingPosition && !isTimelinePlayback
+            ? videoPlayer.map { ($0.currentTime(), isVideoPlaying) }
+            : nil
+        // Any build shows the current color inputs, so it consumes a stale-preview mark.
+        needsPlaybackRefresh = false
+        let requestID = UUID()
+        playbackRequestID = requestID
+        playbackBuildCount += 1
         compositionRebuildTask?.cancel()
         timelinePlaybackWarnings = []
         timelinePlaybackDurationSeconds = 0
         timelinePlaybackPositionSeconds = 0
-        replaceVideoPlayer(AVPlayer(url: asset.url), timelineMode: false)
+
+        let url = playbackURL(for: asset)
+        let colorInputs = previewColorInputs()
+        let inputLUT = colorInputs.inputLUTs.resolved[asset.id]
+        let ocioInput = colorInputs.ocioInputs[asset.id]
+        if inputLUT != nil || ocioInput != nil || scopesVisible {
+            // Source color and the scopes need the compositor, so the viewer plays a one-clip timeline.
+            let player = AVPlayer()
+            replaceVideoPlayer(player, timelineMode: false)
+            let service = timelineCompositionService
+            let rate = asset.frameRate ?? .ntsc23976
+            let clip = TimelineClip(assetID: asset.id, frameRate: rate, durationFrames: max(1, asset.availableFrames ?? rate.nearestFrame(toSeconds: 5)))
+            let proxy = url == asset.url ? nil : url
+            compositionRebuildTask = Task { [weak self] in
+                guard let self else { return }
+                let result = await service.makePlayerItem(
+                    clips: [clip], media: [asset], quality: .preview,
+                    proxyURLsByAssetID: proxy.map { [asset.id: $0] } ?? [:], renderingPath: .compositor,
+                    inputLUTsByAssetID: inputLUT.map { [asset.id: $0] } ?? [:],
+                    ocioInputsByAssetID: ocioInput.map { [asset.id: $0] } ?? [:]
+                )
+                guard !Task.isCancelled, playbackRequestID == requestID, videoPlayer === player else { return }
+                player.replaceCurrentItem(with: result.playerItem ?? AVPlayerItem(url: asset.url))
+                resumeSourcePlayback(player, from: resume)
+            }
+            return
+        }
+        guard url != asset.url else {
+            let player = AVPlayer(url: asset.url)
+            replaceVideoPlayer(player, timelineMode: false)
+            resumeSourcePlayback(player, from: resume)
+            return
+        }
+        // The player exists right away; its proxy + original-audio item follows once the tracks load.
+        let player = AVPlayer()
+        replaceVideoPlayer(player, timelineMode: false)
+        compositionRebuildTask = Task { [weak self] in
+            guard let self else { return }
+            let item = await timelineCompositionService.makeSourcePlayerItem(for: asset, proxyURL: url)
+            guard !Task.isCancelled, playbackRequestID == requestID, videoPlayer === player else { return }
+            player.replaceCurrentItem(with: item)
+            resumeSourcePlayback(player, from: resume)
+        }
+    }
+
+    private func resumeSourcePlayback(_ player: AVPlayer, from state: (time: CMTime, playing: Bool)?) {
+        guard let state else { return }
+        if state.time.isValid, state.time.seconds > 0 {
+            player.seek(to: state.time, toleranceBefore: .zero, toleranceAfter: .zero)
+        }
+        if state.playing { beginAutoplay(player) }
+    }
+
+    private static func proxyStatusKind(_ status: ProxyStatus) -> Int {
+        switch status {
+        case .missing: 0
+        case .queued: 1
+        case .generating: 2
+        case .ready: 3
+        case .failed: 4
+        }
+    }
+
+    private func playbackURL(for asset: MediaAsset) -> URL {
+        guard usesProxiesForPlayback else { return asset.url }
+        regenerateMissingProxies(for: [asset.id])
+        return proxyStore.readyURL(for: asset.id) ?? asset.url
+    }
+
+    /// A ready proxy whose file is gone (the user cleared the cache folder) is forgotten and queued
+    /// again, so playback falls back to the original until the new proxy is ready.
+    private func regenerateMissingProxies(for assetIDs: Set<UUID>) {
+        let stale = assetIDs.filter { id in
+            proxyStore.readyURL(for: id).map { !FileManager.default.fileExists(atPath: $0.path) } ?? false
+        }
+        guard !stale.isEmpty else { return }
+        for id in stale { proxyStore.invalidate(assetID: id) }
+        proxyStore.enqueue(project.media.filter { stale.contains($0.id) })
+    }
+
+    private func proxyBecameReady(_ assetID: UUID) {
+        guard usesProxiesForPlayback else { return }
+        if isTimelinePlayback {
+            if project.timelineClips.contains(where: { $0.assetID == assetID }) {
+                rebuildTimelinePlayback() // Keeps position and play state.
+            }
+        } else if selectedVideoAssetID == assetID, !isVideoPlaying,
+                  let asset = project.media.first(where: { $0.id == assetID }) {
+            // A background proxy never switches the viewer into timeline mode.
+            showSourceVideo(asset, preservingPosition: true)
+        }
+    }
+
+    private func refreshPlaybackSources() {
+        if isTimelinePlayback {
+            rebuildTimelinePlayback()
+        } else if let asset = selectedVideoAsset {
+            showSourceVideo(asset, preservingPosition: true)
+        }
     }
 
     private func showTimelinePlayback(at seconds: Double, autoplay: Bool = false) {
@@ -1368,15 +1769,93 @@ final class EditorStore: ObservableObject {
         }
     }
 
-    private func rebuildTimelinePlayback(
+    /// Why the Color screen shows an empty state instead of the grade; nil when there is a clip to grade.
+    enum ColorEmptyReason: Equatable {
+        case noClips, noSelection, offline
+    }
+
+    var colorEmptyReason: ColorEmptyReason? {
+        guard !project.timelineClips.isEmpty else { return .noClips }
+        guard let clip = selectedTimelineClip else { return .noSelection }
+        guard let asset = timelineAsset(for: clip), !isMissing(asset) else { return .offline }
+        return nil
+    }
+
+    /// True when the Color screen has an online timeline clip to grade; otherwise it shows an empty state.
+    var colorHasTarget: Bool { colorEmptyReason == nil }
+
+    /// The Color screen owns the scopes: they run while it is shown with a clip to grade, and
+    /// leaving it restores whatever the Cut screen's toggle said before (and turns before/after off).
+    /// Each change rebuilds playback at most once, and never while no video screen is showing.
+    private func updateColorScreenScopes() {
+        if workspace == .videoColor {
+            let entering = scopesVisibleBeforeColor == nil
+            if entering { scopesVisibleBeforeColor = scopesVisible }
+            let wanted = colorHasTarget
+            // The grade shows only on timeline playback, so a source preview left by Cut moves to
+            // the selected clip, keeping its play state. The scopes change rides on that one build.
+            if entering, wanted, !isTimelinePlayback, let clip = selectedTimelineClip {
+                let wasPlaying = isVideoPlaying
+                setWithoutPlaybackRefresh { scopesVisible = true }
+                selectedVideoAssetID = clip.assetID
+                rebuildTimelinePlayback(autoplay: wasPlaying, seekTo: project.timelineStartSeconds(of: clip))
+            } else {
+                scopesVisible = wanted
+            }
+        } else if let previous = scopesVisibleBeforeColor {
+            scopesVisibleBeforeColor = nil
+            let changed = videoBeforeAfter || scopesVisible != previous
+            setWithoutPlaybackRefresh {
+                videoBeforeAfter = false
+                scopesVisible = previous
+            }
+            guard changed else { return }
+            if workspace.isVideo { refreshPlaybackSources() } else { needsPlaybackRefresh = true }
+        }
+    }
+
+    private func setWithoutPlaybackRefresh(_ change: () -> Void) {
+        deferPlaybackRefresh = true
+        defer { deferPlaybackRefresh = false }
+        change()
+    }
+
+    /// A Color screen chip: Waveform or RGB parade. Re-measures the paused frame in the new mode.
+    func setWaveformMode(_ mode: WaveformMode) {
+        guard scopeModel.waveformMode != mode else { return }
+        scopeModel.waveformMode = mode
+        scopeModel.modeChanged()
+    }
+
+    /// The color inputs the preview is built with. Before/after drops the grade and the source
+    /// transform; export builds its own inputs from the project and is unaffected.
+    func previewColorInputs() -> (
+        adjustmentsByClipID: [UUID: PhotoAdjustments],
+        inputLUTs: (resolved: [UUID: ResolvedLUT], warnings: [String]),
+        ocioInputs: [UUID: OCIOInputTransform]
+    ) {
+        guard !videoBeforeAfter else { return ([:], ([:], []), [:]) }
+        return (project.videoAdjustmentsByClipID, resolvedInputLUTs(), resolvedOCIOInputs())
+    }
+
+    /// Rebuilds timeline playback after a color input or LUT changed, keeping the position.
+    func rebuildTimelineForColorChange() {
+        rebuildTimelinePlayback()
+    }
+
+    func rebuildTimelinePlayback(
         autoplay: Bool = false,
         seekTo requestedPosition: Double? = nil
     ) {
+        // Any build shows the current color inputs, so it consumes a stale-preview mark.
+        needsPlaybackRefresh = false
         guard !project.timelineClips.isEmpty else {
+            scheduleAudioLevelRefresh()
             replaceVideoPlayer(nil, timelineMode: false)
             timelinePlaybackDurationSeconds = 0
             timelinePlaybackPositionSeconds = 0
             timelinePlaybackWarnings = []
+            timelineUsedProxyCount = 0
             statusMessage = "Timeline is empty"
             return
         }
@@ -1387,11 +1866,19 @@ final class EditorStore: ObservableObject {
         let position = requestedPosition ?? (isTimelinePlayback ? retainedPosition : 0)
         let shouldAutoplay = autoplay || (isTimelinePlayback && isVideoPlaying)
         let clips = project.timelineClips
+        let sequenceRate = project.sequenceFrameRate
+        let (adjustmentsByClipID, inputLUTs, ocioInputs) = previewColorInputs()
+        let renderingPath: TimelineRenderingPath = scopesVisible ? .compositor : .automatic
         let media = project.media
-        let adjustmentsByClipID = project.videoAdjustmentsByClipID
         let audioAdjustmentsByClipID = project.audioAdjustmentsByClipID
+        let masterGainDecibels = project.masterGainDecibels
+        scheduleAudioLevelRefresh()
+        if usesProxiesForPlayback { regenerateMissingProxies(for: Set(clips.map(\.assetID))) }
+        let proxyURLs = usesProxiesForPlayback ? proxyStore.readyURLs : [:]
         let requestID = UUID()
         playbackRequestID = requestID
+        pendingTimelineBuildID = requestID
+        playbackBuildCount += 1
         compositionRebuildTask?.cancel()
         statusMessage = "Building timeline preview…"
 
@@ -1401,11 +1888,21 @@ final class EditorStore: ObservableObject {
                 clips: clips,
                 media: media,
                 adjustmentsByClipID: adjustmentsByClipID,
-                audioAdjustmentsByClipID: audioAdjustmentsByClipID
+                audioAdjustmentsByClipID: audioAdjustmentsByClipID,
+                quality: .preview,
+                proxyURLsByAssetID: proxyURLs,
+                sequenceFrameRate: sequenceRate,
+                masterGainDecibels: masterGainDecibels,
+                renderingPath: renderingPath,
+                meters: true,
+                inputLUTsByAssetID: inputLUTs.resolved,
+                ocioInputsByAssetID: ocioInputs
             )
             guard !Task.isCancelled, playbackRequestID == requestID else { return }
+            pendingTimelineBuildID = nil
 
-            timelinePlaybackWarnings = result.warnings
+            timelinePlaybackWarnings = result.warnings + inputLUTs.warnings
+            timelineUsedProxyCount = result.usedProxyCount
             guard let playerItem = result.playerItem else {
                 replaceVideoPlayer(nil, timelineMode: false)
                 timelinePlaybackDurationSeconds = 0
@@ -1416,13 +1913,11 @@ final class EditorStore: ObservableObject {
 
             let player = AVPlayer(playerItem: playerItem)
             replaceVideoPlayer(player, timelineMode: true)
+            audioMeterModel.attach(result.meterTap)
             timelinePlaybackDurationSeconds = result.durationSeconds
             let clampedPosition = min(max(0, position), result.durationSeconds)
             seekTimeline(to: clampedPosition)
-            if shouldAutoplay {
-                player.play()
-                isVideoPlaying = true
-            }
+            if shouldAutoplay { beginAutoplay(player) }
             statusMessage = result.warnings.isEmpty
                 ? "Timeline preview ready"
                 : "Timeline ready with \(result.warnings.count) warning\(result.warnings.count == 1 ? "" : "s")"
@@ -1430,6 +1925,7 @@ final class EditorStore: ObservableObject {
     }
 
     private func replaceVideoPlayer(_ player: AVPlayer?, timelineMode: Bool) {
+        audioMeterModel.attach(nil)
         playbackMonitorTask?.cancel()
         videoPlayer?.pause()
         videoPlayer = player
@@ -1441,26 +1937,31 @@ final class EditorStore: ObservableObject {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(100))
                 guard let self, let player, self.videoPlayer === player else { return }
-                self.isVideoPlaying = player.timeControlStatus == .playing
+                // @Published fires on every assignment, even of an equal value, and each
+                // fire re-evaluates every view on the store. Write only real changes so a
+                // paused viewer stays idle.
+                let playing = player.timeControlStatus == .playing
+                if self.isVideoPlaying != playing { self.isVideoPlaying = playing }
                 guard self.isTimelinePlayback else { continue }
                 let seconds = player.currentTime().seconds
                 guard seconds.isFinite else { continue }
-                self.timelinePlaybackPositionSeconds = min(
-                    max(0, seconds),
-                    self.timelinePlaybackDurationSeconds
-                )
-                self.synchronizeTimelineSelection(at: seconds)
+                let position = min(max(0, seconds), self.timelinePlaybackDurationSeconds)
+                if self.timelinePlaybackPositionSeconds != position {
+                    self.timelinePlaybackPositionSeconds = position
+                }
+                if self.pendingTimelineBuildID == nil { self.synchronizeTimelineSelection(at: seconds) }
             }
         }
     }
 
     private func synchronizeTimelineSelection(at seconds: Double) {
         guard isTimelinePlayback else { return }
-        let tolerance = 0.001
+        // The frame on screen; the small allowance keeps a time exactly on a frame start in that frame.
+        let rate = project.sequenceFrameRate
+        let frame = Int64((seconds / rate.frameSeconds + 0.001).rounded(.down))
         let clip = project.timelineClips.first {
-            seconds + tolerance >= $0.timelineStartSeconds &&
-                seconds < $0.timelineStartSeconds + $0.durationSeconds - tolerance
-        } ?? (seconds >= timelineDurationSeconds - tolerance ? project.timelineClips.last : nil)
+            frame >= $0.timelineStartFrame && frame < $0.timelineStartFrame + project.timelineFrames(of: $0)
+        } ?? (frame >= project.timelineDurationFrames ? project.timelineClips.last : nil)
 
         guard let clip else { return }
         if selectedTimelineClipID != clip.id {
@@ -1472,10 +1973,6 @@ final class EditorStore: ObservableObject {
     }
 
     private func normalizePrimaryTimeline() {
-        var cursor = 0.0
-        for index in project.timelineClips.indices {
-            project.timelineClips[index].timelineStartSeconds = cursor
-            cursor += project.timelineClips[index].durationSeconds
-        }
+        project.packTimeline()
     }
 }

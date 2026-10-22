@@ -12,6 +12,7 @@ export SWIFTPM_MODULECACHE_OVERRIDE="$BUILD_DIR/ManifestCache"
 cd "$ROOT_DIR"
 swift build --disable-sandbox --scratch-path "$BUILD_DIR" -c release --product "$APP_NAME"
 zsh "$ROOT_DIR/scripts/prepare-sky-model.sh" "$MODEL_DIR"
+zsh "$ROOT_DIR/scripts/prepare-sam-model.sh" "$MODEL_DIR"
 
 if ps -axo comm= | rg --fixed-strings --quiet "$APP_BUNDLE/Contents/MacOS/$APP_NAME"; then
     print -u2 "Quit PerceptionEditor before replacing its app bundle."
@@ -25,7 +26,9 @@ cp "$ROOT_DIR/Resources/Info.plist" "$APP_BUNDLE/Contents/Info.plist"
 cp "$ROOT_DIR/Resources/AppIcon.icns" "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
 mkdir -p "$APP_BUNDLE/Contents/Resources/Models"
 cp -R "$MODEL_DIR/SkySegmentation.mlmodelc" "$APP_BUNDLE/Contents/Resources/Models/"
+cp -R "$MODEL_DIR/SAM2ImageEncoder.mlmodelc" "$MODEL_DIR/SAM2PromptEncoder.mlmodelc" "$MODEL_DIR/SAM2MaskDecoder.mlmodelc" "$APP_BUNDLE/Contents/Resources/Models/"
 cp -R "$ROOT_DIR/Resources/ModelNotices" "$APP_BUNDLE/Contents/Resources/"
+cp -R "$ROOT_DIR/Resources/ThirdPartyNotices" "$APP_BUNDLE/Contents/Resources/"
 codesign --force --deep --sign - "$APP_BUNDLE"
 
 echo "Built $APP_BUNDLE"

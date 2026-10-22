@@ -4,7 +4,9 @@ import SwiftUI
 @main
 struct PerceptionEditorApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @StateObject private var store = EditorStore()
+    // Built by a plain function, not inline: CI's Swift 6.1.2 compiler crashes in SIL generation when
+    // EditorStore()'s many default arguments sit inside @StateObject's autoclosure.
+    @StateObject private var store = EditorStore.launchInstance()
 
     var body: some Scene {
         WindowGroup("Perception Media Editor") {
@@ -37,10 +39,10 @@ struct PerceptionEditorApp: App {
                 // Photo undo covers photo adjustments only, so it stays out of the video timeline.
                 Button("Undo Photo Edit") { store.undoPhotoEdit() }
                     .keyboardShortcut("z")
-                    .disabled(!store.canUndoPhotoEdit || store.workspace == .video)
+                    .disabled(!store.undoMenuEnabled)
                 Button("Redo Photo Edit") { store.redoPhotoEdit() }
                     .keyboardShortcut("z", modifiers: [.command, .shift])
-                    .disabled(!store.canRedoPhotoEdit || store.workspace == .video)
+                    .disabled(!store.redoMenuEnabled)
                 Divider()
                 // `\` toggles before/after through AppDelegate's key monitor, which leaves
                 // the key alone while a text field is being edited.
@@ -88,9 +90,17 @@ struct PerceptionEditorApp: App {
             }
 
             CommandMenu("Workspace") {
-                ForEach(Workspace.allCases) { workspace in
-                    Button(workspace.rawValue) { store.workspace = workspace }
+                ForEach(EditorCategory.allCases) { category in
+                    Section(category.rawValue) {
+                        ForEach(EditorStepShortcut.all.filter { category.steps.contains($0.step) }, id: \.step.id) { entry in
+                            Button("\(category.rawValue): \(entry.step.title)") { store.requestStepChange(entry.step) }
+                                .keyboardShortcut(entry.key.map { KeyboardShortcut(KeyEquivalent($0)) })
+                        }
+                    }
                 }
+                Divider()
+                Button("Agents") { store.openAgents() }
+                    .keyboardShortcut(KeyEquivalent(EditorStepShortcut.agentsKey))
             }
         }
     }

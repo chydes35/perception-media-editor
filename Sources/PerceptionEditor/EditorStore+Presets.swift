@@ -13,10 +13,56 @@ extension EditorStore {
     /// preset contains change; everything else about each photo is kept.
     func apply(_ preset: PhotoPreset, to ids: [UUID]? = nil) {
         let targets = ids ?? commandTargetIDs
-        guard applyToPhotos(targets, label: "Preset: \(preset.name)", { preset.apply(to: $0) }) > 0 else { return }
+        let amount = presetAmount
+        let replaces = presetReplacesLook
+        endPresetPreview()
+        let suffix = amount < 1 ? " (\(Int((amount * 100).rounded()))%)" : ""
+        guard applyToPhotos(targets, label: "Preset: \(preset.name)\(suffix)", { Self.result(of: preset, on: $0, amount: amount, replacesLook: replaces) }) > 0 else { return }
         statusMessage = targets.count == 1
-            ? "Applied \(preset.name)"
-            : "Applied \(preset.name) to \(targets.count) photos"
+            ? "Applied \(preset.name)\(suffix)"
+            : "Applied \(preset.name)\(suffix) to \(targets.count) photos"
+    }
+
+    /// `target` after `preset` at `amount`. With `replacesLook`, the photo's look is cleared first
+    /// (white balance, crop and other per-photo settings stay), so the preset stands alone.
+    static func result(of preset: PhotoPreset, on target: PhotoAdjustments, amount: Double, replacesLook: Bool) -> PhotoAdjustments {
+        let base = replacesLook ? target.applying(PhotoAdjustments(), groups: AdjustmentGroup.looks) : target
+        return preset.apply(to: base, amount: amount)
+    }
+
+    func presetResult(_ preset: PhotoPreset, on target: PhotoAdjustments) -> PhotoAdjustments {
+        Self.result(of: preset, on: target, amount: presetAmount, replacesLook: presetReplacesLook)
+    }
+
+    // MARK: - Hover preview
+
+    /// Shows `preset` on the selected photo while the pointer is over it. A short delay keeps a
+    /// sweep down the list from rendering every row it passes.
+    func hoverPreset(_ preset: PhotoPreset, isHovering: Bool) {
+        presetHoverTask?.cancel()
+        guard selectedAsset?.kind == .photo, !isEditingCrop else { return }
+        if isHovering {
+            presetHoverTask = Task { [weak self] in
+                try? await Task.sleep(for: .milliseconds(140))
+                guard !Task.isCancelled, let self else { return }
+                self.presetPreview = preset
+                self.refreshPreview()
+            }
+        } else if presetPreview != nil {
+            // Moving to the next row cancels this before it fires, so the photo does not flash back.
+            presetHoverTask = Task { [weak self] in
+                try? await Task.sleep(for: .milliseconds(90))
+                guard !Task.isCancelled, let self else { return }
+                self.endPresetPreview()
+            }
+        }
+    }
+
+    func endPresetPreview() {
+        presetHoverTask?.cancel()
+        guard presetPreview != nil else { return }
+        presetPreview = nil
+        refreshPreview()
     }
 
     /// Changes several photos as a single undo step. Returns how many photos changed.
@@ -242,6 +288,7 @@ extension EditorStore {
         let panel = NSOpenPanel()
         panel.title = "Import Presets"
         panel.allowedContentTypes = [UTType(filenameExtension: PresetFile.fileExtension) ?? .json]
+            + [UTType(filenameExtension: LightroomPresetImporter.fileExtension)].compactMap { $0 }
         panel.allowsMultipleSelection = true
         guard panel.runModal() == .OK else { return }
         importPresets(from: panel.urls)
@@ -250,9 +297,20 @@ extension EditorStore {
     func importPresets(from urls: [URL]) {
         var added = 0
         var skipped = 0
+        var notes: [String] = []
         for url in urls {
             do {
-                let incoming = try PresetLibrary.decode(Data(contentsOf: url))
+                let incoming: [PhotoPreset]
+                if url.pathExtension.lowercased() == LightroomPresetImporter.fileExtension {
+                    let result = try LightroomPresetImporter.importPreset(
+                        from: Data(contentsOf: url),
+                        fallbackName: url.deletingPathExtension().lastPathComponent
+                    )
+                    incoming = [result.preset]
+                    if !result.unsupported.isEmpty { notes.append(result.preset.name) }
+                } else {
+                    incoming = try PresetLibrary.decode(Data(contentsOf: url))
+                }
                 let result = PresetLibrary.merge(existing: userPresets, incoming: incoming)
                 userPresets = result.presets
                 added += result.added
@@ -264,5 +322,6 @@ extension EditorStore {
         persistUserPresets()
         statusMessage = "Imported \(added) preset\(added == 1 ? "" : "s")"
             + (skipped > 0 ? " (\(skipped) already in your library)" : "")
+            + (notes.isEmpty ? "" : "; \(notes.count) had Lightroom settings with no equivalent here (clarity, grain, white balance…)")
     }
 }

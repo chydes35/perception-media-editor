@@ -14,6 +14,10 @@ Persist edits as metadata in `.pmedit`; do not bake edits into originals. Keep d
 
 Use the shared color pipeline where photo and video behavior intentionally matches. State any quality difference between fast previews, 100% focus, and exports. Cache keys must include the source and edit inputs needed to prevent stale results.
 
+## Concurrency
+
+Blocking AVAssetReader or file work must not run on `Task.detached` or the cooperative pool (it starves unrelated async work and hung the full suite once); use a utility `DispatchQueue` plus a continuation. Heavy work stays off the main actor.
+
 ## Tests and documentation
 
 Test behavior at boundaries: disk failure, cancellation, collision, old project data, missing media, and preview/export agreement. Prefer deterministic correctness checks to timing assertions in the regular suite. Put isolated benchmarks in scripts or opt-in tests and label their hardware and workload.

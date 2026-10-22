@@ -1,5 +1,14 @@
 # Perception Media Editor Roadmap
 
+## Current baseline (2026-10-22)
+
+The [consolidation candidate](decisions/2026-10-22-project-consolidation.md) contains
+the redesign, process-version infrastructure, export recipes and click-selection
+polish, plus M0 audit/tooling. It saves schema 13; published main remains schema 10.
+Historical phase entries below describe delivery at their stated date, not current
+branch integration or a fresh acceptance pass. Photo quality/full-shoot acceptance
+is the next product gate; consolidation preserves existing video work.
+
 ## Direction (decided 2026-09-26)
 
 The goal is a full Lightroom replacement for a single photographer's workflow. Photo comes first and must be complete before video work resumes. Typical job: 100–200 Lumix S5 RW2 files per session, edited on an 8 GB M1 MacBook Air, so every feature has a memory budget. Existing Lightroom edits are not migrated; new shoots start fresh. Masks, healing, and presets are used on nearly every shoot.
@@ -42,7 +51,7 @@ See [Memory Optimization](archive/MEMORY_OPTIMIZATION_2026-09-28.md) for measure
 
 #### Local integration — 2026-10-07
 
-The [integration plan](../plans/completed/photo-workflow-integration.md) combines GitHub main, the advanced local photo tools, and the preserved reliability/memory/batch-delivery work on `codex/photo-workflow-integration`. The candidate retains project schema 10. Automated integration checks do not close the open UI, image-quality, or 100–200-photo performance gates. The [target-Mac validation](archive/WORKFLOW_VALIDATION_2026-10-07.md) adds displayed evidence from 100 distinct S5 photos across dated library folders and records the healing allocation defect/correction; genuine single-shoot, broad visual, and threshold-based acceptance remain open.
+The [integration plan](../plans/completed/photo-workflow-integration.md) combines GitHub main, the advanced local photo tools, and the preserved reliability/memory/batch-delivery work on `codex/photo-workflow-integration`. That October 7 candidate retained project schema 10; the current candidate uses 13. Automated integration checks do not close the open UI, image-quality, or 100–200-photo performance gates. The [target-Mac validation](archive/WORKFLOW_VALIDATION_2026-10-07.md) adds displayed evidence from 100 distinct S5 photos across dated library folders and records the healing allocation defect/correction; genuine single-shoot, broad visual, and threshold-based acceptance remain open.
 
 ### Phase 1 — Library and culling (complete, PR #2)
 
@@ -94,12 +103,25 @@ The [October 8 real-RAW selection pass](archive/SELECTION_QUALITY_2026-10-08.md)
 ### Phase 4 — Delivery (in progress)
 
 - [x] Sequential selected-photo JPEG export with quality, long-edge size, collision-safe naming, progress/cancel, and per-file results
-- [ ] Batch export recipes: persistent presets, output sharpening, P3, copyright/IPTC, watermark
+- [~] Batch export recipes: persistent recipes, formats (JPEG, 16-bit TIFF/PNG, 10-bit HEIC), output sharpening and copyright/IPTC are included from `feat/pv2-scene-pipeline` ([plan](../plans/active/export-recipes.md); historical UI check recorded, full-shoot acceptance pending). P3 (E2), watermark and HDR gain-map output (E3) are not built
 - [ ] Real 100–200-photo delivery pass and whole-app export memory profile
 
 ### Phase 5 — Smart culling
 
 - Vision sharpness, closed-eye, and near-duplicate scoring
+
+### Image-quality program (planned 2026-10-19)
+
+Research: [PHOTO_PIPELINE_SOTA](research/PHOTO_PIPELINE_SOTA.md). Each phase is its own ExecPlan.
+
+- [ ] Phase Q0 — Image-quality harness (DeltaE2000/SSIM/OkLCh drift, synthetic fixtures, 16-bit goldens) and PV1 golden capture
+- [ ] Phase Q1 — Process Version 2: linear Rec.2020 scene pipeline, tone equalizer (adds Whites/Blacks), sigmoid display transform, OkLCh color, scene-linear masks, post-crop vignette, float P3/EDR preview
+- [ ] Phase Q2 — Detail and output: clarity/texture (local Laplacian), dehaze, deconvolution sharpening, output sharpening, 16-bit TIFF/HEIC/P3, metadata, export recipes, gain-map HDR
+- [ ] Phase Q3 — Pro local adjustments: add/subtract/intersect masks, range masks, SAM 2.1, BiRefNet, face parsing, depth
+- [ ] Phase Q4 — Retouch: MVC/Poisson heal, PatchMatch, LaMa
+- [ ] Phase Q5 — AI detail: AI denoise, Real-ESRGAN super resolution
+- [ ] Phase Q6 — Lens and geometry: lensfun, defringe, perspective, auto-upright
+- [ ] Phase Q7 — Learned auto and look transfer; smart culling
 
 Video (V0.3 below) resumes after the photo phases. Lumix S5 10-bit 4:2:2 and V-Log footage will likely need proxies and LUT support.
 
@@ -122,14 +144,14 @@ Video (V0.3 below) resumes after the photo phases. Lumix S5 10-bit 4:2:2 and V-L
 
 - [ ] RAW-specific development controls and metadata panel
 - [ ] Batch selection, adjustment sync, and batch export
-- [ ] LUT import and intensity control
+- [x] LUT import and intensity control (branch `plan/10bit-vlog-color`, photos and video, with the V-Log source-color LUT; G3 PASS; in-app UI walkthrough NOT VERIFIED)
 - [x] Persistent thumbnail cache and media relinking
 - [x] Before/after split and side-by-side views
 - [x] Interactive crop and straighten with preview zoom and pan
 - [x] Grouped photo edit undo and redo with direct adjustment values
 - [ ] Export presets, resize, watermark, and metadata controls
 
-## V0.3 — Video Editor (existing baseline; development deferred)
+## V0.3 — Video Editor (existing baseline; 10-bit and V-Log work pulled forward on branch `plan/10bit-vlog-color`)
 
 - [x] AVFoundation video import, thumbnails, metadata, and playback
 - [x] Persistent V1/A1 timeline model and interface
@@ -137,14 +159,19 @@ Video (V0.3 below) resumes after the photo phases. Lumix S5 10-bit 4:2:2 and V-L
 - [x] AVMutableComposition sequence playback, scrubbing, and active-clip sync
 - [x] Shared color model for photos and video clips
 - [x] Waveform cache, clip volume, and fades
+- [x] Waveform and vectorscope (Metal, fed by the custom compositor; branch `plan/10bit-vlog-color`; G9 rate and cost PASS, in-app panel NOT VERIFIED)
+- [x] 10-bit custom compositor: Y'CbCr decoded on Metal in half float, never 8-bit; grade shared with photos (branch `plan/10bit-vlog-color`; on-screen playback in the app NOT VERIFIED)
+- [x] Frame-exact clip timing, schema 11 (branch `plan/10bit-vlog-color`; G6 PASS)
+- [x] V-Log color management: camera-metadata detection, Panasonic LUT or OpenColorIO ACES 2.0 as source color (branch `plan/10bit-vlog-color`; G3 and G4 PASS; G8 owner review open)
+- [ ] Apple Log (iPhone 15 Pro ProRes): blocked on a real clip
 - [ ] Clip pan and advanced audio mixing
 - [ ] Titles, basic transitions, speed presets, and frame capture
-- [ ] 1080p and 4K export
+- [x] 1080p and 4K export (10-bit ProRes 422 HQ and HEVC Main10 on branch `plan/10bit-vlog-color`; frame-exact (G6 PASS); G1 throughput PASS from internal storage, G7 memory FAIL on the M1, Export menu NOT VERIFIED in the app)
 
 ## V1.0 — Perception Workflow
 
 - Documentary, interview, social reel, business promo, and photography templates
-- Proxy generation and original-media export
+- Proxy generation and export-quality source resolution are done (originals are always used for export). Video file export is still the V0.3 "1080p and 4K export" item
 - Reusable Perception title, color, audio, and export presets
 - Batch deliverables and project launcher with recent projects
 - Performance, accessibility, recovery, and release hardening

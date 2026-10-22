@@ -22,6 +22,7 @@ extension EditorStore {
                 throw CocoaError(.fileNoSuchFile, userInfo: [NSLocalizedDescriptionKey: problem])
             }
             try document.save(project, to: destination)
+            copyReferencedLUTs(nextTo: destination)
             projectURL = destination
             lastSavedProject = project
             projectSaveError = nil

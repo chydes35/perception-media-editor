@@ -1,5 +1,4 @@
 @preconcurrency import AVFoundation
-import CoreImage
 import Foundation
 
 struct TimelineCompositionResult {
@@ -7,26 +6,45 @@ struct TimelineCompositionResult {
     var durationSeconds: Double
     var insertedClipIDs: [UUID]
     var warnings: [String]
+    var usedProxyCount = 0
+    /// The live meter tap on the audio track, when `meters` was asked for and there is audio.
+    var meterTap: AudioMeterTap?
 }
 
-private struct TimelineColorSegment: Sendable {
-    var startSeconds: Double
-    var durationSeconds: Double
-    var adjustments: PhotoAdjustments
-
-    func contains(_ seconds: Double) -> Bool {
-        seconds >= startSeconds && seconds < startSeconds + durationSeconds
-    }
+enum MediaQuality: Sendable {
+    /// Editing playback. Uses a ready proxy when one exists.
+    case preview
+    /// Deliverables. Always reads camera originals.
+    case export
 }
 
+struct ClipSourceURLs: Equatable, Sendable {
+    var video: URL
+    var audio: URL
+    var usesProxy: Bool
+}
+
+/// Which pipeline renders the timeline's pictures.
+enum TimelineRenderingPath: Sendable {
+    /// AVFoundation plays plain Rec. 709 clips itself. The custom compositor takes over whenever a
+    /// clip is graded, is log footage, uses a proxy, or differs in size or orientation.
+    case automatic
+    /// Always the custom compositor.
+    case compositor
+}
+
+/// Segments are exact `CMTimeRange`s built from frames, so a frame on a cut belongs to exactly one clip.
 private struct TimelineAudioSegment: Sendable {
-    var startSeconds: Double
-    var durationSeconds: Double
+    var range: CMTimeRange
     var adjustments: ClipAudioAdjustments
 }
 
-private struct SendableVideoComposition: @unchecked Sendable {
-    let value: AVVideoComposition?
+private struct TimelineVideoSegment: Sendable {
+    var range: CMTimeRange
+    var recipe: ClipRenderRecipe
+    var transform: CGAffineTransform
+    var usesProxy: Bool
+    var isLog: Bool
 }
 
 @MainActor
@@ -35,12 +53,73 @@ final class TimelineCompositionService {
 
     private init() {}
 
+    nonisolated static let mixedRateWarning =
+        "Clips with a different frame rate from the first clip are fitted to whole frames of the timeline's rate."
+
+    /// Proxies are video-only, so audio always comes from the original. A proxy URL whose file
+    /// has gone (the cache was cleared) falls back to the original without a warning.
+    nonisolated static func sourceURLs(for asset: MediaAsset, quality: MediaQuality, proxyURL: URL?) -> ClipSourceURLs {
+        guard quality == .preview, let proxyURL else {
+            return ClipSourceURLs(video: asset.url, audio: asset.url, usesProxy: false)
+        }
+        return ClipSourceURLs(video: proxyURL, audio: asset.url, usesProxy: true)
+    }
+
+    /// The source viewer's item. Proxies are video-only, so with a usable proxy this is a one-clip
+    /// composition of the proxy's video and the original's audio; otherwise it is simply the original.
+    func makeSourcePlayerItem(for asset: MediaAsset, proxyURL: URL?) async -> AVPlayerItem {
+        let usableProxy = proxyURL.flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
+        let sources = Self.sourceURLs(for: asset, quality: .preview, proxyURL: usableProxy)
+        guard sources.usesProxy else { return AVPlayerItem(url: asset.url) }
+
+        let videoAsset = AVURLAsset(url: sources.video)
+        let composition = AVMutableComposition()
+        guard let videoTrack = (try? await videoAsset.loadTracks(withMediaType: .video))?.first,
+              let duration = try? await videoAsset.load(.duration), duration > .zero,
+              let compositionVideo = composition.addMutableTrack(
+                  withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid
+              )
+        else { return AVPlayerItem(url: asset.url) }
+        let range = CMTimeRange(start: .zero, duration: duration)
+        do { try compositionVideo.insertTimeRange(range, of: videoTrack, at: .zero) } catch {
+            return AVPlayerItem(url: asset.url)
+        }
+        compositionVideo.preferredTransform = (try? await videoTrack.load(.preferredTransform)) ?? .identity
+
+        let audioAsset = AVURLAsset(url: sources.audio)
+        if let audioTrack = (try? await audioAsset.loadTracks(withMediaType: .audio))?.first,
+           let audioRange = try? await audioTrack.load(.timeRange),
+           let compositionAudio = composition.addMutableTrack(
+               withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid
+           ) {
+            let overlap = range.intersection(audioRange)
+            if overlap.duration > .zero {
+                try? compositionAudio.insertTimeRange(overlap, of: audioTrack, at: overlap.start)
+            }
+        }
+        return AVPlayerItem(asset: composition)
+    }
+
+    /// `quality` has no default: a caller that renders deliverables must say `.export` explicitly
+    /// rather than silently inheriting proxies. Clip positions are frames in `sequenceFrameRate`
+    /// (by default the first clip's rate), and every time is built exactly from frames.
     func makePlayerItem(
         clips: [TimelineClip],
         media: [MediaAsset],
         adjustmentsByClipID: [UUID: PhotoAdjustments] = [:],
-        audioAdjustmentsByClipID: [UUID: ClipAudioAdjustments] = [:]
+        audioAdjustmentsByClipID: [UUID: ClipAudioAdjustments] = [:],
+        quality: MediaQuality,
+        proxyURLsByAssetID: [UUID: URL] = [:],
+        sequenceFrameRate: FrameRate? = nil,
+        masterGainDecibels: Double = 0,
+        renderingPath: TimelineRenderingPath = .automatic,
+        meters: Bool = false,
+        statisticsKey: UUID? = nil,
+        scopeTap: ScopeTap = .shared,
+        inputLUTsByAssetID: [UUID: ResolvedLUT] = [:],
+        ocioInputsByAssetID: [UUID: OCIOInputTransform] = [:]
     ) async -> TimelineCompositionResult {
+        let sequenceRate = sequenceFrameRate ?? clips.first?.frameRate ?? .ntsc23976
         let composition = AVMutableComposition()
         guard let compositionVideoTrack = composition.addMutableTrack(
             withMediaType: .video,
@@ -50,7 +129,8 @@ final class TimelineCompositionService {
                 playerItem: nil,
                 durationSeconds: 0,
                 insertedClipIDs: [],
-                warnings: ["The video composition track could not be created."]
+                warnings: ["The video composition track could not be created."],
+                usedProxyCount: 0
             )
         }
 
@@ -58,16 +138,20 @@ final class TimelineCompositionService {
             withMediaType: .audio,
             preferredTrackID: kCMPersistentTrackID_Invalid
         )
+        // The default track timescale (600) cannot hold 1001/24000 frame times, so it rounded every
+        // source frame and the player showed the previous frame at some times.
+        compositionVideoTrack.naturalTimeScale = sequenceRate.timescale
+        compositionAudioTrack?.naturalTimeScale = sequenceRate.timescale
         let assetsByID = Dictionary(uniqueKeysWithValues: media.map { ($0.id, $0) })
         let orderedClips = clips
             .filter(\.isEnabled)
-            .sorted { $0.timelineStartSeconds < $1.timelineStartSeconds }
+            .sorted { $0.timelineStartFrame < $1.timelineStartFrame }
 
         var insertedClipIDs: [UUID] = []
-        var colorSegments: [TimelineColorSegment] = []
+        var videoSegments: [TimelineVideoSegment] = []
         var audioSegments: [TimelineAudioSegment] = []
         var warnings: [String] = []
-        var didSetVideoTransform = false
+        var usedProxyCount = 0
 
         for clip in orderedClips {
             if Task.isCancelled { break }
@@ -81,36 +165,56 @@ final class TimelineCompositionService {
                 continue
             }
 
-            let sourceAsset = AVURLAsset(url: mediaAsset.url)
-            guard let assetDuration = try? await sourceAsset.load(.duration) else {
-                warnings.append("Skipped unreadable media: \(mediaAsset.filename)")
-                continue
-            }
+            let proxyURL = proxyURLsByAssetID[clip.assetID]
+                .flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
+            let sources = Self.sourceURLs(for: mediaAsset, quality: quality, proxyURL: proxyURL)
+            let sourceAsset = AVURLAsset(url: sources.video)
+            let audioAsset = sources.audio == sources.video ? sourceAsset : AVURLAsset(url: sources.audio)
             guard let sourceVideoTrack = (try? await sourceAsset.loadTracks(withMediaType: .video))?.first else {
                 warnings.append("Skipped media without a video track: \(mediaAsset.filename)")
                 continue
             }
-
-            let sourceStartSeconds = max(0, clip.sourceStartSeconds)
-            let availableSeconds = max(0, assetDuration.seconds - sourceStartSeconds)
-            let insertedDurationSeconds = min(clip.durationSeconds, availableSeconds)
-            guard insertedDurationSeconds > 0 else {
-                warnings.append("Skipped an empty clip: \(mediaAsset.filename)")
+            guard let trackRange = try? await sourceVideoTrack.load(.timeRange) else {
+                warnings.append("Skipped unreadable media: \(mediaAsset.filename)")
                 continue
             }
 
+            // Frames count from the track's first frame (proxies keep the original's first timestamp).
+            let rate = clip.frameRate
+            let sourceStartFrame = max(0, clip.sourceStartFrame)
+            let availableFrames = max(0, rate.frame(containing: trackRange.end, origin: trackRange.start) - sourceStartFrame)
+            let insertedFrames = min(clip.durationFrames, availableFrames)
+            guard insertedFrames > 0 else {
+                warnings.append("Skipped an empty clip: \(mediaAsset.filename)")
+                continue
+            }
+            if rate != sequenceRate, !warnings.contains(Self.mixedRateWarning) {
+                warnings.append(Self.mixedRateWarning)
+            }
+
+            // A clip in another rate fills whole sequence frames; its source is cut to that slot.
+            let slot = CMTimeRange(
+                start: sequenceRate.time(ofFrame: max(0, clip.timelineStartFrame)),
+                duration: sequenceRate.time(ofFrame: rate.frames(insertedFrames, in: sequenceRate))
+            )
             let sourceRange = CMTimeRange(
-                start: CMTime(seconds: sourceStartSeconds, preferredTimescale: 600),
-                duration: CMTime(seconds: insertedDurationSeconds, preferredTimescale: 600)
+                start: rate.time(ofFrame: sourceStartFrame, origin: trackRange.start),
+                duration: CMTimeMinimum(rate.time(ofFrame: insertedFrames), slot.duration)
             )
-            let insertionTime = CMTime(
-                seconds: max(0, clip.timelineStartSeconds),
-                preferredTimescale: 600
-            )
+            let insertionTime = slot.start
+            // Video reads each frame half a frame late. AVFoundation shows the last sample at or before
+            // the time asked for, so a sample stamped slightly late (an iPhone clip had one 26/600 s
+            // frame, which left every later frame 1/600 s behind the grid) would otherwise lose its
+            // slot to the previous frame. Asking mid-frame is exact while drift stays under half a
+            // frame. Nothing is asked for in the clip's last half frame, so the range may stop at the
+            // track's end. Audio keeps the exact range.
+            let halfFrame = CMTime(value: rate.frameDuration, timescale: rate.timescale * 2)
+            let videoStart = sourceRange.start + halfFrame
+            let videoSourceRange = CMTimeRange(start: videoStart, end: CMTimeMinimum(sourceRange.end + halfFrame, trackRange.end))
 
             do {
                 try compositionVideoTrack.insertTimeRange(
-                    sourceRange,
+                    videoSourceRange,
                     of: sourceVideoTrack,
                     at: insertionTime
                 )
@@ -119,15 +223,13 @@ final class TimelineCompositionService {
                 continue
             }
 
-            if !didSetVideoTransform,
-               let preferredTransform = try? await sourceVideoTrack.load(.preferredTransform) {
-                compositionVideoTrack.preferredTransform = preferredTransform
-                didSetVideoTransform = true
-            }
+            if sources.usesProxy { usedProxyCount += 1 }
+            let naturalSize = (try? await sourceVideoTrack.load(.naturalSize)) ?? CGSize(width: 1920, height: 1080)
+            let transform = (try? await sourceVideoTrack.load(.preferredTransform)) ?? .identity
 
             if !clip.isMuted,
                let compositionAudioTrack,
-               let sourceAudioTrack = (try? await sourceAsset.loadTracks(withMediaType: .audio))?.first {
+               let sourceAudioTrack = (try? await audioAsset.loadTracks(withMediaType: .audio))?.first {
                 do {
                     try compositionAudioTrack.insertTimeRange(
                         sourceRange,
@@ -135,11 +237,7 @@ final class TimelineCompositionService {
                         at: insertionTime
                     )
                     audioSegments.append(
-                        TimelineAudioSegment(
-                            startSeconds: max(0, clip.timelineStartSeconds),
-                            durationSeconds: insertedDurationSeconds,
-                            adjustments: audioAdjustmentsByClipID[clip.id] ?? .neutral
-                        )
+                        TimelineAudioSegment(range: slot, adjustments: audioAdjustmentsByClipID[clip.id] ?? .neutral)
                     )
                 } catch {
                     warnings.append("Video inserted without audio: \(mediaAsset.filename)")
@@ -147,13 +245,19 @@ final class TimelineCompositionService {
             }
 
             insertedClipIDs.append(clip.id)
-            colorSegments.append(
-                TimelineColorSegment(
-                    startSeconds: max(0, clip.timelineStartSeconds),
-                    durationSeconds: insertedDurationSeconds,
-                    adjustments: adjustmentsByClipID[clip.id] ?? .neutral
-                )
-            )
+            videoSegments.append(TimelineVideoSegment(
+                range: slot,
+                recipe: ClipRenderRecipe(
+                    adjustments: adjustmentsByClipID[clip.id] ?? .neutral,
+                    orientation: SourceOrientation(preferredTransform: transform, sourceSize: naturalSize),
+                    matrix: mediaAsset.sourceColor?.matrix ?? .rec709,
+                    inputLUT: inputLUTsByAssetID[mediaAsset.id],
+                    ocioInput: ocioInputsByAssetID[mediaAsset.id]
+                ),
+                transform: transform,
+                usesProxy: sources.usesProxy,
+                isLog: mediaAsset.sourceColor?.isLog == true
+            ))
         }
 
         guard !insertedClipIDs.isEmpty else {
@@ -161,88 +265,167 @@ final class TimelineCompositionService {
                 playerItem: nil,
                 durationSeconds: 0,
                 insertedClipIDs: [],
-                warnings: warnings.isEmpty ? ["The timeline has no playable clips."] : warnings
+                warnings: warnings.isEmpty ? ["The timeline has no playable clips."] : warnings,
+                usedProxyCount: 0
             )
         }
 
         let durationSeconds = composition.duration.seconds
         let playerItem = AVPlayerItem(asset: composition)
+        var meterTap: AudioMeterTap?
         if let compositionAudioTrack, !audioSegments.isEmpty {
             let audioParameters = AVMutableAudioMixInputParameters(track: compositionAudioTrack)
+            // Fades are durations, not edit points, so they stay in seconds at the sequence timescale.
+            let fadeScale = sequenceRate.timescale
+            // Gain is linear volume in the mix: clip gain times master gain. Volumes above 1 do
+            // amplify (measured on macOS 26: 2.0 → +6.02 dB, 4.0 → +12.04 dB), so no tap is needed.
+            let masterGain = ClipAudioAdjustments.linearGain(forDecibels: masterGainDecibels)
             for segment in audioSegments {
-                let volume = Float(min(1, max(0, segment.adjustments.volume)))
-                let maximumFade = max(0, segment.durationSeconds / 2)
+                let volume = Float(segment.adjustments.linearGain * masterGain)
+                let maximumFade = max(0, segment.range.duration.seconds / 2)
                 let fadeIn = min(maximumFade, max(0, segment.adjustments.fadeInSeconds))
                 let fadeOut = min(maximumFade, max(0, segment.adjustments.fadeOutSeconds))
-                let start = CMTime(seconds: segment.startSeconds, preferredTimescale: 600)
+                let start = segment.range.start
 
                 if fadeIn > 0 {
                     audioParameters.setVolumeRamp(
                         fromStartVolume: 0,
                         toEndVolume: volume,
-                        timeRange: CMTimeRange(
-                            start: start,
-                            duration: CMTime(seconds: fadeIn, preferredTimescale: 600)
-                        )
+                        timeRange: CMTimeRange(start: start, duration: CMTime(seconds: fadeIn, preferredTimescale: fadeScale))
                     )
                 } else {
                     audioParameters.setVolume(volume, at: start)
                 }
 
                 if fadeOut > 0 {
-                    let fadeStart = CMTime(
-                        seconds: segment.startSeconds + segment.durationSeconds - fadeOut,
-                        preferredTimescale: 600
-                    )
+                    let fadeDuration = CMTime(seconds: fadeOut, preferredTimescale: fadeScale)
+                    let fadeStart = CMTimeSubtract(segment.range.end, fadeDuration)
                     audioParameters.setVolume(volume, at: fadeStart)
                     audioParameters.setVolumeRamp(
                         fromStartVolume: volume,
                         toEndVolume: 0,
-                        timeRange: CMTimeRange(
-                            start: fadeStart,
-                            duration: CMTime(seconds: fadeOut, preferredTimescale: 600)
-                        )
+                        timeRange: CMTimeRange(start: fadeStart, duration: fadeDuration)
                     )
                 }
+            }
+            if meters {
+                // The tap sees samples before the mix volume (measured: AudioMeterPlumbingTests), so
+                // the meter applies the same gain and fades itself.
+                let tap = AudioMeterTap(schedule: Self.meterSchedule(audioSegments.map {
+                    ($0.range, $0.adjustments)
+                }, masterGain: masterGain))
+                audioParameters.audioTapProcessor = tap.makeProcessingTap()
+                meterTap = tap
             }
             let audioMix = AVMutableAudioMix()
             audioMix.inputParameters = [audioParameters]
             playerItem.audioMix = audioMix
         }
 
-        if colorSegments.contains(where: { $0.adjustments != .neutral }) {
-            let renderSegments = colorSegments
-            let videoCompositionResult: SendableVideoComposition = await withCheckedContinuation { continuation in
-                AVVideoComposition.videoComposition(
-                    with: composition,
-                    applyingCIFiltersWithHandler: { request in
-                        let seconds = request.compositionTime.seconds
-                        let adjustments = renderSegments.first(where: { $0.contains(seconds) })?.adjustments
-                            ?? .neutral
-                        let output = MediaColorRenderer.render(
-                            request.sourceImage,
-                            adjustments: adjustments,
-                            includesGeometry: false
-                        )
-                        request.finish(with: output.cropped(to: request.sourceImage.extent), context: nil)
-                    },
-                    completionHandler: { videoComposition, _ in
-                        continuation.resume(returning: SendableVideoComposition(value: videoComposition))
-                    }
-                )
-            }
-            if let videoComposition = videoCompositionResult.value {
-                playerItem.videoComposition = videoComposition
-            } else {
-                warnings.append("Clip color could not be previewed.")
-            }
-        }
+        applyVideoComposition(
+            to: playerItem, composition: composition, track: compositionVideoTrack, segments: videoSegments,
+            quality: quality, sequenceRate: sequenceRate, renderingPath: renderingPath,
+            statisticsKey: statisticsKey, scopeTap: scopeTap, warnings: &warnings
+        )
 
         return TimelineCompositionResult(
             playerItem: playerItem,
             durationSeconds: durationSeconds.isFinite ? max(0, durationSeconds) : 0,
             insertedClipIDs: insertedClipIDs,
-            warnings: warnings
+            warnings: warnings,
+            usedProxyCount: usedProxyCount,
+            meterTap: meterTap
         )
+    }
+
+    /// The mix's gain over time, for the meter: clip gain times master gain with the fades clamped
+    /// exactly as the volume ramps above clamp them.
+    nonisolated static func meterSchedule(
+        _ segments: [(range: CMTimeRange, adjustments: ClipAudioAdjustments)],
+        masterGain: Double
+    ) -> MeterGainSchedule {
+        MeterGainSchedule(segments: segments.map { range, adjustments in
+            let maximumFade = max(0, range.duration.seconds / 2)
+            return MeterGainSchedule.Segment(
+                start: range.start.seconds,
+                end: range.end.seconds,
+                gain: adjustments.linearGain * masterGain,
+                fadeIn: min(maximumFade, max(0, adjustments.fadeInSeconds)),
+                fadeOut: min(maximumFade, max(0, adjustments.fadeOutSeconds))
+            )
+        })
+    }
+
+    /// Plain clips play natively, with the first clip's orientation on the composition track. Anything
+    /// else, from a grade to a proxy to a log source, needs frames processed by the custom compositor,
+    /// which gets the stored frames and turns them upright itself.
+    private func applyVideoComposition(
+        to playerItem: AVPlayerItem,
+        composition: AVMutableComposition,
+        track: AVMutableCompositionTrack,
+        segments: [TimelineVideoSegment],
+        quality: MediaQuality,
+        sequenceRate: FrameRate,
+        renderingPath: TimelineRenderingPath,
+        statisticsKey: UUID?,
+        scopeTap: ScopeTap,
+        warnings: inout [String]
+    ) {
+        guard let first = segments.first else { return }
+        let proxied = segments.first(where: \.usesProxy)
+        let needsCompositor = renderingPath == .compositor || segments.contains {
+            $0.usesProxy || $0.isLog || $0.recipe.inputLUT != nil || $0.recipe.ocioInput != nil || $0.recipe.adjustments != .neutral
+                || $0.recipe.orientation != first.recipe.orientation
+        }
+        guard needsCompositor else {
+            track.preferredTransform = first.transform
+            return
+        }
+        guard VideoCompositingEngine.isSupported else {
+            warnings.append("The GPU is unavailable, so clip color and proxies cannot be previewed.")
+            track.preferredTransform = first.transform
+            return
+        }
+        // Compiles OCIO's shaders on first use; this runs off the main actor.
+        if segments.contains(where: { $0.recipe.ocioInput != nil }), OCIOColorKernels.shared == nil {
+            let reason = OCIOColorKernels.loadError?.localizedDescription ?? "unknown error"
+            warnings.append("The OpenColorIO shaders are unavailable (\(reason)), so V-Log clips show as recorded.")
+        }
+
+        // Proxies are smaller than their originals, so a timeline with one renders at the proxy's size.
+        let renderSize = (proxied ?? first).recipe.orientation.orientedSize
+        let trackID = track.trackID
+        var instructions: [TimelineCompositionInstruction] = []
+        var cursor = CMTime.zero
+        for segment in segments.sorted(by: { $0.range.start < $1.range.start }) {
+            if segment.range.start > cursor {
+                instructions.append(TimelineCompositionInstruction(
+                    timeRange: CMTimeRange(start: cursor, end: segment.range.start), sourceTrackID: trackID, recipe: nil,
+                    statisticsKey: statisticsKey, scopeTap: scopeTap
+                ))
+            }
+            instructions.append(TimelineCompositionInstruction(
+                timeRange: segment.range, sourceTrackID: trackID, recipe: segment.recipe,
+                statisticsKey: statisticsKey, scopeTap: scopeTap
+            ))
+            cursor = segment.range.end
+        }
+        if composition.duration > cursor {
+            instructions.append(TimelineCompositionInstruction(
+                timeRange: CMTimeRange(start: cursor, end: composition.duration), sourceTrackID: trackID, recipe: nil,
+                statisticsKey: statisticsKey, scopeTap: scopeTap
+            ))
+        }
+
+        let videoComposition = AVMutableVideoComposition()
+        videoComposition.customVideoCompositorClass = quality == .preview ? PreviewVideoCompositor.self : ExportVideoCompositor.self
+        videoComposition.instructions = instructions
+        videoComposition.renderSize = CGSize(width: renderSize.width.rounded(), height: renderSize.height.rounded())
+        // One render per sequence frame, tagged Rec. 709 like the sources, so the engine leaves log pixels alone.
+        videoComposition.frameDuration = sequenceRate.frameTime
+        videoComposition.colorPrimaries = AVVideoColorPrimaries_ITU_R_709_2
+        videoComposition.colorTransferFunction = AVVideoTransferFunction_ITU_R_709_2
+        videoComposition.colorYCbCrMatrix = AVVideoYCbCrMatrix_ITU_R_709_2
+        playerItem.videoComposition = videoComposition
     }
 }

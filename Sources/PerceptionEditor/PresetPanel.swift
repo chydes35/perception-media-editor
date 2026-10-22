@@ -19,6 +19,17 @@ struct PresetPanel: View {
                     .foregroundStyle(.orange)
             }
 
+            HStack(spacing: 8) {
+                Text("Amount").font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                Slider(value: $store.presetAmount, in: 0 ... 1)
+                    .accessibilityLabel("Preset amount")
+                Text("\(Int((store.presetAmount * 100).rounded()))%")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .frame(width: 34, alignment: .trailing)
+            }
+            .help("How strongly a preset is applied. Pick a preset again to reapply it at a new amount.")
+
             ScrollView {
                 VStack(alignment: .leading, spacing: 10) {
                     ForEach(store.presetCategories, id: \.self) { category in
@@ -37,6 +48,7 @@ struct PresetPanel: View {
         }
         .padding(14)
         .background(Color(nsColor: .controlBackgroundColor))
+        .onDisappear { store.endPresetPreview() }
         .alert("Rename Preset", isPresented: Binding(
             get: { renaming != nil },
             set: { if !$0 { renaming = nil } }
@@ -71,6 +83,8 @@ struct PresetPanel: View {
                 .foregroundStyle(.secondary)
             Spacer()
             Menu {
+                Toggle("Replace Previous Look When Applying", isOn: $store.presetReplacesLook)
+                Divider()
                 Button("Import Presets…") { store.importPresets() }
                 Button("Export My Presets…") {
                     store.exportPresets(store.userPresets, suggestedName: "My Presets")
@@ -144,9 +158,16 @@ struct PresetPanel: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
             .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+            .overlay {
+                if store.presetPreview?.id == preset.id {
+                    RoundedRectangle(cornerRadius: 8).stroke(Color.orange, lineWidth: 1.5)
+                }
+            }
         }
         .buttonStyle(.plain)
         .disabled(store.selectedAsset == nil)
+        .onHover { store.hoverPreset(preset, isHovering: $0) }
+        .help("Hover to preview on this photo. Click to apply.")
         .contextMenu {
             Button("Apply") { store.apply(preset) }
             if store.isUserPreset(preset) {

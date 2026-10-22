@@ -17,7 +17,7 @@ Acceptance criteria:
 3. Highlights −1 on a RAW brings clipping on P1107263 under 2%, without lowering the median by more than 0.03.
 4. Non-RAW photos, video clips, and RAW thumbnails drawn from the camera's embedded JPEG render byte-for-byte as before.
 5. Preview, before/after "Original", 100% view, export and Auto's analysis all use the same shoulder for RAW, so what is shown is what is exported and analyzed.
-6. No `.pmedit` change. Schema stays 12. Existing edits keep their values; they render with the new shoulder (accepted by the photographer on 2026-10-19).
+6. No `.pmedit` change. Schema stays 10. Existing edits keep their values; they render with the new shoulder (accepted by the photographer on 2026-10-19).
 7. Real-photo check: on the 2026-10-18 "Ivy 1 year" shoot copy, the photographer judges whether the untouched look and the photographer's own edits no longer look washed out. NOT VERIFIED until reported.
 
 Out of scope: a Lumix-specific base profile (option 2, not chosen), HDR/EDR display, changing the decode range, changing video color.

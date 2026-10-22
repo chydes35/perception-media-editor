@@ -434,7 +434,8 @@ struct RealRawTests {
             url: url, adjustments: .neutral, center: CGPoint(x: 0.5, y: 0.5), viewportPixels: CGSize(width: 1200, height: 800)
         ))
 
-        #expect(render.fullSize.width >= 5000)
+        // EXIF orientation can make a full-resolution S5 frame 4000 × 6000.
+        #expect(max(render.fullSize.width, render.fullSize.height) >= 5000)
         #expect(render.image.cgImage.width == 1200 && render.image.cgImage.height == 800)
     }
 }

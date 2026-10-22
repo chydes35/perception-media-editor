@@ -35,7 +35,7 @@ Candidate worktree is on the external SSD, with build/module caches inside `.bui
 - [x] Run fixture tooling, migration/selection checks and the applicable automated gate.
 - [x] Independently review findings and candidate; verify original dirty checkout unchanged.
 - [x] Commit local integration candidate (`aa5904f`, merge parents `5d80625` and `593549a`).
-- [ ] Publish branch and draft candidate PR after user authorization; automatic approval review rejected the push as an external publication not explicitly authorized. No remote writes occurred.
+- [x] User explicitly authorized publication on 2026-10-22; pushed branch and opened [draft PR #23](https://github.com/chydes35/perception-media-editor/pull/23). Initial automatic-review rejection was resolved by that authorization. No default-branch integration or existing-PR closure occurred.
 
 ## Safety and performance
 
@@ -88,5 +88,4 @@ record it and run the documented SDK/native substitute separately.
   acceptance; consolidation changes rendering/schema defaults. The one stale
   README schema sentence found during review was corrected and rechecked.
 
-Local preparation is complete. The plan remains active for publication/review and
-any approved default-branch integration. No branch deletion or PR closure is implied.
+Local preparation and authorized publication are complete. [Draft PR #23](https://github.com/chydes35/perception-media-editor/pull/23) remains open for candidate review and any approved default-branch integration. This plan stays active through that review; no branch deletion or existing-PR closure is implied.

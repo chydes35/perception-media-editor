@@ -70,8 +70,6 @@ baseline. Neither is a fresh pass of this combined candidate.
 
 ## Next
 
-Local candidate preparation is complete; publication awaits user authorization after
-automatic approval review rejected the external push. Review the candidate and its
-migration/PR disposition before advancing main. Then make local QA repeatable (cleanup step 2), followed by the complete
+The candidate is published as [draft PR #23](https://github.com/chydes35/perception-media-editor/pull/23), with explicit user authorization on 2026-10-22. Review the candidate and its migration/PR disposition before advancing main. Then make local QA repeatable (cleanup step 2), followed by the complete
 photo-shoot acceptance run (cleanup step 3). Studio OS transfer and stabilization
 remain preserved outside this candidate; no worktrees or remote PRs are removed.
